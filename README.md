@@ -29,9 +29,9 @@ Reloading during solving/submission stops rather than submitting twice. Starting
 a single question still solves just that question. Batch behavior has fixture tests;
 completion on the live portal has not been verified.
 
-Use Chrome, Python **3.11+**, and either a Groq key or an installed Ollama model for text scans. Node.js **22** is needed only for contributor tests. Chrome internal pages cannot run content scripts; other Chromium browsers are not verified here. Firefox is not supported by this manifest.
+Use Chrome, Python **3.11+**, and either a Groq key or an installed Ollama model for text scans. Building from source or running contributor tests requires Node.js **22.18+**. Chrome internal pages cannot run content scripts; other Chromium browsers are not verified here. Firefox is not supported by this manifest.
 
-Download this repository and open a terminal in its root. The extension includes ready-to-load JavaScript.
+Download the backend ZIP or clone this repository, then open a terminal in the extracted backend folder or repository root.
 Versioned extension, backend, and source ZIPs with SHA-256 checksums are available on the [GitHub Releases page](https://github.com/JaswanthCodeHub/browser-assistant/releases).
 
 ### Windows PowerShell
@@ -66,8 +66,8 @@ For local text inference, install [Ollama](https://github.com/ollama/ollama), ru
 
 ### Install and try the extension
 
-1. Open `chrome://extensions`, enable **Developer mode**, and choose **Load unpacked**.
-2. Select the repository's `extension` folder.
+1. Extract the extension ZIP from Releases. If using a clone or the source ZIP, run `npm ci` and `npm run build` from its root to prepare the `extension` folder.
+2. Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select the prepared folder containing `manifest.json`.
 3. Open `http://127.0.0.1:8000/health`. A JSON `status: "ok"` confirms the backend is running; it does not test model access.
 4. Open `http://127.0.0.1:8000/practice`, then use the floating panel's Text Scan. Review the answer before trying automation with Start.
 5. After changing extension files, reload it in the extensions page and refresh the practice tab.

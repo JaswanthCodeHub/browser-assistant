@@ -22,9 +22,10 @@ def release_files():
         'extension/src/' + Path(name).with_suffix('.ts').name
         for name in EXTENSION if name.endswith('.js')
     ))
-    tests = tuple(path.relative_to(ROOT).as_posix() for path in sorted((ROOT/'extension').glob('*.test.cjs')))
+    extension_assets = tuple(name for name in extension if not name.endswith('.js'))
+    tests = tuple(path.relative_to(ROOT).as_posix() for path in sorted((ROOT/'extension').glob('*.test.cts')))
     tests += tuple(path.relative_to(ROOT).as_posix() for path in sorted((ROOT/'server').glob('test_*.py')))
-    source = tuple(dict.fromkeys((*extension, *typescript, *BACKEND, *tests, 'extension/fixtures/ccbp-ordering.html',
+    source = tuple(dict.fromkeys((*extension_assets, *typescript, *BACKEND, *tests, 'extension/fixtures/ccbp-ordering.html',
         'package.json','package-lock.json','tsconfig.json','.gitignore','.editorconfig', 'scripts/check_repo.py',
         'scripts/package_release.py','scripts/start_journal_assistant.ps1','scripts/smoke_backend.py',
         '.github/workflows/ci.yml','.github/workflows/release.yml')))

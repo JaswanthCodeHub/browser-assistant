@@ -1,3 +1,7 @@
+# 2.8.1
+
+- Git tracks the extension source and regression tests as TypeScript. The build generates the JavaScript for the Chrome install ZIP.
+
 # 2.8.0
 
 - Migrated all Chrome extension scripts to TypeScript and kept the existing automation behavior.

@@ -19,7 +19,6 @@ jobs:
           python-version: '3.11'
       - run: npm ci
       - run: npm test
-      - run: git diff --exit-code -- 'extension/*.js'
       - run: python scripts/check_repo.py
       - run: python -m pip install --require-hashes -r server/requirements.lock.txt
       - run: python test_clean.py

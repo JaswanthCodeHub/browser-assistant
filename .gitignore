@@ -87,6 +87,8 @@ htmlcov/
 # Miscellaneous
 # ========================
 node_modules/
+# Chrome scripts compiled from extension/src/
+/extension/*.js
 *.bak
 *.tmp
 *.temp

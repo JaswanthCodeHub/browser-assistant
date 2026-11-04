@@ -4,7 +4,7 @@ Welcome! Documentation corrections, reproducible bug reports, accessibility impr
 
 ## Development checks
 
-Use Node.js 22 and Python 3.11+. From the root, `npm ci` then `npm test` runs the existing DOM detection and coding automation tests. Run `python scripts/check_repo.py` using the virtual environment Python to check manifest references, JS syntax, Python syntax, and local Markdown file links.
+Use Node.js 22.18+ and Python 3.11+. From the root, `npm ci` then `npm test` builds the Chrome scripts and runs the DOM detection and coding automation tests. Run `python scripts/check_repo.py` using the virtual environment Python to check manifest references, compiled script syntax, Python syntax, and local Markdown file links.
 
 Run backend tests from `server/`, with empty Groq environment variables and no populated `.env` in your test checkout:
 
@@ -31,10 +31,10 @@ or sending paid provider requests.
 
 ## Where things live
 
-- `extension/content.js`: panel, scanning, history, run lifecycle.
-- `extension/automation-policy.js`: target resolution and MCQ adapters; generic website fallback is enabled.
-- `extension/coding-automation.js`, `editor-bridge.js`: detection and editor integration.
-- `extension/background.js`: screenshot capture and local API proxy.
+- `extension/src/content.ts` handles the panel, scanning, history, and automation runs.
+- `extension/src/automation-policy.ts` handles target resolution and MCQ adapters, including the generic website fallback.
+- `extension/src/coding-automation.ts` and `extension/src/editor-bridge.ts` handle detection and editor integration.
+- `extension/src/background.ts` handles screenshot capture and local API requests.
 - `server/main.py`: FastAPI, model pipelines, validation, SQLite.
 - `server/practice_quiz.html`: local demonstration fixture.
 - `docs/`, `.github/`, `scripts/`: onboarding, CI, packaging, checks.

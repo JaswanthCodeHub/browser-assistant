@@ -1,6 +1,6 @@
-# Browser Assistant 2.8.0
+# Browser Assistant 2.8.1
 
-- All Chrome extension scripts now use TypeScript. The extension ZIP contains the JavaScript Chrome runs, and the source ZIP includes the TypeScript files and build configuration.
+- The repository and source ZIP contain the extension's TypeScript source, test files, and build configuration. The extension ZIP contains the compiled scripts needed by Chrome.
 
 - The online IDE opens while the answer is generated and reviewed. This removes the separate wait before requesting a solution. Actual answer time depends on the model and connection.
 - Supported Node.js practice questions can open the IDE, write to an empty `app.js`, check JavaScript syntax, and run the portal's grading command. Existing code is preserved. The automatic IDE flow is covered by fixture tests; a live automatic submission has not been verified.
