@@ -38,10 +38,20 @@ def validate_inputs(groups):
     npm_lock = json.loads((ROOT/'package-lock.json').read_text(encoding='utf-8'))
     assert npm_package['version'] == manifest['version'], 'npm version must match the extension manifest'
     assert npm_lock['version'] == npm_package['version'], 'npm lockfile version must match package.json'
+
+    license_bytes = (ROOT/'LICENSE').read_bytes()
+    license_text = license_bytes.decode('utf-8')
+    assert 'MIT License' in license_text, 'Root LICENSE must retain the MIT license'
+    assert 'Copyright (c) 2024-present Browser Assistant Contributors' in license_text, 'Original copyright notice is missing'
+    assert 'The above copyright notice and this permission notice shall be included' in license_text, 'MIT notice-preservation condition is missing'
+    assert npm_package.get('license') == 'MIT', 'package.json license metadata must remain MIT'
+
     npm_runtime = {'extension/' + path for path in EXTENSION}
     npm_runtime.update(path for path in BACKEND if path.startswith('server/')
                        and Path(path).name not in {'Dockerfile', '.dockerignore'})
-    assert set(npm_package['files']) == npm_runtime, 'npm files must match the extension and backend runtime'
+    expected_npm_files = npm_runtime | {'LICENSE'}
+    assert set(npm_package['files']) == expected_npm_files, 'npm files must include LICENSE and match the extension/backend runtime'
+
     assert manifest['manifest_version'] == 3
     for _kind,files in groups:
         assert len(files) == len(set(files)), 'Duplicate release member'
@@ -66,6 +76,7 @@ def validate_inputs(groups):
             for source in line.split()[1:-1]:
                 assert source in docker_allowed, f'Docker excludes required file: {source}'
 
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--tag', help='Release tag, required to match the manifest if supplied')
@@ -82,6 +93,7 @@ def main():
     out = ROOT / 'dist' / f'v{version}'
     out.mkdir(parents=True, exist_ok=True)
     artifacts = []
+    expected_license = (ROOT/'LICENSE').read_bytes()
     for kind, files in groups:
         path = out / f'browser-assistant-{kind}-v{version}.zip'
         with ZipFile(path, 'w', ZIP_DEFLATED) as archive:
@@ -90,6 +102,8 @@ def main():
                 archive.write(ROOT / name, arcname)
         with ZipFile(path) as archive:
             assert archive.testzip() is None
+            assert 'LICENSE' in archive.namelist(), f'{kind} archive is missing LICENSE'
+            assert archive.read('LICENSE') == expected_license, f'{kind} archive changed the original LICENSE notice'
             if kind == 'extension':
                 manifest = json.loads(archive.read('manifest.json'))
                 for group in manifest['content_scripts']:

@@ -41,13 +41,19 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
+          set -euo pipefail
           python scripts/package_release.py --tag "$RELEASE_TAG"
           if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
             git diff --exit-code "refs/tags/$RELEASE_TAG" HEAD -- extension server
           fi
           npm pack --ignore-scripts --pack-destination "dist/$RELEASE_TAG"
+          archive="dist/$RELEASE_TAG/browser-assistant-${RELEASE_TAG#v}.tgz"
+          test -f "$archive"
+          tar -tzf "$archive" | grep -Fxq 'package/LICENSE'
+          tar -xOf "$archive" package/LICENSE | cmp - LICENSE
+          echo "Verified original MIT LICENSE in $archive"
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
-          echo "archive=dist/$RELEASE_TAG/browser-assistant-${RELEASE_TAG#v}.tgz" >> "$GITHUB_OUTPUT"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
           name: npm-package
