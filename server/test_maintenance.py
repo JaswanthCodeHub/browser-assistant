@@ -60,12 +60,11 @@ class VisionBatchTests(unittest.IsolatedAsyncioTestCase):
         def create(**kwargs):
             nonlocal failed
             messages = kwargs['messages']
-            blocks = messages[-1]['content']
-            # Schema-repair prompts are additional string messages.
+            # The original visual evidence stays in the first user message.
             batch_prompt = messages[1]['content'][0]['text']
             physical = [block for block in messages[1]['content'] if isinstance(block,dict) and block.get('type') == 'image_url']
             calls.append((physical, str(messages)))
-            if isinstance(messages[-1]['content'],str) and messages[-1]['content'].startswith('SECOND VISUAL SOLVE'):
+            if messages[0]['content'].startswith('SECOND VISUAL SOLVE'):
                 content=json.dumps({'readable':True,'answers':[{'id':1,'answer':'Option C: 13'}]})
             elif 'Use exactly these image ids' in batch_prompt:
                 ids = json.loads(batch_prompt.split('in order: ',1)[1].split('. ',1)[0])

@@ -3,6 +3,7 @@ import uvicorn
 import json
 import asyncio
 import ast
+import math
 import re
 import time
 from fastapi import FastAPI, HTTPException
@@ -22,7 +23,7 @@ from fastapi.responses import FileResponse
 from fastapi.exception_handlers import http_exception_handler
 from local_security import install_local_guards, redact, sanitize_data
 from vision_images import (compress_image_base64, unique_image_blocks, collect_image_evidence,
-                           cross_check_visual_answers, VisionUnconfirmedError)
+                           cross_check_visual_answers, VisionRateLimitError, VisionUnconfirmedError)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("browser-assistant")
@@ -98,6 +99,8 @@ GROQ_COMPLETION_TOKEN_LIMIT = int(os.getenv("GROQ_COMPLETION_TOKEN_LIMIT", "4096
 GROQ_RETRY_TOKEN_LIMIT = int(os.getenv("GROQ_RETRY_TOKEN_LIMIT", "8192"))
 GROQ_REVIEW_TOKEN_LIMIT = int(os.getenv("GROQ_REVIEW_TOKEN_LIMIT", "4096"))
 VISION_MAX_TOKENS = int(os.getenv("VISION_MAX_TOKENS", "1200"))
+VISION_MAX_RETRY_WAIT = 60
+_vision_key_cooldowns: dict[tuple[str, int], float] = {}
 LANGUAGE_NAMES = {
     "web": "HTML/CSS/JavaScript project",
     "python": "Python",
@@ -187,7 +190,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.8.2", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.8.3", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)
@@ -957,7 +960,7 @@ FOR MCQ QUESTIONS:
    - If it's an OUTPUT question: Trace the EXACT output including spaces, newlines, formatting.
 4. VERIFY your answer by re-reading the question.
 5. DOUBLE CHECK against each option.
-6. For charts/diagrams, read labels, legends, units and numerical values from ALL supplied illustrations. Combine them with the supplied question/options, even when these are outside the image. Show a concise calculation (for pie charts: total × requested combined percentage / 100). Distinguish percentage-point differences from percent-less/percent-more questions, using the specified comparison base. Never infer values from a previously selected answer. If a required label/value/option is unreadable or cropped, return [] instead of guessing.
+6. For charts/diagrams, read labels, legends, units and numerical values from ALL supplied illustrations. Match each requested series to its legend marker before reading the value at the requested category. Combine the chart with the supplied question/options, even when these are outside the image. State the formula and calculation, using the specified comparison base. If a profit percentage chart gives no other definition, profit % = 100 × (income − expenditure) / expenditure. Never infer values from a previously selected answer. If a required label/value/option is unreadable or cropped, return [] instead of guessing.
 
 FOR CODING PROBLEMS / TEST CASE ERRORS:
 1. Read the complete visible problem, language version, environment, platform, required interface, constraints, time/memory limits, examples, libraries, and input/output format before solving.
@@ -1377,6 +1380,25 @@ async def solve_vision(content: VisionContent):
         raise HTTPException(504, 'Vision processing exceeded the five-minute request deadline. No partial answer was returned.') from exc
 
 
+def vision_retry_after(error, error_text):
+    """Read the provider cooldown, including Groq's fractional wait hint."""
+    headers = getattr(getattr(error, 'response', None), 'headers', {})
+    try:
+        seconds = float(headers.get('retry-after', ''))
+    except (TypeError, ValueError):
+        seconds = 0
+    if not math.isfinite(seconds) or seconds < 0:
+        seconds = 0
+    hint = re.search(r'\btry again in (\d+(?:\.\d+)?)\s*(ms|seconds?|s|minutes?|m|hours?|h)\b', error_text, re.I)
+    if hint:
+        amount, unit = hint.groups()
+        multiplier = 0.001 if unit.lower() == 'ms' else {'s': 1, 'm': 60, 'h': 3600}[unit[0].lower()]
+        hinted_seconds = float(amount) * multiplier
+        if math.isfinite(hinted_seconds):
+            seconds = max(seconds, hinted_seconds)
+    return seconds or 10
+
+
 async def _solve_vision(content: VisionContent):
     if content.language:
         try:
@@ -1395,20 +1417,39 @@ async def _solve_vision(content: VisionContent):
             raise HTTPException(422, f'Image {index}: {exc}') from exc
     image_blocks, image_positions = unique_image_blocks(compressed)
 
-    client = get_groq_client()
-    if not client:
+    clients = tuple(_groq_clients)
+    if not clients:
         raise HTTPException(status_code=503, detail="Groq client not configured - set GROQ_API_KEY in .env")
+    first_key = _groq_key_index % len(clients)
+    key_order = [*range(first_key, len(clients)), *range(first_key)]
 
     loop = asyncio.get_running_loop()
     errors = []
+    rate_limit_resets = []
     is_code_scan = content.practice_type == "code" or bool(content.language)
     unconfirmed = False
     vision_token_limit = 4096 if is_code_scan else VISION_MAX_TOKENS
 
-    async def complete_vision(messages, vision_model):
-        nonlocal client
-        attempts = max(2, len(_groq_clients))
+    async def complete_vision(messages, vision_model, *, verification=False):
+        options = (
+            {"response_format": {"type": "json_object"}}
+            if verification and vision_model == "qwen/qwen3.8-27b" else {}
+        )
+        def reset_at(key):
+            return _vision_key_cooldowns.get((vision_model, key), 0.0)
+
+        attempts = len(clients) + 1
         for attempt in range(attempts):
+            now = loop.time()
+            key = next((index for index in key_order if reset_at(index) <= now), None)
+            if key is None:
+                key = min(key_order, key=reset_at)
+                delay = reset_at(key) - now
+                if delay > VISION_MAX_RETRY_WAIT:
+                    raise VisionRateLimitError(delay)
+                logger.info("All vision keys are cooling down on %s. Retrying this step in %.2fs.", vision_model, delay)
+                await asyncio.sleep(delay)
+            client = clients[key]
             try:
                 def call_vision_api(c=client, m=vision_model):
                     return c.chat.completions.create(
@@ -1416,6 +1457,7 @@ async def _solve_vision(content: VisionContent):
                         messages=messages,
                         temperature=0.0,
                         max_completion_tokens=max(4096, vision_token_limit) if len(image_blocks) > 3 else vision_token_limit,
+                        **options,
                     )
 
                 completion = await asyncio.wait_for(
@@ -1430,19 +1472,18 @@ async def _solve_vision(content: VisionContent):
                 return choice.message.content or ""
             except Exception as exc:
                 error_text = str(exc)
-                if (
-                    ("429" in error_text or "rate_limit" in error_text.lower() or "Rate limit" in error_text)
-                    and attempt + 1 < attempts and rotate_groq_key(reason=f"429 on {vision_model}")
-                ):
-                    client = get_groq_client()
-                    logger.info(f"Retrying vision {vision_model} with new API key (attempt {attempt + 2}/{attempts})...")
+                provider_status = getattr(exc, 'status_code', None)
+                if provider_status == 429 or (provider_status is None and re.search(r'\b429\b|\brate[_ ]limit', error_text, re.I)):
+                    delay = vision_retry_after(exc, error_text)
+                    _vision_key_cooldowns[(vision_model, key)] = max(reset_at(key), loop.time() + delay)
+                    logger.info("Vision key #%d rate-limited on %s for %.2fs.", key + 1, vision_model, delay)
                     continue
                 if attempt + 1 < attempts and (isinstance(exc, (asyncio.TimeoutError, TimeoutError))
-                        or re.search(r'\b(?:408|425|429|500|502|503|504)\b|connection|timed? out', error_text, re.I)):
+                        or re.search(r'\b(?:408|425|500|502|503|504)\b|connection|timed? out', error_text, re.I)):
                     await asyncio.sleep(0.25)
                     continue
                 raise
-        raise RuntimeError(f"All API keys failed for vision model {vision_model}")
+        raise VisionRateLimitError(max(1, min(map(reset_at, key_order)) - loop.time()))
 
     for vision_model in VISION_MODELS:
         try:
@@ -1488,12 +1529,13 @@ async def _solve_vision(content: VisionContent):
                 language = resolve_language(extracted_text)
             logger.info(f"Locked requested code language to {language}")
             system_prompt = build_vision_system_prompt(language)
-            vision_prompt = (
-                f"Analyze this screenshot carefully. The locked code language is "
-                f"{LANGUAGE_NAMES[language]} ({language}); generate code in that language only. "
-                f"Identify and solve all visible questions. "
-                f"Text transcribed from the screenshot: {extracted_text or '[language supplied by caller]'}"
-            )
+            vision_prompt = "Identify and solve all visible questions using readable evidence."
+            if is_code_scan:
+                vision_prompt += (
+                    f" The locked code language is {LANGUAGE_NAMES[language]} ({language}); "
+                    f"generate code in that language only. "
+                    f"Text transcribed from the screenshot: {extracted_text or '[language supplied by caller]'}"
+                )
             if content.text:
                 vision_prompt += ("\nSolve exactly the following question using the attached complete illustrations. "
                                   "Use this ordered option list for the answer letter. The image may contain only the chart.\n"
@@ -1521,6 +1563,9 @@ async def _solve_vision(content: VisionContent):
             async def vision_reviewer(prompt_messages):
                 return await try_independent_code_review(prompt_messages)
 
+            async def vision_verifier(prompt_messages, model):
+                return await complete_vision(prompt_messages, model, verification=True)
+
             cleaned = await generate_validated_result(
                 vision_generator,
                 solution_messages,
@@ -1531,7 +1576,7 @@ async def _solve_vision(content: VisionContent):
             if cleaned != "[]":
                 has_mcq = any(item.get('type') == 'mcq' for item in json.loads(cleaned))
                 if has_mcq and not is_code_scan:
-                    await cross_check_visual_answers(solution_messages, cleaned, vision_model, complete_vision)
+                    cleaned = await cross_check_visual_answers(solution_messages, cleaned, vision_model, vision_verifier)
                 return {
                     "results": cleaned,
                     "provider": f"groq-vision ({vision_model})" + (' [cross-checked]' if has_mcq and not is_code_scan else ''),
@@ -1539,6 +1584,8 @@ async def _solve_vision(content: VisionContent):
                 }
             errors.append(f"{vision_model}: returned empty/unparseable results")
             unconfirmed = True
+        except VisionRateLimitError as exc:
+            rate_limit_resets.append(loop.time() + exc.retry_after)
         except VisionUnconfirmedError as exc:
             unconfirmed = True
             errors.append(f"{vision_model}: {exc}")
@@ -1547,6 +1594,17 @@ async def _solve_vision(content: VisionContent):
             errors.append(f"{vision_model}: {exc}")
             logger.warning(errors[-1])
 
+    if rate_limit_resets:
+        delay = max(1, math.ceil(min(rate_limit_resets) - loop.time()))
+        raise HTTPException(
+            status_code=429,
+            headers={"Retry-After": str(delay)},
+            detail={
+                "code": "vision_rate_limited",
+                "message": f"Vision is temporarily rate-limited. Try again in {delay} seconds.",
+                "retry_after_seconds": delay,
+            },
+        )
     raise HTTPException(
         status_code=422 if unconfirmed else 502,
         detail={"errors": errors, "code": "vision_unconfirmed" if unconfirmed else "vision_provider_failed",

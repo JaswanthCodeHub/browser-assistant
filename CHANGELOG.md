@@ -1,3 +1,8 @@
+# 2.8.3
+
+- Improved chart and table answer verification. Use structured vision responses and one extra check when a response is malformed or the first two solves disagree.
+- Report vision provider cooldowns so automation can wait before retrying a rate-limited request.
+
 # 2.8.2
 
 - Added npm distribution for the Chrome extension and local backend. GitHub release tags publish the matching package through npm Trusted Publishing.

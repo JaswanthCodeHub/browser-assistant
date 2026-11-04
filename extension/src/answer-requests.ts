@@ -6,8 +6,15 @@
         if (Array.isArray(detail)) message=detail.map(item=>item.msg || String(item)).join('; ');
         if (Array.isArray(detail?.errors)) message+=`: ${detail.errors.join(' | ')}`;
         message=String(message).replace(/gsk_[\w]+|sk-[\w-]+/g,'[redacted]').slice(0,900);
-        const error=new Error(`${response?.status ? `HTTP ${response.status}: ` : ''}${message}`) as Error & { status?: number };
+        const error=new Error(`${response?.status ? `HTTP ${response.status}: ` : ''}${message}`) as Error & {
+            status?: number;
+            retryAfterMs?: number;
+        };
         error.status=response?.status;
+        const seconds=detail?.retry_after_seconds;
+        if (error.status===429 && Number.isFinite(seconds) && seconds>0) {
+            error.retryAfterMs=seconds*1000;
+        }
         return error;
     }
     function temporary(error) {
@@ -29,14 +36,14 @@
                 return response;
             } catch (error) {
                 if (!active()) return null;
-                if (attempt===attempts || !temporary(error)) throw error;
+                if (attempt===attempts || !temporary(error) || error.retryAfterMs>60_000) throw error;
                 onRetry({attempt:attempt+1,attempts,message:error.message});
                 // Short waits keep Stop/Pause responsive. Revalidate before the
                 // next request so an old answer cannot target a new question.
-                const delay=attempt===1 ? 1000 : 2500;
+                const delay=error.retryAfterMs ?? (attempt===1 ? 1000 : 2500);
                 for(let elapsed=0;elapsed<delay;elapsed+=100) {
                     if (!active()) return null;
-                    await sleep(100);
+                    await sleep(Math.min(100,delay-elapsed));
                 }
             }
         }

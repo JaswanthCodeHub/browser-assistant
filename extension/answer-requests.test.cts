@@ -25,6 +25,25 @@ test('429 and network disconnect recover within three attempts',async()=>{
     };
     assert.equal(await setup().run(options(request)),success);assert.equal(calls,3);
 });
+test('vision rate limiting waits for the server cooldown before retrying',async()=>{
+    let calls=0,waited=0;
+    const limited={ok:false,status:429,data:{detail:{message:'Vision is temporarily rate-limited',retry_after_seconds:4}}};
+    const result=await setup().run(options(async()=>{
+        if (++calls===1) return limited;
+        assert.equal(waited,4000);
+        return success;
+    },{sleep:async ms=>{waited+=ms;}}));
+    assert.equal(result,success);
+    assert.equal(calls,2);
+});
+test('a long rate limit reports the wait without restarting the request',async()=>{
+    let calls=0;
+    await assert.rejects(setup().run(options(async()=>{
+        calls++;
+        return {ok:false,status:429,data:{detail:{message:'Try again in 120 seconds.',retry_after_seconds:120}}};
+    })),/Try again in 120 seconds/);
+    assert.equal(calls,1);
+});
 test('persistent service failure is bounded and reports the real provider error',async()=>{
     let calls=0;
     await assert.rejects(setup().run(options(async()=>{calls++;return {ok:false,status:502,data:{detail:{message:'All vision providers failed',errors:['Vision provider connection timed out']}}};})),
