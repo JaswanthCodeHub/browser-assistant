@@ -2,15 +2,26 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to retry on npm
+        required: true
+        type: string
 permissions:
   contents: read
 jobs:
   package:
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.pack.outputs.tag }}
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -26,17 +37,24 @@ jobs:
       - run: python -m unittest discover -p 'test*.py' -v
         working-directory: server
       - name: Package matching version
+        id: pack
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: python scripts/package_release.py --tag "$RELEASE_TAG"
-      - name: Pack the tested npm release
-        run: npm pack --ignore-scripts --pack-destination "dist/$GITHUB_REF_NAME"
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          python scripts/package_release.py --tag "$RELEASE_TAG"
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            git diff --exit-code "refs/tags/$RELEASE_TAG" HEAD -- extension server
+          fi
+          npm pack --ignore-scripts --pack-destination "dist/$RELEASE_TAG"
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "archive=dist/$RELEASE_TAG/browser-assistant-${RELEASE_TAG#v}.tgz" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
           name: npm-package
-          path: dist/v*/*.tgz
+          path: ${{ steps.pack.outputs.archive }}
           if-no-files-found: error
       - uses: softprops/action-gh-release@v2
+        if: github.event_name == 'push'
         with:
           fail_on_unmatched_files: true
           body_path: docs/RELEASE_NOTES.md
@@ -60,9 +78,11 @@ jobs:
         with:
           name: npm-package
       - name: Publish with npm Trusted Publishing
+        env:
+          RELEASE_TAG: ${{ needs.package.outputs.tag }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          if [[ "$(npm view "browser-assistant@$version" version --prefer-online)" == "$version" ]]; then
+          version="${RELEASE_TAG#v}"
+          if [[ "$(npm view "browser-assistant@$version" version --prefer-online 2>/dev/null)" == "$version" ]]; then
             echo "browser-assistant@$version is already published."
           else
             npm publish "./browser-assistant-$version.tgz" --ignore-scripts

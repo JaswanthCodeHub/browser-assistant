@@ -58,6 +58,8 @@ The source archive includes regression tests. Set the same version in `package.j
 After merging the release commit to `main`, push its `v<version>` tag. The release
 workflow runs the checks, uploads the ZIPs to GitHub Releases, and publishes the
 same version to npm. `npm pack --dry-run` lists the files in the npm package.
+To retry npm publishing for an existing tag, run the Release workflow manually
+from `main` with that tag while the extension and backend still match it.
 
 The npm package uses [Trusted Publishing](https://docs.npmjs.com/trusted-publishers/)
 with GitHub owner `JaswanthCodeHub`, repository `browser-assistant`, workflow
