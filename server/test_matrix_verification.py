@@ -98,3 +98,23 @@ class MatrixVerificationTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(VisionUnconfirmedError):
             await cross_check_text_answers(self.messages, self.results, complete)
         self.assertEqual(complete.await_count, 2)
+
+    async def test_displayed_choice_agreement_uses_original_option_text(self):
+        text = ('Which condition identifies a full traversal of a circular linked list?\n'
+                'Question format: select one answer.\nA. current == head after the first visit\n'
+                'B. current->next == nullptr\nC. current->next == head immediately\nD. current == nullptr')
+        initial = {'type': 'mcq', 'answer': 'Option A', 'reasoning': 'Same node reached again.'}
+        complete = AsyncMock(return_value=self.response('current == head after the first visit'))
+        result = await cross_check_text_answers([], json.dumps([initial]), complete, question_text=text)
+        self.assertEqual(json.loads(result)[0]['answer'], 'Option A: current == head after the first visit')
+        complete.assert_awaited_once()
+
+        initial.update(answer='Option C: current->next == head immediately')
+        complete = AsyncMock(side_effect=[self.response('Option A'), self.response('A. current == head after the first visit')])
+        result = await cross_check_text_answers([], json.dumps([initial]), complete, question_text=text)
+        self.assertEqual(json.loads(result), [{'type': 'mcq', 'answer': 'Option A: current == head after the first visit'}])
+        self.assertEqual(complete.await_count, 2)
+
+        complete = AsyncMock(side_effect=[self.response('Option A'), self.response('Option B: current == head after the first visit')])
+        with self.assertRaises(VisionUnconfirmedError):
+            await cross_check_text_answers([], json.dumps([initial]), complete, question_text=text)

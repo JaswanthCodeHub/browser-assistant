@@ -191,7 +191,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.8.6", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.8.7", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)
@@ -1247,7 +1247,7 @@ REPAIR MODE:
 
     async def confirm_answers(cleaned, source_model=None):
         if not verify_answers or not any(item['type'] == 'mcq' for item in json.loads(cleaned)):
-            return False
+            return cleaned, False
 
         async def independent_solve(prompt_messages):
             if source_model is None:
@@ -1261,14 +1261,14 @@ REPAIR MODE:
             return await try_groq(prompt_messages, model=source_model, temperature=0.0)
 
         try:
-            await cross_check_text_answers(messages, cleaned, independent_solve)
+            checked = await cross_check_text_answers(messages, cleaned, independent_solve, question_text=trimmed_text)
         except Exception as exc:
             if isinstance(exc, VisionUnconfirmedError):
                 message = str(exc)
             else:
                 message = 'An independent solve was unavailable.'
             raise HTTPException(422, detail={'code': 'answer_unconfirmed', 'message': message}) from exc
-        return True
+        return checked, True
 
     # Try each Groq text model in the fallback chain
     for model_id in TEXT_MODELS:
@@ -1294,7 +1294,7 @@ REPAIR MODE:
             )
             if cleaned != "[]":
                 logger.info(f"Groq ({model_id}) returned a validated result ({len(cleaned)} characters)")
-                verified = await confirm_answers(cleaned, model_id)
+                cleaned, verified = await confirm_answers(cleaned, model_id)
                 return {"results": cleaned, "provider": f"groq ({model_id})" + (' [cross-checked]' if verified else ''),
                         "language": language, "answer_verified": verified,
                         "code_reviewed": strict_code_review and language != 'web'}
@@ -1330,7 +1330,7 @@ REPAIR MODE:
             starter_code=content.starter_code,
         )
         if cleaned != "[]":
-            verified = await confirm_answers(cleaned)
+            cleaned, verified = await confirm_answers(cleaned)
             return {
                 "results": cleaned,
                 "provider": f"ollama ({OLLAMA_MODEL})" + (' [cross-checked]' if verified else ''),

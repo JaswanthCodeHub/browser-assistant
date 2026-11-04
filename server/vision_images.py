@@ -213,6 +213,20 @@ def matrix_2x2(value):
     return tuple(entries)
 
 
+def parse_labeled_choices(option_text):
+    lines = ('A.' + option_text).splitlines()
+    if not 2 <= len(lines) <= 26:
+        return {}
+    choices = {}
+    for index, line in enumerate(lines):
+        letter = chr(ord('A') + index)
+        option = re.fullmatch(rf'{letter}\.\s*(\S.*)', line)
+        if not option:
+            return {}
+        choices[letter] = option[1]
+    return choices
+
+
 def solve_matrix_choice(text):
     """Calculate a self-contained matrix question with one matching displayed choice."""
     question, separator, option_text = text.strip().rpartition('\nA.')
@@ -257,20 +271,13 @@ def solve_matrix_choice(text):
     else:
         return None
 
-    lines = ('A.' + option_text).splitlines()
-    if not 2 <= len(lines) <= 26:
-        return None
     matches = []
-    for index, line in enumerate(lines):
-        letter = chr(ord('A') + index)
-        option = re.fullmatch(rf'{letter}\.\s*(\S.*)', line)
-        if not option:
-            return None
-        value = parse_option(option[1])
+    for letter, option in parse_labeled_choices(option_text).items():
+        value = parse_option(option)
         if value is None:
             return None
         if value == expected:
-            matches.append(f'Option {letter}: {option[1]}')
+            matches.append(f'Option {letter}: {option}')
     if len(matches) != 1:
         return None
     return {'type': 'mcq', 'question': question, 'answer': matches[0], 'reasoning': reasoning}
@@ -326,7 +333,34 @@ def parse_answer_check(raw, count):
     return answers
 
 
-async def cross_check_text_answers(messages, results, complete):
+def displayed_single_choices(text):
+    question, separator, option_text = text.strip().rpartition('\nA.')
+    if not separator or not re.search(r'\n(?:Question format: )?Select one answer\.$', question, re.I):
+        return {}
+    return parse_labeled_choices(option_text)
+
+
+def bind_displayed_choice(value, choices, *, matrix_math):
+    if type(value) not in (str, int, float):
+        return None
+    answer = str(value).strip()
+
+    def key(text):
+        return normalize_checked_answer(text, matrix_math=matrix_math)
+
+    labeled = re.fullmatch(r'(?:Option\s+)?([A-Z])\s*[:.)]\s*(\S.*)', answer, re.I)
+    if labeled:
+        letter, body = labeled[1].upper(), labeled[2]
+        return letter if letter in choices and key(choices[letter]) == key(body) else None
+    matches = [letter for letter, body in choices.items() if key(body) == key(answer)]
+    letter_only = re.fullmatch(r'(?:Option\s+)?([A-Z])\s*[:.)]?', answer, re.I)
+    if letter_only and letter_only[1].upper() in choices:
+        matches.append(letter_only[1].upper())
+    unique = set(matches)
+    return unique.pop() if len(unique) == 1 else None
+
+
+async def cross_check_text_answers(messages, results, complete, *, question_text=''):
     items = json.loads(results)
     if not items or any(item.get('type') != 'mcq' for item in items):
         raise VisionUnconfirmedError('Verification requires a complete set of question answers.')
@@ -340,22 +374,42 @@ async def cross_check_text_answers(messages, results, complete):
         'If the information is incomplete or any answer is uncertain, return {"readable":false,"answers":[]}.'
     )
     check_messages = [{'role': 'system', 'content': instruction}, *messages[1:]]
+    matrix_math = matrix_question(messages)
+    choices = displayed_single_choices(question_text) if len(items) == 1 else {}
+
+    def answer_key(entries):
+        if choices:
+            return bind_displayed_choice(entries[0].get('answer'), choices, matrix_math=matrix_math)
+        keys = tuple(normalize_checked_answer(item.get('answer'), matrix_math=matrix_math) for item in entries)
+        return keys if all(keys) else None
+
+    first = answer_key(items)
+    previous = None
     for attempt in range(2):
         raw = await complete(check_messages)
         try:
             verified = parse_answer_check(raw, len(items))
+            current = answer_key(verified)
+        except ValueError:
+            current = None
+        if current is not None and (current == first or current == previous):
+            if choices:
+                if current != first:
+                    items[0].pop('reasoning', None)
+                items[0]['answer'] = f'Option {current}: {choices[current]}'
+                return json.dumps(items, ensure_ascii=False)
+            return results
+        if not choices and current is not None:
             break
-        except ValueError as exc:
-            if attempt:
-                raise VisionUnconfirmedError('The independent solve could not verify every answer after retrying.') from exc
+        if not attempt:
+            previous = current
             check_messages = [*check_messages, {
                 'role': 'user',
                 'content': 'Solve again using the original question and options. Return the full verification JSON with the required ids.',
             }]
-    matrix_math = matrix_question(messages)
-    first = [normalize_checked_answer(item['answer'], matrix_math=matrix_math) for item in items]
-    if not all(first) or first != [normalize_checked_answer(item['answer'], matrix_math=matrix_math) for item in verified]:
-        raise VisionUnconfirmedError('The two solves disagreed on at least one answer.')
+    if current is None and previous is None:
+        raise VisionUnconfirmedError('The independent solve could not verify every answer after retrying.')
+    raise VisionUnconfirmedError('The independent solves could not agree on the displayed answer.')
 
 
 async def cross_check_visual_answers(messages, results, model, complete, comparison=None, *, require_agreement=False):

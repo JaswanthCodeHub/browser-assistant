@@ -1,3 +1,7 @@
+# 2.8.7
+
+- Verify single-choice text answers against the original displayed options and retry once when independent solves disagree.
+
 # 2.8.6
 
 - Calculate supported 2×2 matrix inverse and matrix multiplication dimension questions locally when exactly one displayed choice matches.

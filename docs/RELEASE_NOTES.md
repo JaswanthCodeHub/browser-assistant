@@ -1,4 +1,6 @@
-# Browser Assistant 2.8.6
+# Browser Assistant 2.8.7
+
+- Single-choice Text Scan and QA Control compare answers using the displayed option list. One additional blind solve can resolve a disagreement when two answers identify the same choice.
 
 - Text and Vision scans calculate supported 2×2 inverse and matrix multiplication dimension questions from complete page text. Automation can use the result when exactly one displayed option matches.
 
