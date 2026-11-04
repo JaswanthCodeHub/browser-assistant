@@ -1,0 +1,12 @@
+*
+!Dockerfile
+!requirements.txt
+!requirements.lock.txt
+!main.py
+!practice_quiz.html
+!code_contract.py
+!journal.py
+!journal_prompt.md
+!journal_syllabus.json
+!local_security.py
+!vision_images.py

@@ -1,0 +1,15 @@
+services:
+  server:
+    build:
+      context: ./server
+    image: ${DOCKER_IMAGE:-browser-assistant-server:latest}
+    env_file:
+      - ./server/.env
+    environment:
+      SERVER_HOST: 0.0.0.0
+      OLLAMA_HOST: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped

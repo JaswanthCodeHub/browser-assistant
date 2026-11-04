@@ -1,0 +1,58 @@
+name: ✨ Feature Request
+description: Suggest a new feature or improvement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include keys, private URLs, or sensitive screenshots. Thanks for suggesting a feature! Please describe your idea below.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem does this solve? Is your feature request related to a problem?
+      placeholder: A clear description of the problem. e.g., "I'm always frustrated when..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed Solution
+      description: Describe your idea for a solution.
+      placeholder: A clear description of what you want to happen...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives-considered
+    attributes:
+      label: Alternatives Considered
+      description: Describe any alternative solutions or features you've considered.
+      placeholder: A description of any alternative solutions or workarounds...
+    validations:
+      required: false
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of the project does this relate to?
+      options:
+        - Extension UI
+        - Backend Server
+        - AI/Models
+        - Docker/Deployment
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Add any other context, mockups, or screenshots about the feature request here.
+      placeholder: Any additional information...
+    validations:
+      required: false

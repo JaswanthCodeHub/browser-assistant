@@ -1,0 +1,6 @@
+{
+  "name": "browser-assistant-tests",
+  "private": true,
+  "scripts": { "test": "node --test extension/*.test.cjs" },
+  "devDependencies": { "linkedom": "^0.18.12" }
+}

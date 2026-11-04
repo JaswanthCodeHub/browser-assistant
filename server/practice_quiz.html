@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Browser Assistant Local Practice Quiz</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #f5f7fb; color: #172033; margin: 0; padding: 32px 16px; }
+    main { max-width: 700px; margin: auto; background: #fff; padding: 28px; border-radius: 16px; box-shadow: 0 8px 28px #1d2d5030; }
+    .tag { color:#3654c5; font-weight:700; font-size:.8rem; letter-spacing:.08em; text-transform:uppercase; }
+    h1 { margin:.2rem 0 1.2rem; } .option { display:block; padding:13px; margin:9px 0; border:1px solid #d8deef; border-radius:9px; cursor:pointer; }
+    .option:has(input:checked) { border-color:#4f6ee8; background:#edf1ff; } button { margin-top:16px; padding:11px 18px; border:0; border-radius:8px; background:#425ed9; color:#fff; font-weight:700; cursor:pointer; }
+    #feedback { min-height:1.5em; font-weight:600; } .done { color:#168152; font-size:1.15rem; }
+  </style>
+</head>
+<body>
+  <main data-browser-assistant-automation="authorized" data-practice-quiz>
+    <div class="tag">Authorized local practice fixture</div>
+    <h1>Practice Quiz</h1>
+    <p id="progress"></p>
+    <section id="question-card" data-practice-question aria-live="polite"></section>
+    <p id="feedback" aria-live="polite"></p>
+  </main>
+  <script>
+    const questions = [
+      { text: 'What is 6 + 7?', options: ['11', '12', '13', '14'], answer: 2 },
+      { text: 'Which data structure follows FIFO?', options: ['Stack', 'Queue', 'Tree', 'Graph'], answer: 1 },
+      { text: 'What is 9 × 5?', options: ['40', '45', '50', '55'], answer: 1 },
+    ];
+    let index = 0;
+    const card = document.getElementById('question-card');
+    const progress = document.getElementById('progress');
+    const feedback = document.getElementById('feedback');
+    function render() {
+      if (index >= questions.length) {
+        progress.textContent = `${questions.length} / ${questions.length} completed`;
+        card.innerHTML = '<div class="done" data-practice-complete>Practice complete — all local questions finished.</div>';
+        feedback.textContent = '';
+        return;
+      }
+      const q = questions[index];
+      progress.textContent = `Question ${index + 1} of ${questions.length}`;
+      card.innerHTML = `<h2 data-practice-question-text>${q.text}</h2><form id="practice-form">${q.options.map((option, i) => `<label class="option" data-practice-option data-option-index="${i}"><input type="radio" name="answer" value="${i}"> <span>${String.fromCharCode(65+i)}. ${option}</span></label>`).join('')}<button type="submit" data-practice-submit disabled>Submit answer</button></form>`;
+      document.querySelectorAll('input[name="answer"]').forEach(input => input.addEventListener('change', () => { document.querySelector('[data-practice-submit]').disabled = false; }));
+      document.getElementById('practice-form').addEventListener('submit', event => {
+        event.preventDefault();
+        const selected = document.querySelector('input[name="answer"]:checked');
+        if (!selected) return;
+        feedback.textContent = Number(selected.value) === q.answer ? 'Correct — loading next question…' : 'Submitted — loading next question…';
+        setTimeout(() => { index += 1; render(); }, 250);
+      });
+    }
+    render();
+  </script>
+</body>
+</html>

@@ -1,0 +1,44 @@
+{
+    "manifest_version": 3,
+    "name": "Browser Assistant",
+    "version": "2.7.7",
+    "description": "Scans webpages for MCQs and coding problems. Powered by Groq (cloud) and Ollama (local fallback).",
+    "permissions": [
+        "activeTab",
+        "scripting",
+        "tabs",
+        "clipboardWrite",
+        "alarms"
+    ],
+    "background": {
+        "service_worker": "background.js"
+    },
+    "action": {
+        "default_popup": "popup.html"
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "<all_urls>"
+            ],
+            "js": [
+                "automation-policy.js",
+                "editor-bridge.js",
+                "question-visuals.js",
+                "answer-requests.js",
+                "coding-automation.js",
+                "coding-batch.js",
+                "content.js",
+                "journal-automation.js"
+            ],
+            "css": [
+                "styles.css"
+            ]
+        }
+    ],
+    "host_permissions": [
+        "http://localhost:8000/*",
+        "http://127.0.0.1:8000/*",
+        "<all_urls>"
+    ]
+}

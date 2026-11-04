@@ -1,0 +1,109 @@
+# ========================
+# Python
+# ========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+.venv*/
+venv/
+env/
+ENV/
+
+# ========================
+# Environment & Secrets
+# ========================
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ========================
+# Database
+# ========================
+server/scan_history.db
+server/scan_history.db-shm
+server/scan_history.db-wal
+*.sqlite3
+
+# ========================
+# IDE & Editors
+# ========================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+.classpath
+
+# ========================
+# OS Files
+# ========================
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ========================
+# Docker
+# ========================
+docker-compose.override.yml
+
+# ========================
+# Build Artifacts
+# ========================
+browser-assistant.zip
+*.zip
+*.tar.gz
+
+# ========================
+# Logs
+# ========================
+*.log
+logs/
+
+# ========================
+# Testing
+# ========================
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+.nox/
+
+# ========================
+# Miscellaneous
+# ========================
+node_modules/
+*.bak
+*.tmp
+*.temp
+.cache/
+tmp/
+drag-success.png
+
+# Publication exclusions: private data and unrelated local integrations
+.env.*
+!.env.example
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+screenshots/
+recordings/
+artifacts/
+QA_REPORT.md
+.github/quizhub-agent.agent.md
+.github/skills/quizhub-mcq-expert/
