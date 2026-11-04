@@ -61,7 +61,7 @@ def validate_inputs(groups):
             assert path.name != '.env' and path.suffix not in {'.db','.log','.zip','.pyc'}, name
             assert not any(part in {'node_modules','__pycache__','.git','.venv','tmp','.cache'} for part in path.parts), name
             text = path.read_text(encoding='utf-8-sig')
-            assert not re.search(r'gsk_[a-zA-Z0-9]{24,}|\\bsk-[a-zA-Z0-9]{24,}',text), f'Credential-like value in release input: {name}'
+            assert not re.search(r'gsk_[a-zA-Z0-9]{24,}|\bsk-[a-zA-Z0-9]{24,}',text), f'Credential-like value in release input: {name}'
     for line in (ROOT/'server/.env.example').read_text().splitlines():
         if re.match(r'GROQ_API_KEY(?:_[23])?=',line):
             assert not line.split('=',1)[1].strip(), 'Example keys must be empty'
@@ -110,12 +110,12 @@ def main():
                     for ref in group.get('js', []) + group.get('css', []):
                         assert ref in archive.namelist(), f'Missing packaged runtime file: {ref}'
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        path.with_suffix('.zip.sha256').write_text(digest+'  '+path.name+'\\n')
+        path.with_suffix('.zip.sha256').write_text(digest+'  '+path.name+'\n')
         artifacts.append({'file': path.name, 'bytes': path.stat().st_size,
                           'sha256': digest, 'members': len(files)})
         print(f'Created {path.name} ({len(files)} allowlisted files, {path.stat().st_size} bytes)')
     (out/'release-manifest.json').write_text(json.dumps(
-        {'version': version, 'artifacts': artifacts}, indent=2)+'\\n', encoding='utf-8')
+        {'version': version, 'artifacts': artifacts}, indent=2)+'\n', encoding='utf-8')
 
 if __name__ == '__main__':
     main()
