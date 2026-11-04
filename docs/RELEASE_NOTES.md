@@ -1,4 +1,6 @@
-# Browser Assistant 2.8.5
+# Browser Assistant 2.8.6
+
+- Text and Vision scans calculate supported 2×2 inverse and matrix multiplication dimension questions from complete page text. Automation can use the result when exactly one displayed option matches.
 
 - A question that cannot be verified no longer ends the run. On supported CCBP practice pages, an available Skip control defers the question and automation continues. On pages without a supported Skip control, review and advance manually to resume the same run.
 - The progress counter shows deferred questions separately from completed answers.

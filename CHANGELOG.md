@@ -1,3 +1,7 @@
+# 2.8.6
+
+- Calculate supported 2×2 matrix inverse and matrix multiplication dimension questions locally when exactly one displayed choice matches.
+
 # 2.8.5
 
 - Continue a practice run after an answer cannot be verified. Use a verified Skip control where supported and keep deferred questions visible for review. On other pages, wait for manual advance and resume on the next question.

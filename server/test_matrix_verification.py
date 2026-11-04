@@ -1,8 +1,68 @@
 import json
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
-from vision_images import cross_check_text_answers, cross_check_visual_answers, VisionUnconfirmedError
+import main
+from vision_images import cross_check_text_answers, cross_check_visual_answers, solve_matrix_choice, VisionUnconfirmedError
+
+
+INVERSE = r'For $A=\begin{bmatrix}2&1\\5&3\end{bmatrix}$, what is $A^{-1}$ computed using the adjugate method?'
+INVERSE_ANSWER = r'$\begin{bmatrix}3&-1\\-5&2\end{bmatrix}$'
+PRODUCT = 'For matrices $A$ with shape $(m, n)$ and $B$ with shape $(p, q)$, which condition must hold for the product $AB$ to be defined?'
+PRODUCT_OPTIONS = '\nA. $m = q$\nB. $n = q$\nC. $m = p$\nD. $n = p$'
+
+
+class MatrixChoiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_automation_calculates_both_questions_without_a_provider(self):
+        inverse_options = '\n'.join((
+            '', f'A. {INVERSE_ANSWER}', r'B. $\begin{bmatrix}3&1\\5&2\end{bmatrix}$',
+            r'C. $\begin{bmatrix}-3&1\\5&-2\end{bmatrix}$', r'D. $\begin{bmatrix}2&-1\\-5&3\end{bmatrix}$',
+        ))
+        cases = (
+            ('16of 20 questions1 Mark' + INVERSE, inverse_options, f'Option A: {INVERSE_ANSWER}'),
+            ('9of 20 questions1 Mark' + PRODUCT, PRODUCT_OPTIONS, 'Option D: $n = p$'),
+        )
+        with patch.object(main, 'try_groq', new_callable=AsyncMock) as groq, \
+             patch.object(main, 'try_ollama', new_callable=AsyncMock) as ollama:
+            for question, options, expected in cases:
+                result = await main.solve_questions(main.PageContent(
+                    text=question + '\nQuestion format: select one answer.' + options,
+                    url='https://example.test', practice_type='mcq', verify_answer=True,
+                ))
+                self.assertTrue(result['answer_verified'])
+                self.assertEqual(json.loads(result['results'])[0]['answer'], expected)
+            groq.assert_not_awaited()
+            ollama.assert_not_awaited()
+
+    async def test_vision_uses_complete_dom_math_without_a_vision_provider(self):
+        with patch.object(main, '_groq_clients', []), patch.object(main, 'compress_image_base64', return_value='chart'):
+            result = await main.solve_vision(main.VisionContent(
+                image='chart', text=PRODUCT + '\nSelect one answer.' + PRODUCT_OPTIONS,
+                url='https://example.test', practice_type='mcq', verify_answer=True,
+            ))
+        self.assertTrue(result['answer_verified'])
+        self.assertEqual(json.loads(result['results'])[0]['answer'], 'Option D: $n = p$')
+
+    def test_fractional_inverse_and_reversed_product(self):
+        inverse = INVERSE.replace(r'2&1\\5&3', r'2&0\\0&4')
+        answer = r'$\begin{bmatrix}\frac{1}{2}&0\\0&0.25\end{bmatrix}$'
+        options = '\nA. [[2,0],[0,4]]\nB. ' + answer
+        self.assertEqual(solve_matrix_choice(inverse + options)['answer'], f'Option B: {answer}')
+        reversed_product = PRODUCT.replace('$AB$', '$BA$')
+        self.assertEqual(solve_matrix_choice(reversed_product + PRODUCT_OPTIONS)['answer'], 'Option A: $m = q$')
+
+    def test_incomplete_ambiguous_or_unsupported_questions_fall_back(self):
+        cases = (
+            PRODUCT + PRODUCT_OPTIONS.replace('$m = p$', '$p = n$'),
+            PRODUCT + PRODUCT_OPTIONS.replace('C. ', 'E. '),
+            PRODUCT + PRODUCT_OPTIONS.replace('$n = p$', '$n = n$'),
+            PRODUCT + '\nSelect ALL correct options.' + PRODUCT_OPTIONS,
+            PRODUCT + '\nComplete code snippets:\nnot part of the question' + PRODUCT_OPTIONS,
+            INVERSE.replace(r'2&1\\5&3', r'2&1\\4&2') + '\nA. ' + INVERSE_ANSWER + '\nB. [[2,0],[0,4]]',
+        )
+        for text in cases:
+            with self.subTest(text=text):
+                self.assertIsNone(solve_matrix_choice(text))
 
 
 class MatrixVerificationTests(unittest.IsolatedAsyncioTestCase):

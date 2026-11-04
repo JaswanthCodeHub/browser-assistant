@@ -24,7 +24,8 @@ from fastapi.exception_handlers import http_exception_handler
 from local_security import install_local_guards, redact, sanitize_data
 from vision_images import (compress_image_base64, unique_image_blocks, collect_image_evidence,
                            cross_check_visual_answers, relative_percentage_question, RELATIVE_PERCENTAGE_INSTRUCTION,
-                           answer_permutation, cross_check_text_answers, VisionRateLimitError, VisionUnconfirmedError)
+                           answer_permutation, cross_check_text_answers, solve_matrix_choice,
+                           VisionRateLimitError, VisionUnconfirmedError)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("browser-assistant")
@@ -190,7 +191,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.8.5", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.8.6", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)
@@ -1190,6 +1191,13 @@ async def review_and_correct_code(
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
+def calculated_matrix_result(text, language):
+    item = solve_matrix_choice(text)
+    if item is not None:
+        return {"results": json.dumps([item], ensure_ascii=False), "provider": "local matrix calculation [verified]",
+                "language": language, "answer_verified": True, "code_reviewed": False}
+
+
 @app.post("/solve")
 async def solve_questions(content: PageContent):
     # Trim oversized page text to stay within token limits
@@ -1232,6 +1240,10 @@ REPAIR MODE:
     )
     strict_code_review = require_code and (content.review_before_submit or not FAST_CODE_MODE or STRICT_REPAIR_REVIEW)
     verify_answers = not require_code and (content.verify_answer or not FAST_SCAN_MODE)
+    if not require_code and content.practice_type in {'auto', 'mcq', 'math', 'aptitude'}:
+        matrix_result = calculated_matrix_result(trimmed_text, language)
+        if matrix_result is not None:
+            return matrix_result
 
     async def confirm_answers(cleaned, source_model=None):
         if not verify_answers or not any(item['type'] == 'mcq' for item in json.loads(cleaned)):
@@ -1395,6 +1407,11 @@ async def _solve_vision(content: VisionContent):
             compressed.append(await asyncio.to_thread(compress_image_base64, image, max_dim=2400, quality=95))
         except ValueError as exc:
             raise HTTPException(422, f'Image {index}: {exc}') from exc
+    is_code_scan = content.practice_type == "code" or (content.practice_type == "auto" and bool(content.language))
+    if not is_code_scan and content.practice_type in {'auto', 'mcq', 'math', 'aptitude'}:
+        matrix_result = calculated_matrix_result(content.text, content.language or CODE_DEFAULT_LANGUAGE)
+        if matrix_result is not None:
+            return matrix_result
     image_blocks, image_positions = unique_image_blocks(compressed)
 
     clients = tuple(_groq_clients)
@@ -1406,7 +1423,6 @@ async def _solve_vision(content: VisionContent):
     loop = asyncio.get_running_loop()
     errors = []
     rate_limit_resets = []
-    is_code_scan = content.practice_type == "code" or (content.practice_type == "auto" and bool(content.language))
     comparison = None if is_code_scan else relative_percentage_question(content.text)
     unconfirmed = False
     vision_token_limit = 4096 if is_code_scan else VISION_MAX_TOKENS

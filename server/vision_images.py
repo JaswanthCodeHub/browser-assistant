@@ -170,9 +170,13 @@ def answer_permutation(value):
 MATRIX_SYNTAX = re.compile(r'\\begin\{(?:[bpBvV]?matrix|smallmatrix)\}')
 
 
-def numeric_matrix_key(value):
+def unwrap_math(value):
     text = re.sub(r'^\${1,2}|\${1,2}$', '', value.strip())
-    text = re.sub(r'^\\[\[(]|\\[\])]$', '', text).strip().replace('−', '-')
+    return re.sub(r'^\\[\[(]|\\[\])]$', '', text).strip().replace('−', '-')
+
+
+def matrix_cells(value):
+    text = unwrap_math(value)
     latex = re.fullmatch(r'\\begin\{([bpBvV]?matrix|smallmatrix)\}(.*?)\\end\{\1\}', text, re.S)
     array = re.fullmatch(r'\[\s*(\[[^\[\]]+\](?:\s*,\s*\[[^\[\]]+\])*)\s*\]', text)
     if latex:
@@ -181,11 +185,95 @@ def numeric_matrix_key(value):
         rows = [row.split(',') for row in re.findall(r'\[([^\[\]]+)\]', array[1])]
     else:
         return None
-    cells = [[cell.strip() for cell in row] for row in rows]
+    return [[cell.strip() for cell in row] for row in rows]
+
+
+def numeric_matrix_key(value):
+    cells = matrix_cells(value)
     if cells and all(len(row) == len(cells[0]) and all(
             re.fullmatch(r'[+-]?(?:\d+(?:\.\d+)?|\.\d+)', cell, re.ASCII) for cell in row) for row in cells):
         return json.dumps(cells, separators=(',', ':'))
     return None
+
+
+def matrix_2x2(value):
+    rows = matrix_cells(value)
+    if not rows or len(rows) != 2 or any(len(row) != 2 for row in rows):
+        return None
+    entries = []
+    for cell in (cell for row in rows for cell in row):
+        cell = re.sub(r'^([+-]?)\\(?:[dt]?frac)\{([+-]?\d{1,15})\}\{(\d{1,15})\}$',
+                      r'\1\2/\3', cell)
+        if not re.fullmatch(rf'(?:{DECIMAL_VALUE}|[+-]?\d{{1,15}}/\d{{1,15}})', cell):
+            return None
+        try:
+            entries.append(Fraction(cell))
+        except ZeroDivisionError:
+            return None
+    return tuple(entries)
+
+
+def solve_matrix_choice(text):
+    """Calculate a self-contained matrix question with one matching displayed choice."""
+    question, separator, option_text = text.strip().rpartition('\nA.')
+    if not separator:
+        return None
+    question = re.sub(r'\n(?:Question format: )?Select one answer\.$', '', question, flags=re.I)
+    question = re.sub(r'^\d+\s*of\s*\d+\s*questions?\s*\d+\s*marks?\s*', '', question, flags=re.I)
+    # Math delimiters and layout whitespace do not carry meaning in these prompts.
+    prompt = re.sub(r'\s+', ' ', question.replace('$', '')).strip()
+    inverse = re.fullmatch(
+        r'For ([A-Z])\s*=\s*(.+?),\s*what is \1\^(?:\{-1\}|-1)'
+        r'(?: computed using the adjugate method)?\?', prompt,
+    )
+    product = re.fullmatch(
+        r'For matrices ([A-Z]) with shape \(\s*([a-z])\s*,\s*([a-z])\s*\) and '
+        r'([A-Z]) with shape \(\s*([a-z])\s*,\s*([a-z])\s*\),\s*'
+        r'which condition must hold for the product (\1\4|\4\1) to be defined\?', prompt,
+    )
+    if inverse:
+        entries = matrix_2x2(inverse[2])
+        if entries is None:
+            return None
+        a, b, c, d = entries
+        determinant = a * d - b * c
+        if not determinant:
+            return None
+        expected = (d / determinant, -b / determinant, -c / determinant, a / determinant)
+        parse_option = matrix_2x2
+        reasoning = f'The determinant is ({a})({d}) − ({b})({c}) = {determinant}. Divide the adjugate by the determinant.'
+    elif product:
+        first, first_rows, first_cols, second, second_rows, second_cols, order = product.groups()
+        if first == second or len({first_rows, first_cols, second_rows, second_cols}) != 4:
+            return None
+        left_cols, right_rows = (first_cols, second_rows) if order == first + second else (second_cols, first_rows)
+        expected = frozenset((left_cols, right_rows))
+
+        def parse_option(value):
+            equation = re.fullmatch(r'([a-z])\s*=\s*([a-z])', unwrap_math(value))
+            return frozenset(equation.groups()) if equation else None
+
+        reasoning = f'The left matrix has {left_cols} columns and the right matrix has {right_rows} rows. These must be equal.'
+    else:
+        return None
+
+    lines = ('A.' + option_text).splitlines()
+    if not 2 <= len(lines) <= 26:
+        return None
+    matches = []
+    for index, line in enumerate(lines):
+        letter = chr(ord('A') + index)
+        option = re.fullmatch(rf'{letter}\.\s*(\S.*)', line)
+        if not option:
+            return None
+        value = parse_option(option[1])
+        if value is None:
+            return None
+        if value == expected:
+            matches.append(f'Option {letter}: {option[1]}')
+    if len(matches) != 1:
+        return None
+    return {'type': 'mcq', 'question': question, 'answer': matches[0], 'reasoning': reasoning}
 
 
 def normalize_checked_answer(value, *, matrix_math=False):
