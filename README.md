@@ -31,8 +31,22 @@ completion on the live portal has not been verified.
 
 Use Chrome, Python **3.11+**, and either a Groq key or an installed Ollama model for text scans. Building from source or running contributor tests requires Node.js **22.18+**. Chrome internal pages cannot run content scripts; other Chromium browsers are not verified here. Firefox is not supported by this manifest.
 
-Download the backend ZIP or clone this repository, then open a terminal in the extracted backend folder or repository root.
-Versioned extension, backend, and source ZIPs with SHA-256 checksums are available on the [GitHub Releases page](https://github.com/JaswanthCodeHub/browser-assistant/releases).
+### Install and update with npm
+
+In a dedicated folder, run `npm init -y` and then `npm install browser-assistant`. The package includes the compiled Chrome extension and the local Python backend.
+
+1. Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select `node_modules/browser-assistant/extension` inside your folder.
+2. Create and activate a Python 3.11+ virtual environment in your folder. Install the backend dependencies with `python -m pip install --require-hashes -r node_modules/browser-assistant/server/requirements.lock.txt`.
+3. Copy `node_modules/browser-assistant/server/.env.example` to `.env` in your folder. Set `HISTORY_DB_PATH=./scan_history.db` in that copy and configure a provider as described below. Keep this file and the database beside `node_modules` so they persist across upgrades.
+4. From your folder, start the backend with `python -m uvicorn --app-dir node_modules/browser-assistant/server --env-file .env --host 127.0.0.1 --port 8000 main:app`. Check `http://127.0.0.1:8000/health`.
+
+If you're moving from a ZIP install, copy your existing `server/.env` and `server/scan_history.db`, if present, into the new folder to keep your provider settings and scan history.
+
+To upgrade, stop the backend and run `npm install browser-assistant@latest` from the same folder. Rerun the Python dependency install, restart the backend, and click **Reload** on the extension card in `chrome://extensions`. Refresh any open tabs where you use the extension.
+
+### Install from GitHub
+
+Download the backend ZIP or clone this repository, then open a terminal in the extracted backend folder or repository root. Versioned extension, backend, and source ZIPs with SHA-256 checksums are available on the [GitHub Releases page](https://github.com/JaswanthCodeHub/browser-assistant/releases).
 
 ### Windows PowerShell
 
@@ -60,7 +74,7 @@ Python 3.12 or 3.14 can replace 3.11. Pillow 13 security fixes require Python 3.
 
 ### Configure a provider
 
-For cloud inference, set `GROQ_API_KEY` in `server/.env` to your own key from [Groq Console](https://console.groq.com/). Text and vision model IDs are configurable; provider availability and account access can change. The example matches implementation defaults, not a guarantee that a model is available to your account.
+For cloud inference, set `GROQ_API_KEY` in your `.env` to your own key from [Groq Console](https://console.groq.com/). Text and vision model IDs are configurable; provider availability and account access can change. The example matches implementation defaults, not a guarantee that a model is available to your account.
 
 For local text inference, install [Ollama](https://github.com/ollama/ollama), run `ollama pull llama3`, and ensure its service is running. Leave all Groq key fields empty to keep text inference on Ollama; when a Groq key is present, Groq is tried first. Set `OLLAMA_MODEL` to an installed model name. Vision scans require Groq and have no Ollama fallback. See [configuration and troubleshooting](docs/SETUP.md).
 

@@ -52,6 +52,18 @@ Reviewers should verify reproducibility, scope, data handling, failure behavior,
 `python scripts/package_release.py --validate-only` checks every release input without
 creating a ZIP. After checks pass, the command without that option creates extension,
 backend and complete-source archives plus SHA-256 files in `dist/v<version>/`.
-The source archive includes regression tests. The tag must match the manifest;
-the workflow publishes the archives after its checks pass. Confirm publication rights, account settings,
-browser QA and archive contents using [LAUNCH.md](docs/LAUNCH.md).
+The source archive includes regression tests. Set the same version in `package.json`,
+`package-lock.json`, `extension/manifest.json`, and `server/main.py`. Use
+`npm version <version> --no-git-tag-version` to update both npm metadata files.
+After merging the release commit to `main`, push its `v<version>` tag. The release
+workflow runs the checks, uploads the ZIPs to GitHub Releases, and publishes the
+same version to npm. `npm pack --dry-run` lists the files in the npm package.
+
+The npm package uses [Trusted Publishing](https://docs.npmjs.com/trusted-publishers/)
+with GitHub owner `JaswanthCodeHub`, repository `browser-assistant`, workflow
+`release.yml`, and permission to publish. Leave the environment field blank.
+An npm maintainer must publish the first version while signed in and configure
+the trusted publisher before pushing the next release tag.
+
+Confirm publication rights, account settings, browser QA, and archive contents
+using [LAUNCH.md](docs/LAUNCH.md).

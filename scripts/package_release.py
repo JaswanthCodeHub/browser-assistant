@@ -34,6 +34,14 @@ def release_files():
 
 def validate_inputs(groups):
     manifest = json.loads((ROOT/'extension/manifest.json').read_text(encoding='utf-8'))
+    npm_package = json.loads((ROOT/'package.json').read_text(encoding='utf-8'))
+    npm_lock = json.loads((ROOT/'package-lock.json').read_text(encoding='utf-8'))
+    assert npm_package['version'] == manifest['version'], 'npm version must match the extension manifest'
+    assert npm_lock['version'] == npm_package['version'], 'npm lockfile version must match package.json'
+    npm_runtime = {'extension/' + path for path in EXTENSION}
+    npm_runtime.update(path for path in BACKEND if path.startswith('server/')
+                       and Path(path).name not in {'Dockerfile', '.dockerignore'})
+    assert set(npm_package['files']) == npm_runtime, 'npm files must match the extension and backend runtime'
     assert manifest['manifest_version'] == 3
     for _kind,files in groups:
         assert len(files) == len(set(files)), 'Duplicate release member'

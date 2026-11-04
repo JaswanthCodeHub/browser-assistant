@@ -1,3 +1,7 @@
+# 2.8.2
+
+- Added npm distribution for the Chrome extension and local backend. GitHub release tags publish the matching package through npm Trusted Publishing.
+
 # 2.8.1
 
 - Git tracks the extension source and regression tests as TypeScript. The build generates the JavaScript for the Chrome install ZIP.
