@@ -378,6 +378,7 @@
         const currentQuestion = automation.batch?.title || (automation.running && automation.codingQuestionText)
             || (authorized ? getAuthorizedQuestion(context)?.text : '');
         const pageName = authorized ? context.target.id : window.location.hostname;
+        const deferred = automation.deferredQuestions?.size ?? 0;
         if (status) {
             status.textContent = authorized
                 ? `Build ${extensionVersion} · ${context.target.id}: ${automation.state} · Completed: ${automation.completed}${automation.error ? ` · ${automation.error}` : ''}`
@@ -390,14 +391,15 @@
         if (page) page.textContent = pageName;
         if (completed) completed.textContent = String(automation.completed);
         if (question) question.textContent = currentQuestion || '—';
-        if (progress) progress.textContent = `${automation.completed} / —`;
+        if (progress) progress.textContent = deferred ? `${automation.completed} completed · ${deferred} deferred` : `${automation.completed} / —`;
         if (latest) {
+            const reviewing = ['WAITING_FOR_REVIEW', 'DEFERRING_QUESTION', 'REVIEW_NEEDED'].includes(automation.state);
             latest.textContent = automation.error
-                ? `⚠ ${automation.error}`
+                ? reviewing ? automation.error : `⚠ ${automation.error}`
                 : authorized
                     ? `Current status: ${automation.state.replace(/_/g, ' ').toLowerCase()}.`
                     : 'Automation is available only on an authorized QA page.';
-            latest.classList.toggle('has-error', Boolean(automation.error));
+            latest.classList.toggle('has-error', Boolean(automation.error) && !reviewing);
         }
         if (start) start.disabled = !authorized || automation.running;
         if (pause) { pause.disabled = !automation.running; pause.textContent = automation.paused ? 'Resume' : 'Pause'; }
@@ -421,6 +423,7 @@
         automation.paused = false;
         automation.pendingNavigation = false;
         automation.state = reason;
+        if (reason === 'REVIEW_NEEDED') automation.error = 'Review deferred questions on the portal.';
         updateAutomationUI();
     }
 
@@ -977,6 +980,73 @@
         }
     }
 
+    async function continueAfterUnverifiedQuestion(question, runId, reason, allowSkip = true) {
+        if (!(await waitWhilePaused(runId))) return false;
+        const initial = getAutomationContext();
+        const adapter = getAutomationAdapter(initial);
+        if (!adapter || initial.target.id !== automation.targetId) {
+            stopAutomation('UNAUTHORIZED');
+            return false;
+        }
+        const fresh = getAuthorizedQuestion(initial);
+        const sameQuestion = fresh?.signature === question.signature && hasSameQuestionOptions(question, fresh);
+        const practice = initial.target.id === 'ccbp-learning-practice'
+            && /^\/(?:default-question|primitive-coding(?:-review)?)\/practice\//.test(location.pathname);
+        const hasDraft = fresh?.input?.value?.trim() || fresh?.options.some(option => option.isSelected?.() || option.input?.checked);
+        if (allowSkip && practice && sameQuestion && !hasDraft && question.type !== 'ordering'
+            && !adapter.isSaving?.(document) && !adapter.getSubmittedAdvance?.(document)
+            && automationPolicy.canExecute('click', initial) && automationPolicy.canExecute('validate', initial)) {
+            const skip = adapter.getPracticeSkip?.(document, fresh);
+            if (skip) {
+                automation.state = 'DEFERRING_QUESTION';
+                automation.error = reason;
+                automation.pendingNavigation = true;
+                updateAutomationUI();
+                skip.click();
+                const transition = await waitForPracticeTransition(question.signature, runId);
+                if (!automation.running || automation.runId !== runId) return false;
+                automation.pendingNavigation = false;
+                if (transition === 'next' || transition === 'complete') {
+                    automation.deferredQuestions.add(question.signature);
+                    automation.error = '';
+                    return true;
+                }
+            }
+        }
+
+        automation.state = 'WAITING_FOR_REVIEW';
+        automation.error = `${reason} Use the page controls to review and move to the next question. Automation will continue here.`;
+        updateAutomationUI();
+        while (await waitWhilePaused(runId)) {
+            if (automation.state !== 'WAITING_FOR_REVIEW') {
+                automation.state = 'WAITING_FOR_REVIEW';
+                updateAutomationUI();
+            }
+            const context = getAutomationContext();
+            const currentAdapter = getAutomationAdapter(context);
+            if (context.mode !== 'FULL' || context.target.id !== initial.target.id || currentAdapter?.id !== adapter.id) {
+                stopAutomation('UNAUTHORIZED');
+                return false;
+            }
+            const blocked = currentAdapter.getBlockingReason?.(document);
+            if (blocked) {
+                automation.error = blocked;
+                stopAutomation('PAUSED');
+                return false;
+            }
+            if (!currentAdapter.isSaving?.(document)) {
+                const current = getAuthorizedQuestion(context);
+                if (currentAdapter.getSubmittedAdvance?.(document) || currentAdapter.isComplete(document)
+                    || (current && current.signature !== question.signature && !hasSameQuestionOptions(question, current))) {
+                    automation.error = '';
+                    return true;
+                }
+            }
+            await new Promise(resolve => setTimeout(resolve, 250));
+        }
+        return false;
+    }
+
     async function startPracticeAutomation() {
         if (window.BrowserAssistantJournal?.matches()) {
             await window.BrowserAssistantJournal.start(); updateAutomationUI(); return;
@@ -1026,6 +1096,7 @@
         automation.paused = false;
         automation.error = '';
         automation.completed = 0;
+        automation.deferredQuestions = new Set();
         automation.targetId = initialContext.target.id;
         automation.pendingNavigation = false;
         automation.currentSignature = null;
@@ -1067,14 +1138,21 @@
                 submittedAdvance.click();
                 const transition = await waitForPracticeTransition(previousSignature, runId);
                 if (!automation.running || automation.runId !== runId) break;
-                if (transition === 'next' || transition === 'complete') automation.completed += 1;
-                if (transition === 'complete') { stopAutomation('COMPLETED'); break; }
+                if (transition === 'next' || transition === 'complete') {
+                    automation.completed += 1;
+                    automation.deferredQuestions.delete(previousSignature);
+                }
+                if (transition === 'complete') { stopAutomation(automation.deferredQuestions.size ? 'REVIEW_NEEDED' : 'COMPLETED'); break; }
                 if (transition !== 'next') {
                     automation.error = (transition as { blocked?: string })?.blocked || 'Next question did not appear after the submitted answer.'; stopAutomation('PAUSED'); break;
                 }
                 continue;
             }
             if (currentAdapter.isComplete(document)) {
+                if (automation.deferredQuestions.size) {
+                    stopAutomation('REVIEW_NEEDED');
+                    break;
+                }
                 const nextPractice = currentAdapter.getNextPractice?.(document);
                 if (!nextPractice) { stopAutomation('COMPLETED'); break; }
                 if (!automationPolicy.canExecute('navigate', context) && !automationPolicy.canExecute('click', context)) {
@@ -1105,6 +1183,11 @@
                 stopAutomation('PAUSED'); break;
             }
             if (question.type === 'code') { await runCodingAutomation(question, runId); break; }
+            if (automation.deferredQuestions.has(question.signature)) {
+                automation.currentSignature = question.signature;
+                if (await continueAfterUnverifiedQuestion(question, runId, 'This question was deferred earlier.', false)) continue;
+                break;
+            }
             if (automation.processed.has(question.signature)) { automation.error = 'Repeated question detected.'; stopAutomation('PAUSED'); break; }
             automation.currentSignature = question.signature;
             automation.state = 'SOLVING'; updateAutomationUI();
@@ -1152,7 +1235,9 @@
             } catch (error) {
                 if (!automation.running || automation.runId !== runId) break;
                 automation.error = error.message || 'Local AI server unavailable.';
-                stopAutomation(['answer_unconfirmed', 'vision_unconfirmed'].includes(error.code) ? 'PAUSED' : 'ERROR');
+                if (['answer_unconfirmed', 'vision_unconfirmed'].includes(error.code)) {
+                    if (await continueAfterUnverifiedQuestion(question, runId, automation.error)) continue;
+                } else stopAutomation('ERROR');
                 break;
             }
             if (!automation.running || automation.runId !== runId || !response) break;
@@ -1200,6 +1285,10 @@
             // transient code-block markup.
             if (!answerIndexes.length || !current || !hasSameQuestionOptions(question, current)) {
                 automation.error = !answerIndexes.length ? 'The verified answer did not match the displayed options exactly.' : !current ? 'Question controls disappeared while solving.' : 'Question text or options changed while solving. Please retry.';
+                if (!answerIndexes.length && current?.signature === question.signature && hasSameQuestionOptions(question, current)) {
+                    if (await continueAfterUnverifiedQuestion(question, runId, automation.error)) continue;
+                    break;
+                }
                 stopAutomation('PAUSED'); break;
             }
             if (!automationPolicy.canExecute('select', currentContext) || !automationPolicy.canExecute('validate', currentContext)) { automation.error = 'Target policy does not permit selection or validation.'; stopAutomation('UNAUTHORIZED'); break; }
@@ -1270,7 +1359,11 @@
                 (transition as { advance: HTMLElement }).advance.click();
                 transition = await waitForPracticeTransition(question.signature, runId);
             }
-            if (transition === 'complete') { automation.completed += 1; stopAutomation('COMPLETED'); break; }
+            if (transition === 'complete') {
+                automation.completed += 1;
+                stopAutomation(automation.deferredQuestions.size ? 'REVIEW_NEEDED' : 'COMPLETED');
+                break;
+            }
             if (transition !== 'next') { automation.error = (transition as { blocked?: string })?.blocked || 'Next question did not appear in time.'; stopAutomation('PAUSED'); break; }
             automation.completed += 1;
         }

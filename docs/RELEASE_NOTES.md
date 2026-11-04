@@ -1,4 +1,7 @@
-# Browser Assistant 2.8.4
+# Browser Assistant 2.8.5
+
+- A question that cannot be verified no longer ends the run. On supported CCBP practice pages, an available Skip control defers the question and automation continues. On pages without a supported Skip control, review and advance manually to resume the same run.
+- The progress counter shows deferred questions separately from completed answers.
 
 - Text and Vision verification recognize equivalent LaTeX and bracket notation for numeric matrices. A different sign, cell order, or option label still fails verification.
 - An incomplete independent Text Scan verification gets one retry using the original question and options.

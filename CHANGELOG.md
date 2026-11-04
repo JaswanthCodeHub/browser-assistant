@@ -1,3 +1,7 @@
+# 2.8.5
+
+- Continue a practice run after an answer cannot be verified. Use a verified Skip control where supported and keep deferred questions visible for review. On other pages, wait for manual advance and resume on the next question.
+
 # 2.8.4
 
 - Match equivalent numeric matrix notation in verified answers while preserving cell values, order, and option labels.

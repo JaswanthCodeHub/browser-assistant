@@ -79,6 +79,7 @@ interface AssistantAutomationState {
     paused: boolean;
     runId: number;
     processed: Set<string>;
+    deferredQuestions?: Set<string>;
     completed: number;
     error: string;
     currentSignature: string;

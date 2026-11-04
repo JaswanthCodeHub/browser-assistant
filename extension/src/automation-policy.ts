@@ -349,6 +349,23 @@
             const unique = [...new Set(candidates)];
             return unique.length === 1 ? unique[0] : null;
         },
+        getPracticeSkip(doc, question) {
+            const anchor = question.form || question.container;
+            if (!anchor) return null;
+            const skips = [...doc.querySelectorAll('button,[role="button"]')].filter(button =>
+                button.isConnected && button.getClientRects().length && !button.disabled
+                && button.getAttribute('aria-disabled') !== 'true' && !button.closest('#assistant-root')
+                && /^skip(?: question)?$/i.test((button.innerText || button.textContent || button.getAttribute('aria-label') || '').trim()));
+            if (skips.length !== 1) return null;
+            for (let scope = anchor; scope && scope !== doc.body; scope = scope.parentElement) {
+                if (!scope.contains(skips[0])) continue;
+                const submits = [...scope.querySelectorAll('button,[role="button"],input[type="submit"]')].filter(button =>
+                    button.getClientRects().length && !button.closest('#assistant-root')
+                    && /^submit(?: answer)?$/i.test((button.innerText || button.textContent || button.value || button.getAttribute('aria-label') || '').trim()));
+                if (submits.length === 1) return skips[0];
+            }
+            return null;
+        },
         getBlockingReason(doc) {
             const expired = [...doc.querySelectorAll('p,span,div,h1,h2,h3,h4')].some(node =>
                 node.getClientRects().length && !node.closest('#assistant-root') && !node.children.length
