@@ -8,9 +8,11 @@
         message=String(message).replace(/gsk_[\w]+|sk-[\w-]+/g,'[redacted]').slice(0,900);
         const error=new Error(`${response?.status ? `HTTP ${response.status}: ` : ''}${message}`) as Error & {
             status?: number;
+            code?: string;
             retryAfterMs?: number;
         };
         error.status=response?.status;
+        error.code=detail?.code;
         const seconds=detail?.retry_after_seconds;
         if (error.status===429 && Number.isFinite(seconds) && seconds>0) {
             error.retryAfterMs=seconds*1000;
@@ -18,6 +20,8 @@
         return error;
     }
     function temporary(error) {
+        // The backend already tried the available vision keys.
+        if (error.code==='vision_rate_limited') return false;
         const text=error?.message || '';
         if (/access denied|forbidden|unauthorized|invalid.api.key|not configured|validation|not.support|model.*(?:not found|not exist)|illustration changed|question changed|context invalidated|extension was reloaded|no readable|unparseable/i.test(text)) return false;
         if (error.status) return [408,425,429,500,502,503,504].includes(error.status);

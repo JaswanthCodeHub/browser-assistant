@@ -1,4 +1,7 @@
-# Browser Assistant 2.8.3
+# Browser Assistant 2.8.4
+
+- Text and Vision verification recognize equivalent LaTeX and bracket notation for numeric matrices. A different sign, cell order, or option label still fails verification.
+- An incomplete independent Text Scan verification gets one retry using the original question and options.
 
 - Vision verification now checks the requested chart series, legend, and calculation. A malformed response or disagreement gets one extra independent solve, and results require two matching answers.
 - Vision rate limits now show the provider cooldown. Short waits can retry while the same question remains open.

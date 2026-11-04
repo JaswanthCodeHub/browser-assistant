@@ -44,6 +44,16 @@ test('a long rate limit reports the wait without restarting the request',async()
     })),/Try again in 120 seconds/);
     assert.equal(calls,1);
 });
+test('a final vision cooldown is reported without replaying the chart request',async()=>{
+    let calls=0;
+    await assert.rejects(setup().run(options(async()=>{
+        calls++;
+        return {ok:false,status:429,data:{detail:{
+            code:'vision_rate_limited',message:'Try again in 23 seconds.',retry_after_seconds:23,
+        }}};
+    },{sleep:async()=>assert.fail('The server already checked the available keys.')})),/Try again in 23 seconds/);
+    assert.equal(calls,1);
+});
 test('persistent service failure is bounded and reports the real provider error',async()=>{
     let calls=0;
     await assert.rejects(setup().run(options(async()=>{calls++;return {ok:false,status:502,data:{detail:{message:'All vision providers failed',errors:['Vision provider connection timed out']}}};})),

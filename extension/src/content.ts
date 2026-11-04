@@ -301,63 +301,43 @@
     watchSpaNavigation();
 
     function answerIndexesFromResult(results, question) {
-        const answer = String(results?.[0]?.answer ?? '').replace(/[*`]/g, '').trim();
-        const numericValue = answer.replace(/^(?:the\s+)?(?:correct\s+)?(?:answer|result)\s*(?:is\s*|:\s*)?/i, '').trim();
-        if (/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(numericValue)) {
-            const matches = question.options.filter(option => option.text.trim() === numericValue);
-            return matches.length === 1 ? [matches[0].index] : [];
-        }
-        const letterMatches = [...answer.matchAll(/\bOption\s+([A-Z])\b/gi)]
-            .map((match) => match[1].toUpperCase().charCodeAt(0) - 65)
-            .filter((index) => index >= 0 && index < question.options.length);
-        const standaloneLetter = answer.match(/(?:^|\n|(?:answer|correct(?:\s+answer)?)\s*(?:is|:)?\s*)\(?([A-Z])\)?(?:[.:\-\s]|$)/i)?.[1];
-        const standaloneIndex = standaloneLetter ? standaloneLetter.toUpperCase().charCodeAt(0) - 65 : -1;
-        const numericMatches = [...answer.matchAll(/option\s*(?:number|no\.?|#)?\s*([1-9])\b/gi)]
-            .map((match) => Number(match[1]) - 1)
-            .filter((index) => index >= 0 && index < question.options.length);
-        const optionIndexes = [...new Set([
-            ...letterMatches,
-            ...(standaloneIndex >= 0 && standaloneIndex < question.options.length ? [standaloneIndex] : []),
-            ...numericMatches,
-        ])];
-        if (optionIndexes.length) return question.selectionType === 'multiple' ? optionIndexes : [optionIndexes[0]];
-        const answerText = answer.toLowerCase();
-        const compact = (value) => value.toLowerCase().replace(/[^a-z0-9]+/g, '');
-        const normalizedAnswer = answerText
-            .replace(/^(?:the\s+)?(?:correct\s+)?(?:answer|result)\s*(?:is|:)?\s*/i, '')
-            .replace(/^option\s+[a-z]\s*[:.)-]?\s*/i, '')
-            .trim();
-        // Numeric MCQ options such as 0, 2, 9, and 3 need an exact match;
-        // substring matching would be unsafe for values inside code/reasoning.
-        const exactValue = question.options.find((option) =>
-            option.text.trim().toLowerCase() === normalizedAnswer
-            || (!/^[+-]?[\d.]+$/.test(option.text.trim()) && compact(option.text) === compact(normalizedAnswer)),
-        );
-        if (exactValue) return [exactValue.index];
-        const textMatches = question.options
-            .filter((option) => {
-                const optionText = compact(option.text);
-                const modelText = compact(answerText);
-                return optionText.length > 2 && (modelText.includes(optionText) || optionText.includes(modelText));
-            })
-            .map((option) => option.index);
-        return question.selectionType === 'multiple' ? textMatches : textMatches.slice(0, 1);
-    }
-
-    async function recoverAnswerIndexes(question, previousAnswer) {
-        const format = question.selectionType === 'multiple'
-            ? 'Return every correct choice strictly as "Option A; Option C".'
-            : 'Return exactly one choice strictly as "Option A", "Option B", "Option C", or "Option D".';
-        const response = await apiRequest('/solve', 'POST', {
-            text: `OPTION-MAPPING RECOVERY\n${format}\nDo not explain.\n\nQuestion:\n${question.text}\n\nOptions:\n${question.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option.text}`).join('\n')}\n\nPrevious model response:\n${String(previousAnswer || '')}`,
-            url: window.location.href,
-            practice_type: 'mcq',
+        const raw = results?.[0]?.answer;
+        if (!Array.isArray(results) || results.length !== 1 || (typeof raw !== 'string' && typeof raw !== 'number')) return [];
+        const answer = String(raw).trim();
+        if (!answer) return [];
+        const normalize = value => value.trim().replace(/\r\n/g, '\n').replace(/(\d) +%/g, '$1%');
+        const matrixSyntax = /\\begin\{(?:[bpBvV]?matrix|smallmatrix)\}/;
+        const matrixQuestion = matrixSyntax.test(question.text ?? '') || question.options.some(option => matrixSyntax.test(option.text));
+        const matrixKey = (value: string) => {
+            const text = value.trim().replace(/^\${1,2}|\${1,2}$/g, '')
+                .replace(/^\\[\[(]|\\[\])]$/g, '').trim().replace(/−/g, '-');
+            const latex = /^\\begin\{([bpBvV]?matrix|smallmatrix)\}([\s\S]*?)\\end\{\1\}$/.exec(text);
+            const array = /^\[\s*(\[[^\[\]]+\](?:\s*,\s*\[[^\[\]]+\])*)\s*\]$/.exec(text);
+            const rows = latex ? latex[2].split(/\\\\/).map(row => row.split('&'))
+                : array ? [...array[1].matchAll(/\[([^\[\]]+)\]/g)].map(row => row[1].split(',')) : [];
+            const cells = rows.map(row => row.map(cell => cell.trim()));
+            return cells.length && cells.every(row => row.length === cells[0].length
+                && row.every(cell => /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(cell))) ? JSON.stringify(cells) : '';
+        };
+        const matchesOption = (option: string, candidate: string) => {
+            if (normalize(option) === normalize(candidate)) return true;
+            const matrix = matrixQuestion && matrixKey(option);
+            return Boolean(matrix && matrix === matrixKey(candidate));
+        };
+        const choices = question.selectionType === 'multiple'
+            ? answer.split(/;\s*(?=(?:option\s+)?[a-z]\s*[:.)])/i) : [answer];
+        const indexes = choices.map(choice => {
+            const labeled = /^(?:option\s+)?([a-z])\s*[:.)]\s*(\S[\s\S]*)$/i.exec(choice.trim());
+            if (labeled) {
+                const index = labeled[1].toUpperCase().charCodeAt(0) - 65;
+                const option = question.options[index];
+                return option && matchesOption(option.text, labeled[2]) ? index : -1;
+            }
+            const matches = question.options.map((option, index) => matchesOption(option.text, choice) ? index : -1)
+                .filter(index => index >= 0);
+            return matches.length === 1 ? matches[0] : -1;
         });
-        if (!response?.ok) return [];
-        try {
-            const recovered = JSON.parse(response.data.results);
-            return answerIndexesFromResult(recovered, question);
-        } catch { return []; }
+        return indexes.includes(-1) || new Set(indexes).size !== indexes.length ? [] : indexes;
     }
 
     function updateAutomationUI() {
@@ -1148,7 +1128,7 @@
                 const requestBody = {
                     text: `${requestText}\nQuestion format: ${question.type === 'short-answer' ? 'Free response. Return only the exact value to enter in the JSON answer field, without an option label, explanation, or Markdown.' : question.selectionType === 'multiple' ? 'select all that apply; return every correct option as "Option A: ...; Option B: ...".' : 'select one answer.'}\n${question.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option.text}`).join('\n')}`,
                     ...(question.type === 'ordering' ? { text: `${question.text}\nReorder ALL items. Return the complete permutation as a JSON array of 1-based item numbers in the answer field (example: [2,1,3]). Check every item appears exactly once.\n${question.options.map((option, index) => `${index + 1}. ${option.text}`).join('\n')}` } : {}),
-                    url: window.location.href, practice_type: 'mcq',
+                    url: window.location.href, practice_type: 'mcq', verify_answer: true,
                 };
                 const visuals = window.BrowserAssistantQuestionVisuals;
                 if (visuals?.nodes(question).length) {
@@ -1164,19 +1144,29 @@
                     automation.state = 'SOLVING'; updateAutomationUI();
                     response = await requestPracticeAnswer(question, runId, '/solve-vision', {
                         image:snapshot.images[0], images:snapshot.images.slice(1),
-                        text:requestBody.text, url:requestBody.url, practice_type:'mcq',
+                        text:requestBody.text, url:requestBody.url, practice_type:'mcq', verify_answer:true,
                     });
                 } else {
                     response = await requestPracticeAnswer(question, runId, '/solve', requestBody);
                 }
             } catch (error) {
                 if (!automation.running || automation.runId !== runId) break;
-                automation.error = error.message || 'Local AI server unavailable.'; stopAutomation('ERROR'); break;
+                automation.error = error.message || 'Local AI server unavailable.';
+                stopAutomation(['answer_unconfirmed', 'vision_unconfirmed'].includes(error.code) ? 'PAUSED' : 'ERROR');
+                break;
             }
             if (!automation.running || automation.runId !== runId || !response) break;
             automation.error = ''; automation.state = 'SOLVING'; updateAutomationUI();
+            if (response.data?.answer_verified !== true) {
+                automation.error = 'Answer verification is required. Restart the updated Browser Assistant backend.';
+                stopAutomation('PAUSED'); break;
+            }
             let results;
             try { results = JSON.parse(response.data.results); } catch { automation.error = 'AI returned an invalid answer.'; stopAutomation('ERROR'); break; }
+            if (!Array.isArray(results) || results.length !== 1 || results[0]?.type !== 'mcq') {
+                automation.error = 'Expected one verified answer for the current question.';
+                stopAutomation('PAUSED'); break;
+            }
             if (question.codeSnapshot) {
                 let snapshot;
                 try { snapshot = await readMcqSnippetSnapshot(question, runId); } catch { snapshot = null; }
@@ -1198,11 +1188,6 @@
                         && order.every(value => Number.isInteger(value) && value >= 1 && value <= order.length) ? order.map(value => value - 1) : [];
                 } catch { answerIndexes = []; }
             }
-            if (!answerIndexes.length && !shortAnswer && !ordering && !question.visualSnapshot) {
-                automation.state = 'RECOVERING_ANSWER'; updateAutomationUI();
-                try { answerIndexes = await recoverAnswerIndexes(question, results?.[0]?.answer); }
-                catch { answerIndexes = []; }
-            }
             const currentContext = getAutomationContext();
             let current = getAuthorizedQuestion(currentContext);
             if (question.visualSnapshot && (!current || window.BrowserAssistantQuestionVisuals.fingerprint(current) !== question.visualSnapshot)) {
@@ -1214,7 +1199,7 @@
             // target, so keep the safety check focused on it rather than on
             // transient code-block markup.
             if (!answerIndexes.length || !current || !hasSameQuestionOptions(question, current)) {
-                automation.error = !answerIndexes.length ? 'AI answer did not match a unique option.' : !current ? 'Question controls disappeared while solving.' : 'Question text or options changed while solving. Please retry.';
+                automation.error = !answerIndexes.length ? 'The verified answer did not match the displayed options exactly.' : !current ? 'Question controls disappeared while solving.' : 'Question text or options changed while solving. Please retry.';
                 stopAutomation('PAUSED'); break;
             }
             if (!automationPolicy.canExecute('select', currentContext) || !automationPolicy.canExecute('validate', currentContext)) { automation.error = 'Target policy does not permit selection or validation.'; stopAutomation('UNAUTHORIZED'); break; }
@@ -1690,7 +1675,8 @@
                 image: images[0], images: images.slice(1), text: context.text,
                 url: context.url,
                 practice_type: context.question ? 'mcq' : practiceType,
-                language: requestedLanguage
+                language: context.question ? undefined : requestedLanguage,
+                verify_answer: true,
             });
 
             if (!res.ok) {
@@ -1708,6 +1694,10 @@
                 throw new Error('Vision returned an invalid answer format. Please scan a clear, complete question again.');
             }
             if (!Array.isArray(parsed) || !parsed.length) throw new Error('The complete question could not be read. No guessed answer was returned.');
+            assertVerifiedScanAnswers(parsed, data.answer_verified, context.question);
+            if (parsed.some(item => item?.type === 'code') && data.code_reviewed !== true) {
+                throw new Error('The code has not passed review against the screenshot.');
+            }
             displayResults(parsed, data.provider);
         } catch (error) {
             if (timeoutId) clearTimeout(timeoutId);
@@ -1724,6 +1714,20 @@
                 isScanning = false;
                 updateScanControls();
             }
+        }
+    }
+
+    function assertVerifiedScanAnswers(results, verified, question) {
+        if (question && (!Array.isArray(results) || results.length !== 1 || results[0]?.type !== 'mcq')) {
+            throw new Error('Expected one verified answer for the current question.');
+        }
+        if (!Array.isArray(results) || !results.some(item => item?.type === 'mcq')) return;
+        if (verified !== true) {
+            throw new Error('Answer verification is required. Restart the updated Browser Assistant backend.');
+        }
+        if (question && question.type !== 'short-answer' && question.type !== 'ordering'
+            && !answerIndexesFromResult(results, question).length) {
+            throw new Error('The verified answer did not match the displayed options exactly.');
         }
     }
 
@@ -1752,9 +1756,12 @@
             sources = snapshot.sources;
         }
         const question = context.question;
+        const ordering = question.type === 'ordering';
         context.text = `${question.identityText || question.text}\n${sources.length ? 'Complete code snippets:\n' + sources.join('\n\n') + '\n' : ''}`
-            + (question.type === 'short-answer' ? 'Free response: return only the exact value.' : question.selectionType === 'multiple' ? 'Select ALL correct options.' : 'Select one answer.')
-            + '\n' + question.options.map((option,index)=>`${String.fromCharCode(65+index)}. ${option.text}`).join('\n');
+            + (ordering ? 'Reorder ALL items. Return the complete permutation as a JSON array of 1-based item numbers.'
+                : question.type === 'short-answer' ? 'Free response: return only the exact value.'
+                : question.selectionType === 'multiple' ? 'Select ALL correct options.' : 'Select one answer.')
+            + '\n' + question.options.map((option,index)=>`${ordering ? index + 1 : String.fromCharCode(65+index)}. ${option.text}`).join('\n');
         return context;
     }
 
@@ -1795,28 +1802,25 @@
 
         let timeoutId;
         try {
-            // Use smart extraction instead of raw body text
-            const pageText = extractSmartText();
-            console.log(`Sending ${pageText.length} chars to server`);
-
-            const question = getAuthorizedQuestion();
+            const context = await prepareVisionQuestionContext();
+            const question = context.question;
             const visuals = window.BrowserAssistantQuestionVisuals;
             let res;
-            if (question && question.type !== 'code' && visuals?.nodes(question).length) {
+            if (question && visuals?.nodes(question).length) {
                 setLoading('Reading complete question illustrations…');
                 await visuals.requireBackend(apiRequest, visuals.nodes(question).length);
                 const snapshot = await visuals.capture(question, safeSendMessage);
-                if (!hasSameQuestionOptions(question, getAuthorizedQuestion()) || visuals.fingerprint(getAuthorizedQuestion()) !== snapshot.fingerprint) {
-                    throw new Error('Question illustration changed while loading. Please scan again.');
-                }
+                context.visualSnapshot = snapshot.fingerprint;
+                await assertVisionQuestionCurrent(context);
                 res = await apiRequest('/solve-vision', 'POST', {
                     image:snapshot.images[0], images:snapshot.images.slice(1),
-                    text:`${question.text}\n${question.selectionType === 'multiple' ? 'Select ALL correct options.' : 'Select one answer.'}\n${question.options.map((option,index)=>`${String.fromCharCode(65+index)}. ${option.text}`).join('\n')}`,
-                    url:location.href, practice_type:'mcq',
+                    text:context.text,
+                    url:location.href, practice_type:'mcq', verify_answer:true,
                 });
             } else {
                 res = await apiRequest('/solve', 'POST', {
-                    text: pageText, url: window.location.href, practice_type: practiceType,
+                    text: question ? context.text : extractSmartText(), url: context.url,
+                    practice_type: question ? 'mcq' : practiceType, verify_answer: Boolean(question) || practiceType !== 'code',
                 });
             }
 
@@ -1825,7 +1829,7 @@
                 if (res.status === 422 && err.detail?.code === 'no_readable_question') {
                     console.info('No usable page text; automatically falling back to Vision scan.');
                     setLoading("Text isn't readable — analyzing the visible screen…");
-                    await visionScan(true, err.detail?.language, practiceType);
+                    await visionScan(true, practiceType === 'code' ? err.detail?.language : null, practiceType);
                     return;
                 }
                 const msg = typeof err.detail === 'string' ? err.detail : (err.detail?.message || err.message || 'Backend error');
@@ -1833,11 +1837,13 @@
             }
 
             const data = res.data;
+            await assertVisionQuestionCurrent(context);
             serverOnline = true;
             let parsed;
             try {
                 parsed = JSON.parse(data.results);
             } catch (e) {
+                if (question || practiceType !== 'code') throw new Error('The server returned an invalid answer format.');
                 const raw = data.results || "";
                 const optMatch = raw.match(/Option\s+([A-D])\s*[:\s]+(.+?)(?:\.|$)/i);
                 if (optMatch) {
@@ -1846,6 +1852,7 @@
                     parsed = [{ type: "mcq", question: "Result", reasoning: "", answer: raw.substring(0, 200) }];
                 }
             }
+            assertVerifiedScanAnswers(parsed, data.answer_verified, question);
             displayResults(parsed, data.provider);
         } catch (error) {
             if (timeoutId) clearTimeout(timeoutId);

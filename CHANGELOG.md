@@ -1,3 +1,8 @@
+# 2.8.4
+
+- Match equivalent numeric matrix notation in verified answers while preserving cell values, order, and option labels.
+- Retry an incomplete text verification once. Text and Vision scans require verified answers before using them for a detected question.
+
 # 2.8.3
 
 - Improved chart and table answer verification. Use structured vision responses and one extra check when a response is malformed or the first two solves disagree.

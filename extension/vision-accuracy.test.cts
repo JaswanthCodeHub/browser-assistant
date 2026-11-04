@@ -4,7 +4,7 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const content=fs.readFileSync(`${__dirname}/content.js`,'utf8');
 
-function setup({changed=false,raw=false,code=false}={}) {
+function setup({changed=false,raw=false,code=false,mismatch=false}={}) {
     const question={text:'Budget 4000: rent and entertainment combined?',identityText:'Budget 4000: rent and entertainment combined?',
         options:[{text:'1400'},{text:'2800 BELOW_VIEWPORT_SENTINEL'}]};
     let current=question;
@@ -21,9 +21,12 @@ function setup({changed=false,raw=false,code=false}={}) {
             :{dataUrl:'data:image/png;base64,SCREEN'};},
         browserAssistantCacheMcqSnippets(){question.options[1].text='SELECT * FROM book FULL_SQL_TAIL';},
         apiRequest:async(path,method,body)=>{requests.push({path,method,body});if(changed)current={...question,text:'Different question'};
-            return {ok:true,data:{provider:'test [cross-checked]',results:raw?'Option B: 2800':JSON.stringify([{type:'mcq',answer:'Option B: 2800'}])}};},
+            const answer=`Option ${mismatch?'A':'B'}: ${question.options[1].text}`;
+            return {ok:true,data:{provider:'test [cross-checked]',answer_verified:true,
+                results:raw?'Option B: 2800':JSON.stringify([{type:'mcq',answer}])}};},
         displayResults:(...args)=>displayed.push(args),showError:error=>errors.push(error),clearTimeout(){},
     });
+    vm.runInContext(content.slice(content.indexOf('    function answerIndexesFromResult('),content.indexOf('    function updateAutomationUI(')),ctx);
     vm.runInContext(content.slice(content.indexOf('    async function visionScan('),content.indexOf('    // ── Page text scan')),ctx);
     return {ctx,requests,errors,displayed,captures};
 }
@@ -36,6 +39,7 @@ test('manual Vision sends the complete chart and below-viewport options without 
     assert.equal(h.requests[0].body.image,'data:image/png;base64,FULL_CHART');
     assert.deepEqual(Array.from(h.requests[0].body.images),['data:image/png;base64,FULL_LEGEND']);
     assert.equal(h.requests[0].body.practice_type,'mcq');
+    assert.equal(h.requests[0].body.verify_answer,true);
 });
 
 test('manual Vision does not display a stale result after the question changes',async()=>{
@@ -46,6 +50,11 @@ test('manual Vision does not display a stale result after the question changes',
 test('Vision never fabricates an answer by extracting a letter from malformed output',async()=>{
     const h=setup({raw:true});await h.ctx.visionScan();
     assert.equal(h.displayed.length,0);assert.match(h.errors[0],/invalid answer format/);
+});
+
+test('manual Vision withholds a result when its letter and displayed option conflict',async()=>{
+    const h=setup({mismatch:true});await h.ctx.visionScan();
+    assert.equal(h.displayed.length,0);assert.match(h.errors[0],/did not match the displayed options/);
 });
 
 test('manual Vision hydrates full code options before requesting an answer and rechecks them',async()=>{

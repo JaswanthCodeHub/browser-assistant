@@ -53,11 +53,29 @@ test('exported CCBP ordering page detects five options and verifies native drop 
 test('numeric answers are values, preserve zero and signs, and are not option numbers', () => {
     const src = fs.readFileSync(`${__dirname}/content.js`, 'utf8');
     const context = vm.createContext({});
-    vm.runInContext(src.slice(src.indexOf('    function answerIndexesFromResult'), src.indexOf('    async function recoverAnswerIndexes')), context);
+    vm.runInContext(src.slice(src.indexOf('    function answerIndexesFromResult'), src.indexOf('    function updateAutomationUI')), context);
     const question = { options: ['3', '2', '1', '4', '0', '-4'].map((text, index) => ({ text, index })) };
-    for (const [answer, expected] of [['Answer: 4', 3], ['Answer 4', 3], [0, 4], ['-4', 5], ['**4**', 3], ['Option 4', 3]]) {
-        assert.deepEqual(Array.from(context.answerIndexesFromResult([{ answer }], question)), [expected]);
+    for (const [answer, expected] of [['4', [3]], [0, [4]], ['-4', [5]], ['Option D: 4', [3]], ['Option 4', []], ['Option A: 4', []]]) {
+        assert.deepEqual(Array.from(context.answerIndexesFromResult([{ answer }], question)), expected);
     }
+});
+
+test('verified matrix options tolerate display notation while preserving signs, order and option labels', () => {
+    const source = fs.readFileSync(__dirname + '/content.js', 'utf8');
+    const context = vm.createContext({});
+    vm.runInContext(source.slice(source.indexOf('    function answerIndexesFromResult'), source.indexOf('    function updateAutomationUI')), context);
+    const question = {
+        options: [
+            { index: 0, text: '$\\begin{bmatrix}3&1\\\\5&2\\end{bmatrix}$' },
+            { index: 1, text: '$\\begin{bmatrix}3&-1\\\\-5&2\\end{bmatrix}$' },
+        ],
+    };
+    for (const [answer, expected] of [
+        ['B. [[3, −1], [-5, 2]]', [1]],
+        ['Option B: \\(\\begin{pmatrix}3 & -1 \\\\ -5 & 2\\end{pmatrix}\\)', [1]],
+        ['Option A: [[3,-1],[-5,2]]', []],
+        ['Option B: [[3,-5],[-1,2]]', []],
+    ]) assert.deepEqual(Array.from(context.answerIndexesFromResult([{ answer }], question)), expected);
 });
 
 test('question diagnostic exports only the question region and strips active content', () => {
@@ -91,11 +109,27 @@ test('ordering adapter detects sortable items and refuses unchanged drag results
 test('multiple choice mapping retains every explicitly selected option', () => {
     const src = fs.readFileSync(`${__dirname}/content.js`, 'utf8');
     const begin = src.indexOf('    function answerIndexesFromResult');
-    const end = src.indexOf('    async function recoverAnswerIndexes', begin);
+    const end = src.indexOf('    function updateAutomationUI', begin);
     const context = vm.createContext({});
     vm.runInContext(src.slice(begin, end), context);
     const question = { selectionType: 'multiple', options: ['One', 'Two', 'Three'].map((text, index) => ({ text, index })) };
     assert.deepEqual(Array.from(context.answerIndexesFromResult([{answer: 'Option A: One; Option C: Three'}], question)), [0, 2]);
+});
+
+test('answer mapping requires the option letter and text to agree for text and chart questions', () => {
+    const src = fs.readFileSync(`${__dirname}/content.js`, 'utf8');
+    const context = vm.createContext({});
+    vm.runInContext(src.slice(src.indexOf('    function answerIndexesFromResult'), src.indexOf('    function updateAutomationUI')), context);
+    const question = { options: ['24.78 %', '16.67 %', '13.33 %', '22.56 %'].map((text, index) => ({ text, index })) };
+    for (const [answer, expected] of [
+        ['Option B: 16.67%', [1]], ['B. 16.67 %', [1]], ['Option A: 16.67%', []],
+        ['Option B: 1667%', []], ['Option B', []], ['16.67% is the answer', []],
+    ]) {
+        assert.deepEqual(Array.from(context.answerIndexesFromResult([{ answer }], question)), expected);
+    }
+    assert.deepEqual(Array.from(context.answerIndexesFromResult([
+        { answer: 'Option B: 16.67%' }, { answer: 'Option A: 24.78%' },
+    ], question)), []);
 });
 
 test('semantic adapter reads short answers and rejects ambiguous fields', () => {

@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from fastapi import HTTPException
 from groq import RateLimitError
 from httpx import Request, Response
-from vision_images import cross_check_visual_answers, VisionUnconfirmedError
+from vision_images import cross_check_visual_answers, relative_percentage_question, VisionUnconfirmedError
 from unittest.mock import AsyncMock
 import main
 
@@ -26,6 +26,75 @@ class ChartVisionTests(unittest.IsolatedAsyncioTestCase):
         self.enterContext(patch.object(main, '_vision_key_cooldowns', {}))
         self.enterContext(patch.object(main, '_groq_key_index', 0))
 
+    async def test_relative_percentage_is_calculated_from_agreed_chart_values(self):
+        text = ('By how much amount the formatting of the book is a lesser amount for editing the book?\n'
+                'Question format: select one answer.\nA. 20 %\nB. 16.67 %\nC. 13.33 %\nD. 22.56 %')
+        evidence = {'comparison': {'target': '25', 'base': '30'}, 'answer': 'Option A: 20 %'}
+        create = Mock(side_effect=[
+            provider_response([{'type': 'mcq', **evidence}]),
+            provider_response({'readable': True, 'answers': [{'id': 1, **evidence}]}),
+        ])
+        client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+        with patch.object(main, '_groq_clients', [client]), \
+             patch.object(main, 'VISION_MODELS', ['test-vision']), \
+             patch.object(main, 'compress_image_base64', return_value='chart'):
+            result = await main.solve_vision(main.VisionContent(
+                image='chart', url='https://example.test', text=text, practice_type='mcq'))
+        item = json.loads(result['results'])[0]
+        self.assertEqual(item['answer'], 'Option B: 16.67 %')
+        self.assertIn('÷ 30', item['reasoning'])
+        self.assertEqual(create.call_count, 2)
+        for call in create.call_args_list:
+            self.assertIn('"comparison"', call.kwargs['messages'][0]['content'])
+
+    async def test_matching_percentage_does_not_confirm_conflicting_chart_values(self):
+        text = 'By what percentage is A less than B?\nA. 20%\nB. 16.67%'
+        comparison = relative_percentage_question(text)
+        self.assertIsNotNone(comparison)
+        first = {'type': 'mcq', 'answer': 'Option B: 16.67%', 'comparison': {'target': '25', 'base': '30'}}
+        def check(target, base):
+            return json.dumps({'readable': True, 'answers': [{
+                'id': 1, 'answer': 'Option B: 16.67%', 'comparison': {'target': target, 'base': base},
+            }]})
+        complete = AsyncMock(side_effect=[check('50', '60'), check('75', '90')])
+        with self.assertRaises(VisionUnconfirmedError):
+            await cross_check_visual_answers([], json.dumps([first]), 'test-vision', complete, comparison)
+
+    async def test_strict_vision_modes_withhold_disagreeing_answers(self):
+        for mode in ('auto', 'mcq', 'math', 'aptitude'):
+            with self.subTest(mode=mode):
+                create = Mock(side_effect=[
+                    provider_response([{'type': 'mcq', 'answer': 'Option A: 12'}]),
+                    provider_response({'readable': True, 'answers': [{'id': 1, 'answer': 'Option B: 13'}]}),
+                ])
+                client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+                with patch.object(main, '_groq_clients', [client]), \
+                     patch.object(main, 'VISION_MODELS', ['test-vision']), \
+                     patch.object(main, 'compress_image_base64', return_value='chart'), \
+                     self.assertRaises(HTTPException) as error:
+                    await main.solve_vision(main.VisionContent(
+                        image='chart', url='https://example.test', practice_type=mode, verify_answer=True))
+                self.assertEqual(error.exception.status_code, 422)
+                self.assertIn('two visual solves disagreed', str(error.exception.detail))
+                self.assertEqual(create.call_count, 2)
+
+    async def test_strict_vision_code_reviewer_receives_the_original_screenshot(self):
+        solution = {'type': 'code', 'language': 'python', 'code': 'print(1)',
+                    'approach': 'Print the constant.', 'time_complexity': 'O(1)', 'space_complexity': 'O(1)'}
+        create = Mock(side_effect=[
+            provider_response([solution]), provider_response({'verdict': 'pass', 'issues': []}),
+        ])
+        client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+        with patch.object(main, '_groq_clients', [client]), \
+             patch.object(main, 'VISION_MODELS', ['test-vision']), \
+             patch.object(main, 'compress_image_base64', return_value='original'):
+            result = await main.solve_vision(main.VisionContent(
+                image='original', url='https://example.test', practice_type='code', language='python', verify_answer=True))
+        self.assertTrue(result['code_reviewed'])
+        review_blocks = create.call_args_list[1].kwargs['messages'][1]['content']
+        self.assertEqual(review_blocks[1], create.call_args_list[0].kwargs['messages'][1]['content'][1])
+        self.assertIn('Fail the review if required instructions', review_blocks[0]['text'])
+
     async def test_percentage_spacing_does_not_create_a_visual_disagreement(self):
         original = json.dumps([{'type': 'mcq', 'answer': 'B. 16.67 %'}])
         verdict = {'readable': True, 'answers': [{'id': 1, 'answer': 'Option B: 16.67%'}]}
@@ -33,29 +102,27 @@ class ChartVisionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await cross_check_visual_answers([], original, 'test', complete), original)
         complete.assert_awaited_once()
 
-    async def test_rate_limit_during_verification_retries_only_that_step(self):
+    async def test_short_rate_limit_is_reported_without_waiting_or_reusing_the_key(self):
         answer = [{'type': 'mcq', 'question': 'How many girls are enrolled?', 'answer': 'Option D: 480'}]
-        verdict = {'readable': True, 'answers': [{'id': 1, 'answer': 'Option D: 480'}]}
         create = Mock(side_effect=[
             provider_response(answer),
             rate_limit('Rate limit reached. Please try again in 3.968571428s.', {'Retry-After': '3'}),
-            provider_response(verdict),
         ])
         client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
-        with patch.object(main, 'get_groq_client', return_value=client), \
-             patch.object(main, '_groq_clients', [client]), \
+        with patch.object(main, '_groq_clients', [client]), \
              patch.object(main, 'VISION_MODELS', ['test-vision']), \
              patch.object(main, 'compress_image_base64', return_value='chart'), \
-             patch.object(main.asyncio, 'sleep', new_callable=AsyncMock) as sleep, \
-             patch.object(main, 'rotate_groq_key') as rotate:
-            result = await main.solve_vision(main.VisionContent(
-                image='chart', url='https://example.test', practice_type='mcq'))
-        self.assertEqual(json.loads(result['results']), answer)
-        self.assertEqual(create.call_count, 3)
-        self.assertEqual(create.call_args_list[1], create.call_args_list[2])
-        sleep.assert_awaited_once()
-        self.assertAlmostEqual(sleep.await_args.args[0], 3.968571428, delta=0.1)
-        rotate.assert_not_called()
+             patch.object(main.asyncio, 'sleep', new_callable=AsyncMock) as sleep:
+            question = main.VisionContent(image='chart', url='https://example.test', practice_type='mcq')
+            with self.assertRaises(HTTPException) as error:
+                await main.solve_vision(question)
+            self.assertEqual(error.exception.status_code, 429)
+            self.assertEqual(error.exception.detail['retry_after_seconds'], 4)
+            with self.assertRaises(HTTPException) as next_question:
+                await main.solve_vision(question)
+            self.assertEqual(next_question.exception.status_code, 429)
+        self.assertEqual(create.call_count, 2)
+        sleep.assert_not_awaited()
 
     async def test_rate_limited_key_is_skipped_during_verification_and_next_question(self):
         answer = [{'type': 'mcq', 'question': 'How many girls are enrolled?', 'answer': 'Option D: 480'}]
@@ -77,11 +144,12 @@ class ChartVisionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(primary.call_args_list[1], backup.call_args_list[0])
         sleep.assert_not_awaited()
 
-    async def test_long_rate_limit_survives_batching_without_a_generic_gateway_error(self):
-        create = Mock(side_effect=rate_limit('Provider organization details', {'Retry-After': '120'}))
-        client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
-        with patch.object(main, 'get_groq_client', return_value=client), \
-             patch.object(main, '_groq_clients', [client]), \
+    async def test_all_rate_limited_keys_report_the_earliest_retry_time_during_batching(self):
+        creates = [Mock(side_effect=rate_limit('Provider organization details', {'Retry-After': str(delay)}))
+                   for delay in (120, 23, 45)]
+        clients = [SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+                   for create in creates]
+        with patch.object(main, '_groq_clients', clients), \
              patch.object(main, 'VISION_MODELS', ['test-vision']), \
              patch.object(main, 'compress_image_base64', side_effect=lambda image, **_: image), \
              patch.object(main.asyncio, 'sleep', new_callable=AsyncMock) as sleep, \
@@ -89,10 +157,11 @@ class ChartVisionTests(unittest.IsolatedAsyncioTestCase):
             await main.solve_vision(main.VisionContent(
                 image='chart', images=['legend', 'axis', 'table'], url='https://example.test', practice_type='mcq'))
         self.assertEqual(error.exception.status_code, 429)
-        self.assertEqual(error.exception.headers, {'Retry-After': '120'})
-        self.assertEqual(error.exception.detail['retry_after_seconds'], 120)
+        self.assertEqual(error.exception.headers, {'Retry-After': '23'})
+        self.assertEqual(error.exception.detail['retry_after_seconds'], 23)
         self.assertNotIn('organization', str(error.exception.detail))
-        create.assert_called_once()
+        for create in creates:
+            create.assert_called_once()
         sleep.assert_not_awaited()
 
     async def test_chart_and_external_question_options_reach_the_vision_model_together(self):

@@ -118,7 +118,9 @@ test('a permanently unavailable Submit times out without clicking or losing the 
     assert.equal(h.now(),15000);
 });
 
-for(const previouslySubmitted of [true,false])test(`runner advances ${previouslySubmitted?'an already answered question':'a question auto-submitted during checkbox selection'} once`,async()=>{
+for(const scenario of ['already answered','verified answer','unverified answer'])test(`runner handles ${scenario}`,async()=>{
+    const previouslySubmitted=scenario==='already answered';
+    const verified=scenario!=='unverified answer';
     let now=0,submitted=previouslySubmitted,nextClicks=0,requests=0,submitReads=0;
     const location={origin:'https://learning.ccbp.in',pathname:'/default-question/practice/example',href:'https://learning.ccbp.in/default-question/practice/example'};
     const automation={running:false,runId:0,processed:new Set()};
@@ -134,12 +136,18 @@ for(const previouslySubmitted of [true,false])test(`runner advances ${previously
         automationPolicy:{canExecute:()=>true},getAuthorizedQuestion:()=>submitted?null:question,
         normalizeAutomationText:value=>value.replace(/\s+/g,' ').trim(),waitWhilePaused:async()=>automation.running,
         answerIndexesFromResult:()=>[0,1],
-        requestPracticeAnswer:async()=>{requests++;return {data:{results:JSON.stringify([{answer:'Option A; Option B'}])}};},
+        requestPracticeAnswer:async()=>{requests++;return {data:{answer_verified:verified,results:JSON.stringify([{type:'mcq',answer:'Option A: Lower time complexity; Option B: Faster lookups'}])}};},
         stopAutomation:state=>{automation.running=false;automation.state=state;}});
     load(ctx,'    function hasSameQuestionOptions(','    function getAuthorizedQuestion(');
     load(ctx,'    async function waitForOptionSelection(','    async function waitForNextPracticeQuestion(');
     load(ctx,'    async function startPracticeAutomation(','    async function readMcqSnippetSnapshot(');
     await ctx.startPracticeAutomation();
+    if (!verified) {
+        assert.equal(automation.state,'PAUSED');assert.match(automation.error,/verification is required/);
+        assert.equal(nextClicks,0);assert.equal(submitReads,0);assert.equal(requests,1);
+        assert.ok(options.every(option=>!option.selected));
+        return;
+    }
     assert.equal(automation.state,'COMPLETED');assert.equal(automation.error,'');
     assert.equal(nextClicks,1);assert.equal(submitReads,0);assert.equal(requests,previouslySubmitted?0:1);
     assert.equal(automation.completed,1);
