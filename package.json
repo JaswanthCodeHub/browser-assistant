@@ -12,6 +12,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "files": [
+    "LICENSE",
     "extension/manifest.json",
     "extension/background.js",
     "extension/editor-bridge.js",
