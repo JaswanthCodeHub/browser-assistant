@@ -18,10 +18,14 @@ BACKEND = ('server/main.py', 'server/code_contract.py', 'server/local_security.p
 
 def release_files():
     extension = tuple('extension/' + path for path in EXTENSION) + ('LICENSE',)
+    typescript = ('extension/src/assistant.d.ts', *(
+        'extension/src/' + Path(name).with_suffix('.ts').name
+        for name in EXTENSION if name.endswith('.js')
+    ))
     tests = tuple(path.relative_to(ROOT).as_posix() for path in sorted((ROOT/'extension').glob('*.test.cjs')))
     tests += tuple(path.relative_to(ROOT).as_posix() for path in sorted((ROOT/'server').glob('test_*.py')))
-    source = tuple(dict.fromkeys((*extension, *BACKEND, *tests, 'extension/fixtures/ccbp-ordering.html',
-        'package.json','package-lock.json','.gitignore','.editorconfig', 'scripts/check_repo.py',
+    source = tuple(dict.fromkeys((*extension, *typescript, *BACKEND, *tests, 'extension/fixtures/ccbp-ordering.html',
+        'package.json','package-lock.json','tsconfig.json','.gitignore','.editorconfig', 'scripts/check_repo.py',
         'scripts/package_release.py','scripts/start_journal_assistant.ps1','scripts/smoke_backend.py',
         '.github/workflows/ci.yml','.github/workflows/release.yml')))
     return [('extension',extension),('backend',BACKEND),('source',source)]

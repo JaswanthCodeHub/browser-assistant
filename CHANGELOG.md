@@ -1,3 +1,8 @@
+# 2.8.0
+
+- Migrated all Chrome extension scripts to TypeScript and kept the existing automation behavior.
+- The installable extension includes compiled JavaScript. The source archive includes TypeScript and build configuration.
+
 # 2.7.7
 
 - Generate and review online IDE code while the workspace opens, so the two waits overlap.

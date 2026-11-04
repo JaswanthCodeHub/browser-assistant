@@ -31,7 +31,7 @@ completion on the live portal has not been verified.
 
 Use Chrome, Python **3.11+**, and either a Groq key or an installed Ollama model for text scans. Node.js **22** is needed only for contributor tests. Chrome internal pages cannot run content scripts; other Chromium browsers are not verified here. Firefox is not supported by this manifest.
 
-Download this repository and open a terminal in its root. The extension has no build step.
+Download this repository and open a terminal in its root. The extension includes ready-to-load JavaScript.
 Versioned extension, backend, and source ZIPs with SHA-256 checksums are available on the [GitHub Releases page](https://github.com/JaswanthCodeHub/browser-assistant/releases).
 
 ### Windows PowerShell
@@ -93,6 +93,8 @@ npm ci
 npm test
 python scripts/check_repo.py
 ```
+
+Edit the TypeScript sources in `extension/src/`. Run `npm run build` to regenerate the JavaScript used by Chrome before reloading the unpacked extension. `npm test` builds and type-checks the extension before running its tests.
 
 Use your environment's Python for the last command. Backend checks and Docker instructions are in [CONTRIBUTING.md](CONTRIBUTING.md) and [SETUP.md](docs/SETUP.md). `server/requirements.lock.txt` pins the full dependency graph with package hashes; `requirements.txt` records the direct dependencies. Use the lockfile for installation. The [repair report](docs/REPAIR_REPORT.md) distinguishes automated checks from unverified live integrations.
 

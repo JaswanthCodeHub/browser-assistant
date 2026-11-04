@@ -1,6 +1,14 @@
 {
   "name": "browser-assistant-tests",
   "private": true,
-  "scripts": { "test": "node --test extension/*.test.cjs" },
-  "devDependencies": { "linkedom": "^0.18.12" }
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "test": "npm run build && node --test extension/*.test.cjs"
+  },
+  "devDependencies": {
+    "@types/chrome": "0.3.7",
+    "linkedom": "^0.18.12",
+    "typescript": "5.9.3"
+  }
 }
