@@ -1,4 +1,6 @@
-# Browser Assistant 2.8.21
+# Browser Assistant 2.8.22
+
+- Add repository instructions for pushing, tagging, and verifying a GitHub Release for every completed update.
 
 - Read rendered numeric matrix rows and verify RREF pivot-count choices locally, including matrices with zero rows. Update the Chrome extension and restart the local backend to use both changes.
 

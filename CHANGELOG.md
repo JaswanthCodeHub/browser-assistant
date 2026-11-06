@@ -1,3 +1,7 @@
+# 2.8.22
+
+- Record the release process for every completed Browser Assistant update, including verification of the published GitHub Release.
+
 # 2.8.21
 
 - Preserve the rows of rendered numeric matrices and calculate RREF pivot-count answers locally.
