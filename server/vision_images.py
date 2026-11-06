@@ -196,21 +196,47 @@ def numeric_matrix_key(value):
     return None
 
 
-def matrix_2x2(value):
+def numeric_matrix(value):
     rows = matrix_cells(value)
-    if not rows or len(rows) != 2 or any(len(row) != 2 for row in rows):
+    if not rows or any(len(row) != len(rows[0]) for row in rows):
         return None
     entries = []
-    for cell in (cell for row in rows for cell in row):
-        cell = re.sub(r'^([+-]?)\\(?:[dt]?frac)\{([+-]?\d{1,15})\}\{(\d{1,15})\}$',
-                      r'\1\2/\3', cell)
-        if not re.fullmatch(rf'(?:{DECIMAL_VALUE}|[+-]?\d{{1,15}}/\d{{1,15}})', cell):
+    for row in rows:
+        numbers = []
+        for cell in row:
+            cell = re.sub(r'^([+-]?)\\(?:[dt]?frac)\{([+-]?\d{1,15})\}\{(\d{1,15})\}$', r'\1\2/\3', cell)
+            if not re.fullmatch(rf'(?:{DECIMAL_VALUE}|[+-]?\d{{1,15}}/\d{{1,15}})', cell):
+                return None
+            try:
+                numbers.append(Fraction(cell))
+            except ZeroDivisionError:
+                return None
+        entries.append(numbers)
+    return entries
+
+
+def matrix_2x2(value):
+    rows = numeric_matrix(value)
+    if rows and len(rows) == 2 and len(rows[0]) == 2:
+        return tuple(rows[0] + rows[1])
+
+
+def rref_pivot_count(matrix):
+    rows = numeric_matrix(matrix)
+    if not rows:
+        return None
+    previous = -1
+    count = 0
+    for index, row in enumerate(rows):
+        column = next((col for col, entry in enumerate(row) if entry), None)
+        if column is None:
+            # Any remaining rows must also be zero.
+            return None if any(any(later) for later in rows[index + 1:]) else count
+        if column <= previous or row[column] != 1 or any(other[column] for i, other in enumerate(rows) if i != index):
             return None
-        try:
-            entries.append(Fraction(cell))
-        except ZeroDivisionError:
-            return None
-    return tuple(entries)
+        previous = column
+        count += 1
+    return count
 
 
 def parse_labeled_choices(option_text):
@@ -245,6 +271,10 @@ def solve_matrix_choice(text):
         r'([A-Z]) with shape \(\s*([a-z])\s*,\s*([a-z])\s*\),\s*'
         r'which condition must hold for the product (\1\4|\4\1) to be defined\?', prompt,
     )
+    pivots = re.fullmatch(
+        r'How many (?:pivot(?: position)?s) does the following (?:RREF|reduced row echelon form) matrix have\?\s*(.+)',
+        prompt, flags=re.I,
+    )
     if inverse:
         entries = matrix_2x2(inverse[2])
         if entries is None:
@@ -268,6 +298,16 @@ def solve_matrix_choice(text):
             return frozenset(equation.groups()) if equation else None
 
         reasoning = f'The left matrix has {left_cols} columns and the right matrix has {right_rows} rows. These must be equal.'
+    elif pivots:
+        expected = rref_pivot_count(pivots[1])
+        if expected is None:
+            return None
+
+        def parse_option(value):
+            count = re.fullmatch(r'\d{1,5}', unwrap_math(value))
+            return int(count[0]) if count else None
+
+        reasoning = f'Each nonzero row in reduced row echelon form has one leading 1. There are {expected} such rows.'
     else:
         return None
 
@@ -338,6 +378,28 @@ def displayed_single_choices(text):
     if not separator or not re.search(r'\n(?:Question format: )?Select one answer\.$', question, re.I):
         return {}
     return parse_labeled_choices(option_text)
+
+
+def solve_row_parallel_choice(text):
+    """Check the shared multiplication dimension in a row-parallel linear layer."""
+    choices = displayed_single_choices(text)
+    if not choices:
+        return None
+    question = re.split(r'\n(?:Question format: )?Select one answer\.', text.strip(), maxsplit=1, flags=re.I)[0]
+    prompt = ' '.join(question.split())
+    if not re.fullmatch(r'In row(?:[- ]tensor)? parallelism, why must the input also be split, not just the weights\?',
+                        prompt, flags=re.I):
+        return None
+    matches = [(letter, option) for letter, option in choices.items() if re.fullmatch(
+        r'(?:so that )?the input (?:shape|feature dimension) matches the (?:corresponding )?weight (?:rows|shard)\.?', option, re.I)]
+    if len(matches) != 1:
+        return None
+    letter, option = matches[0]
+    return {
+        'type': 'mcq', 'question': question, 'answer': f'Option {letter}: {option}',
+        'reasoning': 'In Y = XW, rows of W index input features. Each GPU needs the corresponding columns of X '
+                     'so the inner dimensions match. The GPUs sum their partial products.',
+    }
 
 
 def bind_displayed_choice(value, choices, *, matrix_math):

@@ -10,9 +10,27 @@ INVERSE = r'For $A=\begin{bmatrix}2&1\\5&3\end{bmatrix}$, what is $A^{-1}$ compu
 INVERSE_ANSWER = r'$\begin{bmatrix}3&-1\\-5&2\end{bmatrix}$'
 PRODUCT = 'For matrices $A$ with shape $(m, n)$ and $B$ with shape $(p, q)$, which condition must hold for the product $AB$ to be defined?'
 PRODUCT_OPTIONS = '\nA. $m = q$\nB. $n = q$\nC. $m = p$\nD. $n = p$'
+PIVOTS = 'How many pivots does the following RREF matrix have? '
+PIVOT_OPTIONS = '\nA. 1\nB. 2\nC. 3\nD. 0'
 
 
 class MatrixChoiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_row_parallel_question_uses_inner_dimension_without_a_model(self):
+        question = ('In Row Parallelism, why must the input also be split, not just the weights?\n'
+                    'Question format: select one answer.\n'
+                    'A. So that each GPU receives a smaller batch share.\n'
+                    'B. So that the input shape matches the weight rows.\n'
+                    'C. So that the output no longer needs combining.\n'
+                    'D. So that each GPU can use a different optimizer.')
+        with patch.object(main, 'try_groq', new_callable=AsyncMock) as groq, \
+             patch.object(main, 'try_ollama', new_callable=AsyncMock) as ollama:
+            result = await main.solve_questions(main.PageContent(
+                text=question, url='https://example.test', practice_type='mcq', verify_answer=True))
+            self.assertTrue(result['answer_verified'])
+            self.assertEqual(json.loads(result['results'])[0]['answer'], 'Option B: So that the input shape matches the weight rows.')
+            groq.assert_not_awaited()
+            ollama.assert_not_awaited()
+
     async def test_automation_calculates_both_questions_without_a_provider(self):
         inverse_options = '\n'.join((
             '', f'A. {INVERSE_ANSWER}', r'B. $\begin{bmatrix}3&1\\5&2\end{bmatrix}$',
@@ -21,6 +39,7 @@ class MatrixChoiceTests(unittest.IsolatedAsyncioTestCase):
         cases = (
             ('16of 20 questions1 Mark' + INVERSE, inverse_options, f'Option A: {INVERSE_ANSWER}'),
             ('9of 20 questions1 Mark' + PRODUCT, PRODUCT_OPTIONS, 'Option D: $n = p$'),
+            (PIVOTS + '[[1,0,2],[0,1,-1],[0,0,0]]', PIVOT_OPTIONS, 'Option B: 2'),
         )
         with patch.object(main, 'try_groq', new_callable=AsyncMock) as groq, \
              patch.object(main, 'try_ollama', new_callable=AsyncMock) as ollama:
@@ -36,12 +55,21 @@ class MatrixChoiceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_vision_uses_complete_dom_math_without_a_vision_provider(self):
         with patch.object(main, '_groq_clients', []), patch.object(main, 'compress_image_base64', return_value='chart'):
-            result = await main.solve_vision(main.VisionContent(
-                image='chart', text=PRODUCT + '\nSelect one answer.' + PRODUCT_OPTIONS,
-                url='https://example.test', practice_type='mcq', verify_answer=True,
-            ))
-        self.assertTrue(result['answer_verified'])
-        self.assertEqual(json.loads(result['results'])[0]['answer'], 'Option D: $n = p$')
+            cases = (
+                (PRODUCT, PRODUCT_OPTIONS, 'Option D: $n = p$'),
+                (PIVOTS + r'$\begin{bmatrix}1&0&2\\0&1&−1\\0&0&0\end{bmatrix}$', PIVOT_OPTIONS, 'Option B: 2'),
+            )
+            for question, options, expected in cases:
+                result = await main.solve_vision(main.VisionContent(
+                    image='chart', text=question + '\nSelect one answer.' + options,
+                    url='https://example.test', practice_type='mcq', verify_answer=True,
+                ))
+                self.assertTrue(result['answer_verified'])
+                self.assertEqual(json.loads(result['results'])[0]['answer'], expected)
+
+    def test_rref_pivot_count_for_rectangular_and_zero_matrices(self):
+        self.assertEqual(solve_matrix_choice(PIVOTS + '[[0,1,3,0],[0,0,0,1]]' + PIVOT_OPTIONS)['answer'], 'Option B: 2')
+        self.assertEqual(solve_matrix_choice(PIVOTS + '[[0,0],[0,0]]' + PIVOT_OPTIONS)['answer'], 'Option D: 0')
 
     def test_fractional_inverse_and_reversed_product(self):
         inverse = INVERSE.replace(r'2&1\\5&3', r'2&0\\0&4')
@@ -59,6 +87,9 @@ class MatrixChoiceTests(unittest.IsolatedAsyncioTestCase):
             PRODUCT + '\nSelect ALL correct options.' + PRODUCT_OPTIONS,
             PRODUCT + '\nComplete code snippets:\nnot part of the question' + PRODUCT_OPTIONS,
             INVERSE.replace(r'2&1\\5&3', r'2&1\\4&2') + '\nA. ' + INVERSE_ANSWER + '\nB. [[2,0],[0,4]]',
+            PIVOTS + '[[1,1],[0,1]]' + PIVOT_OPTIONS,
+            PIVOTS + '[[0,0],[0,1]]' + PIVOT_OPTIONS,
+            PIVOTS + '[[1,0],[0,1]]' + PIVOT_OPTIONS.replace('C. 3', 'C. 2'),
         )
         for text in cases:
             with self.subTest(text=text):

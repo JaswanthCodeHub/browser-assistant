@@ -1,3 +1,14 @@
+interface AssistantJournalTimer {
+    path: string;
+    deadline: number;
+}
+
+interface AssistantJournalReminderData {
+    assistantJournalTimer?: AssistantJournalTimer;
+    assistantJournalReminderConfig?: {url: string; token: string};
+    [key: string]: unknown;
+}
+
 interface AssistantMessage {
     action: string;
     url?: string;

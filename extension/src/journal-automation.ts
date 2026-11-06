@@ -1,3 +1,7 @@
+function formatJournalTime(seconds: number) {
+    return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
 function browserAssistantJournal(global) {
     'use strict';
     const keys = ['experience', 'feelings', 'learning', 'application', 'conclusion'];
@@ -69,9 +73,9 @@ function browserAssistantJournal(global) {
             if (value !== null) explicit.add(value);
         }
         if (explicit.size) return explicit.size===1 ? [...explicit][0] : null;
-        for (const node of doc.querySelectorAll('span,div,p,output,strong,b')) {
+        for (const node of doc.querySelectorAll('span,div,p,output,strong,b,time,label')) {
             if (excluded(node) || !node.getClientRects().length) continue;
-            const value=labeled(node.textContent);
+            const value=labeled(node.innerText ?? node.textContent);
             if (value !== null) values.add(value);
         }
         return values.size===1 ? [...values][0] : null;
@@ -104,7 +108,7 @@ function browserAssistantJournal(global) {
     panel.id = 'assistant-journal';
     panel.dataset.build = journalBuild;
     panel.style.cssText = 'position:fixed;right:16px;top:160px;width:290px;z-index:2147483646;background:white;color:#17233d;padding:16px;border:2px solid #7638ff;border-radius:12px;box-shadow:0 4px 20px #0003;font:14px Arial';
-    panel.innerHTML = '<strong>Reflective Journal</strong><p data-info></p><textarea aria-label="Your class experience and feelings" placeholder="Your actual class experience / feelings (optional)" rows="3" style="width:100%;box-sizing:border-box"></textarea><button type="button" style="margin-top:8px;padding:10px">Fill &amp; Submit Journal</button><p role="status" aria-live="polite"></p>';
+    panel.innerHTML = '<strong>Reflective Journal</strong><p data-info></p><p data-countdown style="font-weight:600;margin:8px 0"></p><textarea aria-label="Your class experience and feelings" placeholder="Your actual class experience / feelings (optional)" rows="3" style="width:100%;box-sizing:border-box"></textarea><button type="button" style="margin-top:8px;padding:10px">Fill &amp; Submit Journal</button><p role="status" aria-live="polite"></p>';
     document.body.appendChild(panel);
     const controls = document.createElement('div');
     controls.innerHTML = '<label>Subject <select data-subject aria-label="Journal subject"><option value="">Detect from page</option><option>Backend Development Fundamentals</option><option>Computer Organization and Architecture</option><option>Advanced Data Structures</option><option>Linear Algebra Essentials</option><option>Fundamentals of Artificial Intelligence</option></select></label><label>Module / Journal <select data-number aria-label="Journal number"><option value="">Detect from page</option>' + Array.from({length:10},(_,i)=>`<option value="${i+1}">${i+1}</option>`).join('') + '</select></label>';
@@ -112,6 +116,87 @@ function browserAssistantJournal(global) {
     for (const select of controls.querySelectorAll('select')) select.style.cssText = 'display:block;width:100%;padding:5px;color:#17233d;background:white;border:1px solid #abb3c3';
     panel.insertBefore(controls, panel.querySelector('textarea'));
     const status = panel.querySelector('[role=status]'), button = panel.querySelector('button');
+    const countdown = panel.querySelector<HTMLElement>('[data-countdown]');
+    const countdownKey = 'assistantJournalTimer';
+    const journalPath = location.pathname.replace(/\/$/, '');
+    const journalDeadlineKey = `${countdownKey}:${journalPath}`;
+    let deadline: number | undefined;
+    let lastPortalTime: number | null = null;
+    let observedInForeground = false;
+    let publishedDeadline: number | undefined;
+    let journalConfirmed = false;
+
+    async function loadCountdown() {
+        try {
+            const cached = sessionStorage.getItem(journalDeadlineKey);
+            if (cached && Number.isFinite(Number(cached))) {
+                deadline = Number(cached);
+                renderCountdown(null);
+                return;
+            }
+        } catch { /* Fall back to extension storage. */ }
+        try {
+            const data = await global.chrome?.storage?.local.get([journalDeadlineKey, countdownKey]);
+            const latest = data?.[countdownKey];
+            const saved = data?.[journalDeadlineKey] ?? (latest?.path?.replace(/\/$/, '') === journalPath ? latest.deadline : undefined);
+            if (deadline === undefined && Number.isFinite(saved)) {
+                deadline = saved;
+                renderCountdown(null);
+            }
+        } catch { /* The portal clock remains available if extension storage is unavailable. */ }
+    }
+
+    function renderCountdown(portalTime: number | null) {
+        const seconds = portalTime ?? (deadline === undefined ? null : Math.max(0, Math.ceil((deadline - Date.now()) / 1000)));
+        const label = portalTime === null ? 'Estimated time left' : 'Portal time left';
+        const restoringDraft = portalTime === null && /Unsaved draft detected\./i.test(document.body.innerText || pageText(document));
+        const clockText = seconds === null ? 'Waiting for the portal timer to appear' : `${label} ${formatJournalTime(seconds)}`;
+        const text = restoringDraft
+            ? `${clockText}. To reopen your draft, review the declaration and use the portal’s Accept Terms to Start button.`
+            : seconds === null ? `${clockText}.` : clockText;
+        if (countdown.textContent !== text) countdown.textContent = text;
+    }
+
+    async function recordJournalConfirmation() {
+        if (!journalConfirmed && (controller.getState().completed === 1 || [...document.querySelectorAll('p,h1,h2,h3,[role=status],[role=alert]')].some(node =>
+            !node.closest('#assistant-root,#assistant-journal,[contenteditable]') && node.getClientRects().length &&
+            /^(?:journal (?:has been )?submitted successfully|journal submission successful)[.!]?$/i.test(node.textContent.trim())))) {
+            try {
+                await global.chrome?.storage?.local.set({[`assistantJournalConfirmed:${journalPath}`]: true});
+                journalConfirmed = true;
+            } catch { /* Retry on the next tick while the confirmation is available. */ }
+        }
+    }
+
+    async function updateCountdown() {
+        if (!document.contains(panel) || storageKey !== `assistantJournal:${location.pathname}`) return;
+        const observed = remainingSeconds(document);
+        // The editor can briefly render zero before the active clock loads.
+        const portalTime = observed === 0 && lastPortalTime === null ? null : observed;
+        const visible = !document.hidden;
+        const returnedToJournal = visible && !observedInForeground;
+        observedInForeground = visible;
+        if (portalTime !== null && portalTime !== lastPortalTime) {
+            deadline = Date.now() + portalTime * 1000;
+            lastPortalTime = portalTime;
+            // Keep the observed deadline through an immediate same-tab reload,
+            // even if the extension storage write is still in flight.
+            try { sessionStorage.setItem(journalDeadlineKey, String(deadline)); } catch {}
+        }
+        renderCountdown(portalTime);
+        if (!visible || portalTime === null || deadline === undefined ||
+            (!returnedToJournal && publishedDeadline !== undefined && Math.abs(deadline - publishedDeadline) <= 2000)) return;
+        const pendingDeadline = deadline;
+        publishedDeadline = pendingDeadline;
+        try {
+            await global.chrome?.storage?.local.set({
+                [journalDeadlineKey]: pendingDeadline,
+                [countdownKey]: {path: journalPath, deadline: pendingDeadline},
+            });
+        } catch {
+            if (publishedDeadline === pendingDeadline) publishedDeadline = undefined;
+        }
+    }
     button.title = 'Fill & Submit Journal (Alt + Shift + J)';
     button.setAttribute('aria-keyshortcuts', 'Alt+Shift+J');
     const shortcutHint = document.createElement('p');
@@ -242,7 +327,7 @@ function browserAssistantJournal(global) {
             if (remaining === null || remaining > 30*60) {
                 waitingForTimer = true;
                 const time=remaining === null ? 'Waiting for the portal timer to become readable.'
-                    : `Current timer: ${String(Math.floor(remaining/60)).padStart(2,'0')}:${String(remaining%60).padStart(2,'0')}.`;
+                    : `Current timer: ${formatJournalTime(remaining)}.`;
                 status.textContent = `${count} words ready. Waiting to submit at 30:00 remaining. ${time}`;
                 return;
             }
@@ -316,6 +401,14 @@ function browserAssistantJournal(global) {
         } catch (error) { if (run !== generation) return; draft = null; filled = false; waitingForTimer = false; running = false; idleState = 'ERROR'; global.BrowserAssistantJournalBusy = false; button.disabled = false; status.textContent = String(error.message); notify(); }
     });
     refreshInfo();
+    void loadCountdown();
+    void updateCountdown();
+    const clockObserver = global.MutationObserver ? new global.MutationObserver(records => {
+        if (records.some(({target}) => !(target.nodeType === 1 ? target : target.parentElement)?.closest('#assistant-root,#assistant-journal'))) {
+            void updateCountdown();
+        }
+    }) : null;
+    clockObserver?.observe(document.body, {subtree: true, childList: true, characterData: true});
     controller.mount(document.getElementById('assistant-journal-slot'));
     document.dispatchEvent(new global.Event('assistant-journal-ready'));
     try {
@@ -327,10 +420,13 @@ function browserAssistantJournal(global) {
     } catch { /* Opening the journal without auto-start remains available. */ }
     // Poll only the journal page; field discovery never changes platform restrictions.
     const timer = setInterval(() => {
-        if (global.BrowserAssistantJournal?.current !== controller && global.BrowserAssistantJournal) {clearInterval(timer); document.removeEventListener('keydown', shortcutListener, true); return;}
-        if (!document.contains(panel)) { draft = null; global.BrowserAssistantJournalBusy = false; document.removeEventListener('keydown', shortcutListener, true); clearInterval(timer); return; }
-        if (!/^\/modules\/reflective-journal\//.test(location.pathname) || storageKey !== `assistantJournal:${location.pathname}`) { draft = null; global.BrowserAssistantJournalBusy = false; document.removeEventListener('keydown', shortcutListener, true); clearInterval(timer); panel.remove(); return; }
+        if (global.BrowserAssistantJournal?.current !== controller && global.BrowserAssistantJournal) {stopWatching(); return;}
+        if (!document.contains(panel) || storageKey !== `assistantJournal:${location.pathname}`) {
+            draft = null; global.BrowserAssistantJournalBusy = false; stopWatching(); panel.remove(); return;
+        }
         if (!info) refreshInfo();
+        void updateCountdown();
+        void recordJournalConfirmation();
         notify();
         if (draft && !submitting && !starting) {
             const run = generation;
@@ -341,6 +437,11 @@ function browserAssistantJournal(global) {
             });
         }
     }, 1000);
+    function stopWatching() {
+        clearInterval(timer);
+        clockObserver?.disconnect();
+        document.removeEventListener('keydown', shortcutListener, true);
+    }
 }
 if (typeof window !== 'undefined' && location.origin === 'https://admissions.aurora.edu.in') {
     window.BrowserAssistantJournal = window.BrowserAssistantJournal || {
@@ -385,7 +486,33 @@ if (typeof window !== 'undefined' && location.origin === 'https://admissions.aur
 browserAssistantJournal(typeof window === 'undefined' ? globalThis : window);
 if (typeof window !== 'undefined' && location.origin === 'https://admissions.aurora.edu.in' && !window.BrowserAssistantJournalBoot) {
     window.BrowserAssistantJournalBoot = true;
+    let lastDeadline: number | undefined;
+    const storage = window.chrome?.storage?.local;
+    let clockChanged = false;
+    function updateJournalListClock() {
+        const clock = document.getElementById('assistant-journal-list-clock');
+        if (!clock) return;
+        clock.hidden = /^\/modules\/reflective-journal\//.test(location.pathname) || !Number.isFinite(lastDeadline);
+        if (!clock.hidden) {
+            const seconds = Math.max(0, Math.ceil((lastDeadline - Date.now()) / 1000));
+            clock.textContent = `Last journal · Estimated time left ${formatJournalTime(seconds)}`;
+        }
+    }
+    function loadJournalListClock(saved: unknown) {
+        lastDeadline = typeof saved === 'object' && saved !== null && 'deadline' in saved && typeof saved.deadline === 'number'
+            ? saved.deadline : undefined;
+        updateJournalListClock();
+    }
+    storage?.onChanged?.addListener(changes => {
+        if (!Object.hasOwn(changes, 'assistantJournalTimer')) return;
+        clockChanged = true;
+        loadJournalListClock(changes.assistantJournalTimer.newValue);
+    });
+    void storage?.get('assistantJournalTimer').then(data => {
+        if (!clockChanged) loadJournalListClock(data.assistantJournalTimer);
+    }).catch(() => {});
     setInterval(() => {
+        updateJournalListClock();
         if (/^\/modules\/reflective-journal\//.test(location.pathname) && !document.getElementById('assistant-journal')) browserAssistantJournal(window);
     }, 1000);
 }

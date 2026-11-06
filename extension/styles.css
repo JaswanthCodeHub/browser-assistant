@@ -1,5 +1,22 @@
 /* Browser Assistant – Styles v2.0 */
 
+#assistant-journal-countdown-badge {
+    all: initial;
+    position: fixed;
+    bottom: 16px;
+    left: 16px;
+    z-index: 2147483647;
+    padding: 8px 12px;
+    border: 1px solid #a78bfa;
+    border-radius: 999px;
+    background: #20163b;
+    color: #fff;
+    font: 600 13px/1.3 system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+    user-select: none;
+}
+
 #assistant-root {
     position: fixed;
     top: 20px;

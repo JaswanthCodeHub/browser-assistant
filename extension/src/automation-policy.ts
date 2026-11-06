@@ -89,9 +89,30 @@
         id: 'semantic-mcq',
         getQuestion(doc) {
             const visible = (element) => element.getClientRects().length > 0;
+            const preserveMatrices = (clone) => {
+                for (const math of clone.querySelectorAll('math')) {
+                    const tables = math.querySelectorAll('mtable');
+                    if (tables.length !== 1) continue;
+                    const matrix = tables[0];
+                    const surrounding = math.cloneNode(true);
+                    surrounding.querySelectorAll('mtable,annotation,annotation-xml').forEach(node => node.remove());
+                    if (!/^[\s()[\]{}|‖]*$/.test(surrounding.textContent || '')) continue;
+                    const rows = [...matrix.children];
+                    if (!rows.length || rows.some(row => !row.matches('mtr'))) continue;
+                    const cells = rows.map(row => [...row.children].map(cell => {
+                        if (!cell.matches('mtd')) return '';
+                        const value = (cell.textContent || '').trim().replace(/−/g, '-').replace(/^([+-])\s+/, '$1');
+                        return /^[+-]?\d+(?:\.\d+)?$/.test(value) ? value : '';
+                    }));
+                    if (!cells[0].length || cells.some(row => row.length !== cells[0].length || row.some(value => !value))) continue;
+                    const renderer = math.closest('.katex,mjx-container') || math;
+                    renderer.replaceWith(doc.createTextNode(` ${JSON.stringify(cells).replace(/"/g, '')} `));
+                }
+            };
             const textOf = (element) => {
                 if (!element) return '';
                 const clone = element.cloneNode(true);
+                preserveMatrices(clone);
                 const editors = element.querySelectorAll('.ace_editor,.CodeMirror,.monaco-editor');
                 [...clone.querySelectorAll('.ace_editor,.CodeMirror,.monaco-editor')].forEach((block, index) => {
                     const source = typeof browserAssistantCachedMcqSnippet === 'function'
@@ -206,8 +227,8 @@
                 // Coding MCQs often render the code separately from the prose
                 // question. Preserve that visible context before asking the AI.
                 const questionRegion = optionScope.closest('[data-question],article,section,main') || optionScope.parentElement;
-                const promptRegion = questionRegion?.querySelector('#generic-question-wrapper-id,[data-question-text]')
-                    || doc.querySelector('#generic-question-wrapper-id');
+                const promptRegion = questionRegion?.querySelector('#generic-question-wrapper-id,#exam-question-wrapper-id,[data-question-text]')
+                    || doc.querySelector('#generic-question-wrapper-id,#exam-question-wrapper-id');
                 const sourceRegion = promptRegion || questionRegion;
                 const snippets = [...(sourceRegion?.querySelectorAll('pre,code,.ace_editor,.CodeMirror,.monaco-editor') || [])]
                     .filter(node => visible(node) && !node.parentElement?.closest('pre,code,.ace_editor,.CodeMirror,.monaco-editor'));
@@ -223,6 +244,7 @@
                     // Preserve filenames, prose and ALL snippets together; the
                     // last code block alone is not the question's full context.
                     const clone = promptRegion.cloneNode(true);
+                    preserveMatrices(clone);
                     for (const block of clone.querySelectorAll('pre,.ace_editor,.CodeMirror,.monaco-editor')) {
                         const plain = doc.createElement('pre');
                         plain.textContent = '\n' + codeText(block) + '\n';

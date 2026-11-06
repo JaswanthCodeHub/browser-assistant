@@ -28,6 +28,7 @@ def release_files():
     source = tuple(dict.fromkeys((*extension_assets, *typescript, *BACKEND, *tests, 'extension/fixtures/ccbp-ordering.html',
         'package.json','package-lock.json','tsconfig.json','.gitignore','.editorconfig', 'scripts/check_repo.py',
         'scripts/package_release.py','scripts/start_journal_assistant.ps1','scripts/smoke_backend.py',
+        'integrations/n8n/journal-whatsapp-reminder.json','integrations/n8n/README.md',
         '.github/workflows/ci.yml','.github/workflows/release.yml')))
     return [('extension',extension),('backend',BACKEND),('source',source)]
 

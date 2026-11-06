@@ -1,3 +1,45 @@
+# 2.8.21
+
+- Preserve the rows of rendered numeric matrices and calculate RREF pivot-count answers locally.
+
+# 2.8.20
+
+- Track active journal countdowns separately. Opening another journal keeps earlier timers visible and keeps each reminder independent.
+
+# 2.8.19
+
+- Show the journal countdown in a small corner badge on other websites, even with the Assistant panel closed.
+
+# 2.8.18
+
+- Save the visible journal clock as soon as it appears and restore it on immediate same-tab reloads while extension storage finishes saving.
+
+# 2.8.17
+
+- Display approximate journal time remaining on the pinned Chrome toolbar icon across tabs.
+
+# 2.8.16
+
+- Explain how to reopen an existing draft when Aurora returns to Guidelines before showing the journal timer.
+
+# 2.8.15
+
+- Restore the saved countdown for the same journal on the Guidelines page and show the last journal countdown in QA Control elsewhere on Aurora.
+
+# 2.8.14
+
+- Show the last journal countdown in QA Control on Aurora's Assessments page.
+- Add an optional n8n webhook reminder when the journal submission has not been confirmed near 30:00 remaining.
+
+# 2.8.13
+
+- Show the journal countdown after a page reload and in the Chrome extension popup when away from the journal page.
+
+# 2.8.12
+
+- Removed Lab Report from the extension and local backend.
+- Verify the supported Row Parallelism question using the input and weight dimensions.
+
 # 2.8.7
 
 - Verify single-choice text answers against the original displayed options and retry once when independent solves disagree.

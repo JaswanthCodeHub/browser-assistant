@@ -1,4 +1,25 @@
-# Browser Assistant 2.8.7
+# Browser Assistant 2.8.21
+
+- Read rendered numeric matrix rows and verify RREF pivot-count choices locally, including matrices with zero rows. Update the Chrome extension and restart the local backend to use both changes.
+
+- See other active journal countdowns while writing the current journal. The toolbar shows the soonest timer and the popup lists all active timers.
+
+- View the last active journal's estimated time remaining at the bottom left of other websites where Chrome allows Browser Assistant to run.
+
+- The draft screen can restore the last observed countdown after an immediate reload. A temporary zero while the portal clock loads leaves the saved countdown available.
+
+- Pin Browser Assistant in Chrome to see the journal's approximate time remaining across tabs. Open the icon for the countdown in minutes and seconds.
+
+- Show draft recovery instructions when Aurora displays its unsaved-draft notice. Refresh the countdown from the portal clock when it reappears.
+
+- The Guidelines page restores the last observed countdown for that journal after a reload. Elsewhere on Aurora, QA Control displays the last journal countdown.
+
+- View the last journal countdown in QA Control on Aurora's Assessments page. Enable the optional WhatsApp reminder through an n8n webhook in the Chrome toolbar popup.
+
+- Keep the journal countdown available after a reload. Open the Browser Assistant toolbar popup from any tab to see the last journal's estimated time remaining.
+
+- Removed Lab Report from the extension and local backend.
+- Verify the supported Row Parallelism question using the input and weight dimensions.
 
 - Single-choice Text Scan and QA Control compare answers using the displayed option list. One additional blind solve can resolve a disagreement when two answers identify the same choice.
 

@@ -1,5 +1,62 @@
 // Browser Assistant Content Script v3.0 — High Accuracy Edition
 
+function mountJournalCountdown(signal: AbortSignal) {
+    const storage = chrome.storage.local;
+    const badge = document.createElement('div');
+    badge.id = 'assistant-journal-countdown-badge';
+    const clock = document.createElement('span');
+    clock.setAttribute('role', 'timer');
+    badge.attachShadow({mode: 'closed'}).append(clock);
+    let timers: AssistantJournalTimer[] = [];
+    let tick: number | undefined;
+    let revision = 0;
+
+    function renderCountdown() {
+        window.clearTimeout(tick);
+        if (signal.aborted) return;
+        const now = Date.now();
+        const active = timers.filter(timer => timer.deadline > now);
+        const path = location.pathname.replace(/\/$/, '');
+        const aurora = location.origin === 'https://admissions.aurora.edu.in';
+        const visible = active.filter(timer => !aurora || (path.startsWith('/modules/reflective-journal/') && timer.path !== path));
+        if (!visible.length) badge.remove();
+        else {
+            const times = visible.map(timer => {
+                const seconds = Math.ceil((timer.deadline - now) / 1000);
+                return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+            });
+            clock.textContent = `${times.length === 1 ? 'Journal time left' : 'Journal times left'} ≈ ${times.join(' · ')}`;
+            if (!badge.isConnected) document.body.appendChild(badge);
+        }
+        if (active.length && !document.hidden) tick = window.setTimeout(renderCountdown, 1000);
+    }
+
+    async function refreshCountdown() {
+        const request = ++revision;
+        try {
+            const next = await chrome.runtime.sendMessage<AssistantMessage, AssistantJournalTimer[]>({action: 'journalCountdowns'});
+            if (request !== revision || signal.aborted) return;
+            timers = Array.isArray(next) ? next : [];
+            renderCountdown();
+        } catch { /* Reloading the extension can invalidate the old tab context. */ }
+    }
+
+    const onStorageChange = (changes: Record<string, chrome.storage.StorageChange>) => {
+        if (Object.keys(changes).some(key => key.startsWith('assistantJournalTimer') || key.startsWith('assistantJournalConfirmed:'))) {
+            void refreshCountdown();
+        }
+    };
+    storage.onChanged.addListener(onStorageChange);
+    document.addEventListener('visibilitychange', renderCountdown, {signal});
+    signal.addEventListener('abort', () => {
+        window.clearTimeout(tick);
+        storage.onChanged.removeListener(onStorageChange);
+        badge.remove();
+    }, {once: true});
+    void refreshCountdown();
+    return badge;
+}
+
 (function () {
     // Abort on pages without a body (about:blank, PDFs, XML docs, etc.)
     if (!document.body) return;
@@ -24,6 +81,8 @@
     const root = document.createElement('div');
     root.id = 'assistant-root';
     document.body.appendChild(root);
+    const journalCountdownBadge = ['http:', 'https:'].includes(location.protocol)
+        ? mountJournalCountdown(lifecycle.signal) : null;
 
     // ── Move panel ───────────────────────────────────────────────────────────
     // Drag the header to put the panel anywhere on the current page. The saved
@@ -1742,10 +1801,12 @@
 
         let timeoutId;
         let panelVisibility = '';
+        const countdownVisibility = journalCountdownBadge?.style.visibility;
         try {
-            // Do not include our own floating panel in the captured screenshot.
+            // Keep extension UI out of the captured screenshot.
             panelVisibility = root.style.visibility;
             root.style.visibility = 'hidden';
+            if (journalCountdownBadge) journalCountdownBadge.style.visibility = 'hidden';
             const context = await prepareVisionQuestionContext();
             const visuals = window.BrowserAssistantQuestionVisuals;
             let images;
@@ -1761,6 +1822,7 @@
                 images = [response.dataUrl];
             }
             root.style.visibility = panelVisibility;
+            if (journalCountdownBadge) journalCountdownBadge.style.visibility = countdownVisibility;
             await assertVisionQuestionCurrent(context);
             setLoading("Analyzing and cross-checking…");
 
@@ -1801,6 +1863,7 @@
             showError(`Vision Error: ${msg}`);
         } finally {
             root.style.visibility = panelVisibility;
+            if (journalCountdownBadge) journalCountdownBadge.style.visibility = countdownVisibility;
             // Text Scan can hand off to Vision without a visible error. In that
             // case, leave its in-progress state for the caller to clear.
             if (!scanWasAlreadyRunning) {
@@ -2165,6 +2228,7 @@
                     <div><dt>Progress</dt><dd id="assistant-automation-progress">0 / —</dd></div>
                     <div class="assistant-qa-wide"><dt>Current question</dt><dd id="assistant-automation-question">—</dd></div>
                 </dl>
+                <div class="assistant-qa-latest" id="assistant-journal-list-clock" hidden></div>
                 <div class="assistant-qa-latest" id="assistant-automation-latest" aria-live="polite"></div>
                 <div id="assistant-journal-slot"></div>
                 <div class="assistant-automation-actions assistant-qa-actions">
