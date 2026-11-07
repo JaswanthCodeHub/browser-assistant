@@ -44,6 +44,7 @@ interface AssistantMessageResponse {
     done?: boolean;
     passed?: boolean;
     submitted?: boolean;
+    saveUnconfirmed?: boolean;
     data?: {
         results?: string;
         provider?: string;

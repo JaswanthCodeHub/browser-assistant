@@ -1,4 +1,6 @@
-# Browser Assistant 2.8.22
+# Browser Assistant 2.8.23
+
+- CCBP Online IDE automation opens `app.js` and pastes the reviewed solution in the editor. Grading starts only after the saved file matches the pasted code and passes a syntax check. If the editor blocks the paste or the save cannot be confirmed, the extension reports the issue for review.
 
 - Add repository instructions for pushing, tagging, and verifying a GitHub Release for every completed update.
 

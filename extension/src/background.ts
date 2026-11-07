@@ -227,10 +227,10 @@ chrome.runtime.onMessage.addListener((request: AssistantMessage, sender, sendRes
                     || !/^[a-f0-9-]{36}$/.test(request.token || '')) return {ok:false,error:'The portal submit command and IDE workspace do not match.'};
                 if (request.action === 'runOnlineIde' && (!ide.active || typeof request.code !== 'string'
                     || !request.code.trim() || new TextEncoder().encode(request.code).length > 12000)) {
-                    return {ok:false,error:'The matching IDE must be active and the source must fit the terminal input limit.'};
+                    return {ok:false,error:'The matching IDE must be active and the app.js source must be at most 12 KB.'};
                 }
                 const results = await chrome.scripting.executeScript({target:{tabId:ide.id,allFrames:true},world:'MAIN',
-                    func:browserAssistantOnlineIdeTerminal,
+                    func:browserAssistantOnlineIde,
                     args:[request.action,workspace,questionId,request.token,request.action === 'runOnlineIde' ? request.code : null]});
                 const frameResults = results.map(entry=>entry.result).filter(Boolean);
                 return frameResults.length === 1 ? frameResults[0] : {ok:false,retry:true,error:'The IDE workspace is still opening.'};

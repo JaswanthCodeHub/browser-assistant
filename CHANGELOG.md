@@ -1,3 +1,7 @@
+# 2.8.23
+
+- Paste reviewed Node.js code into an empty `app.js` in the CCBP Online IDE. Check that the editor saved the code and that it passes JavaScript syntax checks before starting grading.
+
 # 2.8.22
 
 - Record the release process for every completed Browser Assistant update, including verification of the published GitHub Release.

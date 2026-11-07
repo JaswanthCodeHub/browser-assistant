@@ -1015,6 +1015,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                         if (!current()) return;
                         if (result?.done) {
                             if (result.passed) automation.completed = 1;
+                            else if (result.saveUnconfirmed) automation.error = 'Code was pasted into app.js, but the saved file did not match. Check app.js and save before running it.';
                             else automation.error = result.submitted ? 'Grading finished. Review the test results in the IDE.' : 'The IDE command finished without a confirmed submission. Check the terminal.';
                             stopAutomation(result.passed ? 'COMPLETED' : 'CHECK_IDE_RESULT');
                             return;
