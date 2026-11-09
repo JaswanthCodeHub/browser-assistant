@@ -1,9 +1,12 @@
 # Roadmap and starter ideas
 
-1. Build a larger labeled evaluation set for rendered math, charts and code. Track false confirmations separately from correct answers and abstentions. Mocked-provider tests cover the pipeline, while live evaluations measure provider quality.
-2. Test optional local vision with supported Ollama models and clear hardware and context requirements.
-3. Expand Chromium coverage for screenshot redaction, site navigation, editor confirmations and accessibility. Add onboarding checks on macOS and Linux.
-4. Localize the toolbar and panel and test right-to-left layouts. Split panel rendering and run coordination into independently tested modules as they change.
-5. Evaluate Chrome Web Store distribution and its permissions and privacy requirements.
+These are proposals based on current gaps, not scheduled commitments or existing GitHub issues.
 
-Discuss changes to site access, retention and submission behavior before implementation.
+1. Narrow host permissions and add an explicit site opt-in flow; test generic fallback and origin changes.
+2. Add screenshot preview/redaction before cloud transmission.
+3. Add isolated temporary-database tests for history limits, deletion, and invalid requests.
+4. Improve accessible keyboard focus and panel controls with a practice-page browser check.
+5. Add provider connectivity diagnostics that distinguish configuration from reachability.
+6. Lock Python transitive dependencies across the supported environments after clean installation checks.
+
+Small starting contributions: document a reproducible unsupported editor fixture; add an accessible-name detection regression; improve offline error text; capture an approved synthetic practice demo; verify macOS/Linux onboarding and record versions. Discuss changes that affect permissions, data retention, or automatic submission first.

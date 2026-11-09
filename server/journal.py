@@ -106,5 +106,4 @@ def register_journal(app, cloud, local):
             except (ValueError, TypeError) as exc:
                 messages.extend([{'role': 'assistant', 'content': raw},
                                  {'role': 'user', 'content': str(exc) + ' Regenerate the complete JSON.'}])
-        raise HTTPException(502, 'Could not produce exactly 80 words in each section (400 total).')
-    return generate_journal
+        raise HTTPException(502, 'Could not produce exactly 80 words in each section (400 total). Nothing was submitted.')

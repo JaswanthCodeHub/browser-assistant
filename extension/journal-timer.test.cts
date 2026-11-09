@@ -20,40 +20,59 @@ function fixture(time='56:15',prefilled=false) {
     if(prefilled){const data=sections();for(const [i,field] of [...document.querySelectorAll('section textarea')].entries())field.value=data[keys[i]];}
     const storage=new Map();
     const globals={document,location:{origin:'https://admissions.aurora.edu.in',pathname:'/modules/reflective-journal/timer-test'},
-        Event:window.Event,AbortController,browserAssistantLocalInference: (_path, body, send) => send({body}),
-        sessionStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
+        Event:window.Event,sessionStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
         setInterval:fn=>{polls.push(fn);return polls.length;},clearInterval(){},setTimeout:fn=>{queueMicrotask(fn);return 1;},
         chrome:{runtime:{getManifest:()=>({version:'2.6.68'}),sendMessage:async()=>{requests++;return {ok:true,data:{sections:sections()}};}}}};
     globals.window=globals;
     vm.runInNewContext(source,globals);
-    document.querySelector('#assistant-journal textarea').value='My actual class experience and feelings.';
     return {document,globals,controller:globals.BrowserAssistantJournal,
         start:async()=>{globals.BrowserAssistantJournal.start();await settle();},
         tick:async()=>{for(const poll of [...polls])poll();await settle();},time:value=>{document.querySelector('#clock').textContent=value;},
         get clicks(){return clicks;},get requests(){return requests;}};
 }
-test('draft preparation leaves portal text and the submit control unchanged as the timer advances',async()=>{
+test('400 words are filled at 56:15; submission waits for 30:00 and clicks only once',async()=>{
+    const f=fixture();await f.start();
+    assert.equal(f.clicks,0);assert.equal(f.controller.getState().state,'WAITING_FOR_TIMER');
+    assert.equal(f.globals.BrowserAssistantJournalBusy,true);assert.equal(f.document.querySelector('#clock').textContent,'56:15');
+    assert.equal(journal.validate(Object.fromEntries(keys.map((key,i)=>[key,[...f.document.querySelectorAll('section textarea')][i].value]))),400);
+    f.time('30:01');await f.tick();assert.equal(f.clicks,0);
+    f.time('30:00');await f.tick();assert.equal(f.clicks,1);
+    await f.tick();assert.equal(f.clicks,1);assert.equal(f.controller.getState().state,'COMPLETED');
+});
+test('a missed exact second still submits at 29:59, never before the target',async()=>{
+    const f=fixture();await f.start();f.time('29:59');await f.tick();assert.equal(f.clicks,1);
+});
+test('existing complete content is retained and can be armed without another AI request',async()=>{
     const f=fixture('56:15',true);
-    const original=Object.values(journal.fields(f.document)).map(field=>field.value);
-    await f.start();
-    assert.equal(f.controller.getState().state,'REVIEW_DRAFT');
-    f.time('30:00');await f.tick();
-    f.time('29:59');await f.tick();
-    assert.equal(f.clicks,0);
-    assert.deepEqual(Object.values(journal.fields(f.document)).map(field=>field.value),original);
-    assert.equal(f.document.querySelector('#assistant-journal [data-countdown]').textContent,'Portal time left 29:59');
+    const before=[...f.document.querySelectorAll('section textarea')].map(field=>field.value);
+    await f.start();assert.equal(f.requests,0);assert.equal(f.clicks,0);
+    assert.deepEqual([...f.document.querySelectorAll('section textarea')].map(field=>field.value),before);
+    f.time('30:00');await f.tick();assert.equal(f.clicks,1);
 });
-
-test('the journal shows completion only after portal confirmation appears',async()=>{
-    const f=fixture();
-    await f.start();
-    assert.equal(f.controller.getState().completed,0);
-    f.document.querySelector('#submit').click();
-    await f.tick();
-    assert.equal(f.controller.getState().state,'COMPLETED');
-    assert.equal(f.controller.getState().completed,1);
+test('Pause holds submission at the target and Resume continues once',async()=>{
+    const f=fixture();await f.start();f.controller.pause();
+    f.time('30:00');await f.tick();assert.equal(f.clicks,0);assert.equal(f.controller.getState().state,'PAUSED');
+    f.controller.pause();await f.tick();assert.equal(f.clicks,1);
 });
-
+test('Stop cancels the timer wait and keeps all entered text',async()=>{
+    const f=fixture();await f.start();f.controller.stop();f.time('30:00');await f.tick();
+    assert.equal(f.clicks,0);assert.equal(f.controller.getState().state,'STOPPED');
+    assert.ok(Object.values(journal.fields(f.document)).every(field=>field.value.trim()));
+});
+test('changing pages while waiting cannot submit another journal',async()=>{
+    const f=fixture();await f.start();f.globals.location.pathname='/modules/reflective-journal/another';f.time('30:00');await f.tick();
+    assert.equal(f.clicks,0);assert.equal(f.globals.BrowserAssistantJournalBusy,false);
+});
+test('changed journal text is never overwritten or submitted by the pending timer run',async()=>{
+    const f=fixture();await f.start();f.document.querySelector('section textarea').value='User changed this section.';
+    f.time('30:00');await f.tick();assert.equal(f.clicks,0);assert.equal(f.controller.getState().state,'ERROR');
+    assert.equal(f.document.querySelector('section textarea').value,'User changed this section.');
+});
+test('missing or conflicting portal timers keep submission waiting',async()=>{
+    const f=fixture(null);await f.start();await f.tick();assert.equal(f.clicks,0);assert.equal(f.controller.getState().state,'WAITING_FOR_TIMER');
+    const other=fixture('56:15');const second=other.document.createElement('div');second.textContent='Time 29:59';other.document.body.appendChild(second);
+    await other.start();assert.equal(other.clicks,0);assert.equal(other.controller.getState().state,'WAITING_FOR_TIMER');
+});
 test('timer parsing supports hours and excludes clock-like text in journal writing fields and assistant UI',()=>{
     const f=fixture('00:30:00');assert.equal(journal.remainingSeconds(f.document),1800);
     const hidden=f.document.createElement('div');hidden.id='assistant-root';hidden.textContent='Time 00:10';f.document.body.appendChild(hidden);
@@ -61,8 +80,6 @@ test('timer parsing supports hours and excludes clock-like text in journal writi
     assert.equal(journal.remainingSeconds(f.document),1800);
     f.time('30:99');assert.equal(journal.remainingSeconds(f.document),null);
 });
-test('an expired timer never sends a submission',async()=>{
-    const f=fixture('00:00');
-    await f.start();await f.tick();
-    assert.equal(f.clicks,0);
+test('an expired timer cannot trigger a late duplicate submission',async()=>{
+    const f=fixture('00:00');await f.start();assert.equal(f.clicks,0);assert.equal(f.controller.getState().state,'ERROR');
 });

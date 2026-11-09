@@ -17,7 +17,7 @@ function harness(activeElement={}){
     const start=source.indexOf('    function handleAutomationShortcut(');
     vm.runInContext(source.slice(start,source.indexOf('    // ── Vision scan',start)),ctx);
     const key=(overrides={})=>{
-        const e={key:'A',code:'KeyA',altKey:true,shiftKey:false,isTrusted:true,preventDefault(){this.prevented=true;},stopPropagation(){this.stopped=true;},...overrides};
+        const e={key:'A',code:'KeyA',altKey:true,shiftKey:false,preventDefault(){this.prevented=true;},stopPropagation(){this.stopped=true;},...overrides};
         listener(e);return e;
     };
     return {ctx,automation,key,starts:()=>starts,updates:()=>updates};
@@ -36,7 +36,7 @@ test('automation shortcut works with a code editor focused',()=>{
 test('held keys, composition and extra or missing modifiers do not toggle automation',()=>{
     const h=harness();
     for(const event of [{repeat:true},{isComposing:true},{ctrlKey:true},{metaKey:true},{altKey:false},
-        {key:'B',code:'KeyB'},{defaultPrevented:true},{isTrusted:false}]){
+        {key:'B',code:'KeyB'},{defaultPrevented:true}]){
         assert.equal(h.key(event).prevented,undefined);
     }
     assert.equal(h.starts(),0);

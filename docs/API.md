@@ -1,6 +1,6 @@
 # API reference
 
-Default base: `http://127.0.0.1:8000`. Interactive schemas: `/docs`; machine-readable schema: `/openapi.json`. Inference, history and provider diagnostics require the local pairing value in `X-Assistant-Token`. Keep the API on loopback.
+Default base: `http://127.0.0.1:8000`. Interactive schemas: `/docs`; machine-readable schema: `/openapi.json`. No authentication or CORS middleware is configured; the extension proxies requests through its background worker. Do not expose the API publicly.
 
 | Method | Route | Behavior |
 | --- | --- | --- |
@@ -9,10 +9,6 @@ Default base: `http://127.0.0.1:8000`. Interactive schemas: `/docs`; machine-rea
 | POST | /solve | Text inference: Groq first, then Ollama fallback |
 | POST | /solve-vision | Visible screenshot inference through Groq only |
 | GET | /extension-release | Current workspace extension version, read from disk |
-| POST | /provider-status | Check Groq or Ollama connectivity without running inference |
-| POST | /jobs | Start an inference job using a client UUID, route and request body |
-| GET | /jobs/{id} | Read job status and result |
-| DELETE | /jobs/{id} | Cancel a pending job |
 | POST | /journal | Syllabus-based five-section journal generation |
 | GET | /history | `{ "items": [...] }`, newest first; limit default 20, range 1–100 |
 | POST | /history | Validate and store an answer; 201 with id and created_at |
@@ -48,5 +44,3 @@ or excessive combined payload returns 422; missing vision configuration returns
 503; the overall deadline returns 504. Errors retain `detail` with credentials
 redacted. Health adds `vision_max_images: 5`, `vision_images_per_request: 3` and
 `vision_batching: true`. History storage failures return a non-sensitive 503.
-
-For asynchronous inference, send a UUID in `id`, one of `/solve`, `/solve-vision` or `/journal` in `route`, and that route's request object in `body`. A successful start returns HTTP 202. Polling returns `state: "running"` or `state: "finished"` with the wrapped HTTP `status` and `data`. Solve jobs return an `items` array with `schema_version: 2` alongside the legacy `results` string. The server accepts up to two running jobs and retains completed results for up to two minutes. Delete cancels the local job. A request already sent to a model provider may finish independently.

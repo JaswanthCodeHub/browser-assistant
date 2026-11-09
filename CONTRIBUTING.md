@@ -22,7 +22,7 @@ cd server
 ../.venv/bin/python -m unittest discover -p 'test_*.py' -v
 ```
 
-The first suite is an executable assertion script, not a pytest suite; the second uses unittest and mocked providers. They require runtime dependencies, but no paid AI access. CI executes both and fails on unsuccessful checks. Install the Chromium fixture browser with `npx playwright install chromium` and run `npm run test:browser` after building. Live provider checks are optional and should use non-sensitive fixtures. Test browser changes on `/practice`, record browser/version and what was tried; automated tests do not replace browser QA.
+The first suite is an executable assertion script, not a pytest suite; the second uses unittest and mocked providers. They require runtime dependencies, but no paid AI access. CI executes both and fails on unsuccessful checks. Live provider checks are optional and should use non-sensitive fixtures. Test browser changes on `/practice`, record browser/version and what was tried; automated tests do not replace browser QA.
 
 From the root, `python scripts/smoke_backend.py` starts an isolated temporary HTTP
 server with mocked AI and a disposable database. It checks text, 1/3/5-image
@@ -68,5 +68,5 @@ with GitHub owner `JaswanthCodeHub`, repository `browser-assistant`, workflow
 An npm maintainer must publish the first version while signed in and configure
 the trusted publisher before pushing the next release tag.
 
-Verify each released archive with `gh attestation verify <archive> --repo JaswanthCodeHub/browser-assistant`. Confirm publication rights, account settings, browser QA, and archive contents
+Confirm publication rights, account settings, browser QA, and archive contents
 using [LAUNCH.md](docs/LAUNCH.md).

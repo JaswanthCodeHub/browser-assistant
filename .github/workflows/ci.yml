@@ -13,15 +13,13 @@ jobs:
     name: Extension checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
       - run: npm ci
       - run: npm test
-      - run: npx playwright install --with-deps chromium
-      - run: npm run test:browser
       - run: python scripts/check_repo.py
       - run: python scripts/package_release.py
   python:
@@ -35,8 +33,8 @@ jobs:
       GROQ_API_KEY_2: ''
       GROQ_API_KEY_3: ''
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
           cache: pip
@@ -51,7 +49,7 @@ jobs:
     name: Docker smoke
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@v4
       - run: cp server/.env.example server/.env
       - run: docker compose config --quiet
       - run: docker compose up --build -d

@@ -25,14 +25,6 @@ interface AssistantMessage {
     workspace?: string;
     token?: string;
     code?: string;
-    checkpoint?: AssistantCheckpoint;
-    checkpointKind?: 'practice' | 'coding';
-}
-
-interface AssistantCheckpoint {
-    kind: 'practice' | 'coding';
-    expectedUrl?: string;
-    value: unknown;
 }
 
 interface AssistantMessageResponse {
@@ -52,8 +44,6 @@ interface AssistantMessageResponse {
     passed?: boolean;
     submitted?: boolean;
     saveUnconfirmed?: boolean;
-    saved?: boolean;
-    checkpoint?: any;
     data?: {
         results?: string;
         provider?: string;
@@ -61,7 +51,6 @@ interface AssistantMessageResponse {
         code_reviewed?: boolean;
         answer_verified?: boolean;
         items?: unknown[];
-        sections?: Record<string, string>;
         groq_configured?: boolean;
         vision_question_context?: boolean;
         vision_batching?: boolean;
@@ -76,7 +65,6 @@ interface AssistantTarget {
     adapter?: string;
     pageTypes?: string[];
     submitPolicy?: string;
-    assistOnly?: boolean;
 }
 interface AssistantContext {
     authorizationVerified: boolean;
@@ -200,7 +188,6 @@ interface Window {
         fingerprint(question): string;
         capture(question, sendMessage): Promise<{images: string[]; fingerprint: string}>;
         requireBackend(apiRequest, imageCount?: number): Promise<void>;
-        reviewCapture(dataUrl: string, question): Promise<string | null>;
     };
     BrowserAssistantJournal: AssistantJournal;
     BrowserAssistantJournalBusy?: boolean;

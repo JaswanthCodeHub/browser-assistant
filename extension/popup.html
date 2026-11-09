@@ -46,26 +46,15 @@
         <div class="logo-dot"></div>
         <h3>Browser Assistant</h3>
     </div>
-    <p>Open the assistant on the current webpage.</p>
-    <button id="open-assistant" type="button">Open on this tab</button>
+    <p>Extension active. The floating panel appears on every page.</p>
     <div class="status">Server: <span id="server-status">checking...</span></div>
     <p id="journal-countdown" hidden></p>
-    <form id="local-pairing">
-        <label for="pairing-token">Local server token</label>
-        <input id="pairing-token" type="password" required autocomplete="off" spellcheck="false">
-        <button type="submit">Pair</button>
-        <button id="unpair-server" type="button">Forget</button>
-    </form>
-    <p>Run <code>python main.py --show-pairing-token</code> from the backend folder.</p>
-    <button id="check-provider" type="button">Check provider</button>
-    <p id="settings-status" role="status"></p>
-    <label><input id="save-history" type="checkbox"> Save scan history</label>
     <div class="shortcuts">
         <div class="shortcut-row"><span>Open panel</span> <kbd>`</kbd></div>
         <div class="shortcut-row"><span>Close panel</span> <kbd>]</kbd></div>
         <div class="shortcut-row"><span>Vision scan</span> <kbd>\</kbd></div>
         <div class="shortcut-row"><span>Minimal mode</span> <kbd>[</kbd></div>
-        <div class="shortcut-row"><span>Prepare journal</span> <kbd>Alt+Shift+J</kbd></div>
+        <div class="shortcut-row"><span>Journal fill &amp; submit</span> <kbd>Alt+Shift+J</kbd></div>
         <div class="shortcut-row"><span>Automation start / pause / resume</span> <kbd>Alt+A</kbd></div>
     </div>
     <script src="popup.js"></script>

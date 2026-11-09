@@ -577,13 +577,6 @@
 .assistant-close:focus-visible,
 .assistant-auto-btn:focus-visible { outline: 2px solid #8fa5ff; outline-offset: 2px; }
 
-@media (prefers-reduced-motion: reduce) {
-    #assistant-root *, #assistant-root *::before, #assistant-root *::after {
-        animation: none !important;
-        transition: none !important;
-    }
-}
-
 .assistant-scan-panel { display: flex; min-height: 0; flex: 1; flex-direction: column; }
 .assistant-btn-row { gap: 7px; margin-bottom: 10px; }
 .assistant-btn { min-height: 32px; border-radius: 8px; font-size: 10.5px; box-shadow: 0 5px 14px rgba(100, 116, 255, .18); }

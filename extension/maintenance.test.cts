@@ -5,19 +5,11 @@ const vm=require('node:vm');
 const {parseHTML}=require('linkedom');
 const content=fs.readFileSync(`${__dirname}/content.js`,'utf8');
 
-function background(activeId=7, changeDuringCapture=false){
-    let listener,activate,captures=0,fetches=0;
-    const storage = {};
+function background(activeId=7){
+    let listener,captures=0,fetches=0;
     const chrome={alarms:{create(){},onAlarm:{addListener(){}}},runtime:{id:'ours',onInstalled:{addListener(){}},
         onMessage:{addListener(fn){listener=fn;}},getManifest:()=>({version:'test'})},
-        storage:{local:{},session:{get:async key=>({[key]:storage[key]}),set:async entries=>Object.assign(storage,entries),remove:async key=>{delete storage[key];}}},
-        tabs:{query:async()=>[{id:activeId,url:'https://example.test'}],
-            onActivated:{addListener(fn){activate=fn;}},
-            captureVisibleTab(windowId,options,done){
-                captures++;assert.equal(windowId,3);
-                if(changeDuringCapture) activate({windowId});
-                done('data:image/png;base64,fixture');
-            }}};
+        tabs:{query:async()=>[{id:activeId}],captureVisibleTab(windowId,options,done){captures++;assert.equal(windowId,3);done('data:image/png;base64,fixture');}}};
     const ctx=vm.createContext({chrome,URL,importScripts(){},AbortSignal:{timeout:()=>({})},console,
         fetch:async()=>{fetches++;return {ok:true,status:200,text:async()=>'{"status":"ok"}'};}});
     vm.runInContext(fs.readFileSync(`${__dirname}/background.js`,'utf8'),ctx);
@@ -30,33 +22,6 @@ test('screenshots are bound to the requesting active tab and window',async()=>{
     assert.equal(h.captures(),1);
     const other=background(99);assert.match((await other.send({action:'captureVisibleTab'})).error,/no longer active/);
     assert.equal(other.captures(),0);
-});
-test('a tab switch during capture invalidates the screenshot even if the original tab is active again',async()=>{
-    const h=background(7,true);
-    const result=await h.send({action:'captureVisibleTab'});
-    assert.ok(result.error);
-    assert.equal(result.dataUrl,undefined);
-});
-test('only the intended tab and destination can consume a navigation checkpoint once',async()=>{
-    const {send}=background();
-    const sender=(path,documentId,tabId=7,frameId=0)=>{
-        const url='https://learning.ccbp.in'+path;
-        return {id:'ours',url,frameId,documentId,tab:{id:tabId,url}};
-    };
-    const save={action:'saveCheckpoint',checkpointKind:'practice',
-        checkpoint:{kind:'practice',expectedUrl:'/practice/destination',value:{stage:'solve'}}};
-    const take={action:'takeCheckpoint',checkpointKind:'practice'};
-    const from=sender('/practice/source','source');
-    const to=sender('/practice/destination','destination');
-    assert.equal((await send(save,sender('/practice/source','iframe',7,2))).ok,false);
-    assert.equal((await send(save,from)).ok,true);
-    assert.equal((await send(take,sender('/practice/different','wrong'))).checkpoint,undefined);
-    assert.equal((await send(take,sender('/practice/destination','other-tab',8))).checkpoint,undefined);
-    assert.equal((await send(take,to)).checkpoint.stage,'solve');
-    assert.equal((await send(take,to)).checkpoint,undefined);
-    await send(save,from);
-    await send({...take,action:'clearCheckpoint'},from);
-    assert.equal((await send(take,to)).checkpoint,undefined);
 });
 test('untrusted messages and unexpected API methods cannot reach local APIs or screenshots',async()=>{
     const h=background();
@@ -110,7 +75,7 @@ test('Text Scan keeps long coding statements and excludes hidden executable data
 });
 test('Stop cancels automation even when site session storage is unavailable',()=>{
     const automation={runId:1,running:true,paused:true,batch:{},pendingNavigation:true};
-    const ctx=vm.createContext({window:{},automation,pendingInference:new Set(),safeSendMessage:async()=>({ok:true}),updateAutomationUI(){}});
+    const ctx=vm.createContext({window:{},automation,sessionStorage:{removeItem(){throw Error('Storage blocked');}},updateAutomationUI(){}});
     const start=content.indexOf('    function stopAutomation(');
     vm.runInContext(content.slice(start,content.indexOf('    async function waitWhilePaused(',start)),ctx);
     ctx.stopAutomation();assert.equal(automation.running,false);assert.equal(automation.runId,2);
@@ -124,9 +89,8 @@ for(const fails of [false,true])test(`bounded API keepalive is cleaned up after 
         chrome:{alarms:{create(){},onAlarm:{addListener(){}}},runtime:{id:'ours',getPlatformInfo(done){pings++;done();},
             onInstalled:{addListener(){}},onMessage:{addListener(fn){listener=fn;}}}}});
     vm.runInContext(fs.readFileSync(`${__dirname}/background.js`,'utf8'),ctx);
-    ctx.localPairing = async () => 'fixture-local-token';
     const response=new Promise(resolve=>listener({action:'apiRequest',path:'/solve',method:'POST',body:{}},{id:'ours'},resolve));
-    pulse();assert.equal(pings,1);await new Promise(setImmediate);finish();await response;
+    pulse();assert.equal(pings,1);finish();await response;
     for(let i=0;i<5;i++)await Promise.resolve();
     assert.equal(cleared,1);
 });

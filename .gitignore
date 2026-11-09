@@ -103,7 +103,6 @@ drag-success.png
 *.db-*
 *.sqlite
 *.sqlite-*
-assistant-pairing.token
 screenshots/
 recordings/
 artifacts/
