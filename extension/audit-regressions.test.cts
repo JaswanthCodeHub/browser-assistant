@@ -180,7 +180,7 @@ test('background requests have bounded timeouts and identify timeout errors', as
     });
     vm.runInContext(fs.readFileSync(`${__dirname}/background.js`, 'utf8'), context);
     const response = await new Promise(resolve => listener({ action: 'apiRequest', path: '/health', method: 'GET' }, {}, resolve));
-    assert.equal(duration, 8000);
+    assert.equal(duration, 12000);
     assert.match(response.error, /timed out/);
 });
 

@@ -54,3 +54,37 @@
     }
     window.BrowserAssistantAnswerRequests=Object.freeze({run,failure,temporary});
 })();
+
+async function browserAssistantLocalInference(
+    route: string,
+    body: object,
+    send: (request: AssistantMessage) => Promise<AssistantMessageResponse>,
+    signal: AbortSignal,
+): Promise<AssistantMessageResponse> {
+    const id = crypto.randomUUID();
+    const path = '/jobs/' + id;
+    const request = (path: string, method: string, body?: object) => send({action:'apiRequest',path,method,body});
+    let finished = false;
+    try {
+        signal.throwIfAborted();
+        const started = await request('/jobs','POST',{id,route,body});
+        if (!started?.ok) return started;
+        const deadline = Date.now() + 320000;
+        while (Date.now() < deadline) {
+            signal.throwIfAborted();
+            const response = await request(path,'GET');
+            signal.throwIfAborted();
+            if (!response?.ok) return response;
+            const result = response.data as {state?:string;status?:number;data?:AssistantMessageResponse['data']};
+            if (result.state === 'finished') {
+                finished = true;
+                return {ok:result.status === 200,status:result.status,data:result.data};
+            }
+            if (result.state !== 'running') throw Error('Local server returned an invalid inference status.');
+            await new Promise(resolve => setTimeout(resolve,750));
+        }
+        return {ok:false,status:504,data:{detail:'The inference deadline expired.'}};
+    } finally {
+        if (!finished) void request(path,'DELETE').catch(() => {});
+    }
+}

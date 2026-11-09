@@ -29,28 +29,24 @@ test('IDE lookup focuses only the matching workspace for the requesting question
 
 for (const existing of [true,false]) test(`IDE Start ${existing ? 'reuses the existing tab' : 'opens the portal IDE once'} and prepares app.js`, async () => {
     let clicks=0;
-    let finishInitialLookup;
-    const initialLookup = new Promise(resolve => { finishInitialLookup = resolve; });
-    let firstLookup = true;
+    let reviewed = false;
     const requests=[],displayed=[];
     const automation={runId:0};
     const question={title:'Cricket Team',text:'Implement API 1 and API 5.',button:{click(){clicks++;}}};
     const ctx=vm.createContext({location:{href:url},document:{},automation,getAutomationContext:()=>({}),window:{BrowserAssistantCoding:{getOnlineIdeQuestion:()=>question}},
         setTimeout:fn=>fn(),updateAutomationUI(){},waitWhilePaused:async()=>true,
+        reviewCodingAction:async()=>{reviewed = true;return true;},
         safeSendMessage:async()=>{
-            if (firstLookup) { firstLookup = false; await initialLookup; }
+            assert.equal(reviewed,true,'Approve the source before opening the IDE');
             return {ok:true,found:existing || clicks>0};
         },
         apiRequest:async(path,method,body)=>{
             requests.push({path,method,body});
-            finishInitialLookup();
             return {ok:true,data:{results:JSON.stringify([{type:'code',language:'javascript',code:'module.exports = app'}])}};
         },stopAutomation(state){automation.state=state;automation.runId++;},displayResults:result=>displayed.push(result)});
     const source=fs.readFileSync(`${__dirname}/content.js`,'utf8');
     vm.runInContext(source.slice(source.indexOf('    async function runOnlineIdeAutomation('),source.indexOf('    async function startPracticeAutomation(')),ctx);
-    const run = ctx.runOnlineIdeAutomation(question);
-    assert.equal(requests.length,1,'Answer request starts while IDE lookup is pending');
-    await run;
+    await ctx.runOnlineIdeAutomation(question);
     assert.equal(clicks,existing ? 0 : 1);
     assert.equal(requests.length,1);
     assert.equal(requests[0].body.language,'javascript');
@@ -113,7 +109,7 @@ function ideFixture({existingCode='',idle=true,allowPaste=true,saved=true,editor
         command:()=>command,entered:()=>enter,editorCode:()=>editorCode};
 }
 
-test('IDE automation pastes source into app.js and only sends a saved-file check and grading command to the terminal', async () => {
+test('IDE automation pastes source into app.js and checks the saved file and syntax', async () => {
     const ide = ideFixture();
     const source = 'const value = "$(echo test)";\nmodule.exports = value;';
     const result = await ide.run('runOnlineIde',source.replace('\n','\r\n'));
@@ -124,11 +120,9 @@ test('IDE automation pastes source into app.js and only sends a saved-file check
     assert.doesNotMatch(ide.command(),/echo test|module\.exports|node -e|writeFile/);
     assert.ok(!ide.command().includes(Buffer.from(source).toString('base64')));
     assert.ok(ide.command().includes(createHash('sha256').update(source).digest('hex')));
-    assert.match(ide.command(),/if .*sha256sum --check --status; then node --check app\.js && ccbp submit EXAMPLE5A1;/);
-    assert.equal((await ide.run('onlineIdeStatus')).url,ide.report);
-    assert.equal((await ide.run('onlineIdeStatus')).passed,true);
-    ide.output.children.shift();
-    assert.equal((await ide.run('onlineIdeStatus')).passed,false);
+    assert.match(ide.command(),/if .*sha256sum --check --status; then node --check app\.js;/);
+    assert.doesNotMatch(ide.command(),/ccbp submit/);
+    assert.equal((await ide.run('onlineIdeStatus')).saved,true);
     assert.equal((await ide.run('runOnlineIde',source)).ok,false);
     assert.equal(ide.entered(),1);
 });
@@ -157,21 +151,21 @@ test('an unconfirmed autosave produces a save error instead of a grading result'
     await ide.run('runOnlineIde','module.exports = 1');
     const result=await ide.run('onlineIdeStatus');
     assert.equal(result.saveUnconfirmed,true);
-    assert.equal(result.passed,false);
-    assert.equal(result.submitted,false);
+    assert.equal(result.saved,false);
 });
 
-test('a reviewed IDE solution is submitted once and only confirmed grading counts as completed', async () => {
+test('a reviewed IDE solution is saved once and leaves grading to the user', async () => {
     const automation={runId:0};
     const actions=[];
     const ctx=vm.createContext({location:{href:url},automation,crypto:webcrypto,
         getAutomationContext:()=>({}),automationPolicy:{canExecute:()=>true},
         setTimeout:fn=>fn(),updateAutomationUI(){},waitWhilePaused:async()=>true,
+        reviewCodingAction:async()=>true,displayResults(){},
         safeSendMessage:async message=>{
             actions.push(message.action);
             if(message.action==='focusOnlineIde') return {ok:true,found:true};
             if(message.action==='runOnlineIde') return {ok:true,started:true};
-            return {ok:true,done:true,passed:true,submitted:true};
+            return {ok:true,done:true,saved:true};
         },
         apiRequest:async()=>({ok:true,data:{code_reviewed:true,results:JSON.stringify([{type:'code',code:'module.exports = app'}])}}),
         stopAutomation(state){automation.state=state;automation.runId++;}});
@@ -179,6 +173,6 @@ test('a reviewed IDE solution is submitted once and only confirmed grading count
     vm.runInContext(source.slice(source.indexOf('    async function runOnlineIdeAutomation('),source.indexOf('    async function startPracticeAutomation(')),ctx);
     await ctx.runOnlineIdeAutomation({title:'Movies',text:'Write all seven API routes.',workspace:'EXAMPLE5A1'});
     assert.deepEqual(actions,['focusOnlineIde','runOnlineIde','onlineIdeStatus']);
-    assert.equal(automation.state,'COMPLETED');
+    assert.equal(automation.state,'IDE_READY_FOR_GRADING');
     assert.equal(automation.completed,1);
 });

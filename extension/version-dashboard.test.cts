@@ -13,7 +13,7 @@ test('panel build comes from the installed manifest, never a stale release liter
 test('Home feedback is not detected or sent to the AI even when it has radio controls',()=>{
     const ctx=vm.createContext({window:{location:{origin:'https://learning.ccbp.in',pathname:'/'}},
         getAutomationContext:()=>({}),getAutomationAdapter:()=>{throw Error('Must not detect mentor feedback');}});
-    const fn=source.slice(source.indexOf('    function getAuthorizedQuestion('),source.indexOf('    const AUTO_RESUME_KEY'));
+    const fn=source.slice(source.indexOf('    function getAuthorizedQuestion('),source.indexOf('    function questionDetectionError('));
     vm.runInContext(fn,ctx);
     assert.equal(ctx.getAuthorizedQuestion(),null);
 });

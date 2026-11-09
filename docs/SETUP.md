@@ -15,6 +15,7 @@ The backend explicitly loads `server/.env`; process environment variables take p
 | VISION_MAX_TOKENS | 1200; positive integer |
 | SERVER_HOST | 127.0.0.1; container overrides to 0.0.0.0 internally |
 | SERVER_ALLOWED_HOSTS | Optional additional hostnames; loopback names are allowed by default |
+| ASSISTANT_LOCAL_TOKEN | Optional preconfigured token of 32 to 128 URL-safe characters. Otherwise the backend creates `assistant-pairing.token` beside the history database. |
 | HISTORY_DB_PATH | Empty preserves `server/scan_history.db`; an optional existing writable path supports explicit deployment storage |
 
 The extension always uses port 8000. `/health` reports configuration, not successful provider authentication or Ollama reachability.
@@ -34,7 +35,20 @@ Llama 3.3 remains an enterprise model in Groq's current catalog. Existing explic
 model settings are retained; fresh installs default to GPT-OSS. Model availability
 and quotas depend on your account. No API-key values appear in health responses.
 Local browser requests reject untrusted web origins and unexpected Host headers;
-this is not authentication against other software running on the same computer.
+sensitive endpoints also require the pairing token.
+
+## Pair the extension
+
+Run `python main.py --show-pairing-token` from the backend folder, using the same Python and configuration as the running server. Paste the value into **Local server token** in the toolbar popup and choose **Pair**. Choose **Check provider** to test connectivity. For Docker, run `docker compose exec server python main.py --show-pairing-token`.
+
+With the npm install described in the README, run the following from your install folder, with the same environment as the server:
+
+```text
+python -m dotenv -f .env run -- python node_modules/browser-assistant/server/main.py --show-pairing-token
+```
+
+For a source checkout on Windows, from the repository root use `.\.venv\Scripts\python.exe server\main.py --show-pairing-token`. The backend reads the same `server/.env` file.
+
 
 ## Docker
 
@@ -51,12 +65,12 @@ Open `http://127.0.0.1:8000/health` and `/practice`; install the unpacked extens
 docker compose down
 ```
 
-History lives inside the container and is lost when the container is removed or recreated. No persistent volume is configured. The `.env` is supplied at runtime and excluded from image build context. `docker compose config` without `--quiet` can print resolved secrets.
+The named Compose volume stores history and the pairing token across container recreation. The service runs as a non-root user. The `.env` is supplied at runtime and excluded from image build context. `docker compose config` without `--quiet` can print resolved secrets.
 
 ## Troubleshooting
 
 - **Offline popup:** start the backend in `server/`; check port 8000 and `/health`. Another process may occupy the port.
-- **No panel:** use an ordinary HTTP/HTTPS page, reload the extension and refresh the page. Chrome internal pages and the Chrome Web Store restrict extensions.
+- **No panel:** on an ordinary HTTP/HTTPS page, use **Open on this tab** in the toolbar popup. Reload the extension and refresh the page. Chrome internal pages and the Chrome Web Store restrict extensions.
 - **Text model fails:** check the key/model in your own provider console. For Ollama, check `ollama list`, service reachability, and available memory. A local model is not bundled.
 - **Vision fails:** use a Groq model with image support. No local vision fallback exists. Review visible tab contents before capture.
 - **Editor or form cannot be detected:** use manual copying or a small reproducible fixture. Do not assume arbitrary websites are compatible.

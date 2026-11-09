@@ -66,5 +66,80 @@
             throw new Error('Update and restart the Browser Assistant backend to enable all five images. No partial image request was sent.');
         }
     }
-    window.BrowserAssistantQuestionVisuals=Object.freeze({nodes,fingerprint,capture,requireBackend});
+
+    async function reviewCapture(dataUrl: string, question): Promise<string | null> {
+        const image = new Image();
+        image.src = dataUrl;
+        await image.decode();
+        const canvas = document.createElement('canvas');
+        let x = 0, y = 0, width = image.naturalWidth, height = image.naturalHeight;
+        // Crop only when every required region is present in the screenshot.
+        const regions = [question?.visualRegion, ...(question?.options || []).map(option => option.node)];
+        if (question?.visualRegion && regions.every(node => node?.getBoundingClientRect)) {
+            const rects = regions.map(node => node.getBoundingClientRect());
+            const left = Math.min(...rects.map(rect => rect.left)), right = Math.max(...rects.map(rect => rect.right));
+            const top = Math.min(...rects.map(rect => rect.top)), bottom = Math.max(...rects.map(rect => rect.bottom));
+            if (left >= 0 && top >= 0 && right <= innerWidth && bottom <= innerHeight && right > left && bottom > top) {
+                x = left * width / innerWidth; y = top * height / innerHeight;
+                width *= (right-left) / innerWidth; height *= (bottom-top) / innerHeight;
+            }
+        }
+        const scale = Math.min(1, 2400 / Math.max(width,height));
+        canvas.width = Math.max(1, Math.round(width*scale));
+        canvas.height = Math.max(1, Math.round(height*scale));
+        const context = canvas.getContext('2d');
+        if (!context) throw Error('Screenshot preview is unavailable.');
+        const reset = () => context.drawImage(image,x,y,width,height,0,0,canvas.width,canvas.height);
+        reset();
+        canvas.style.cssText = 'display:block;max-width:100%;max-height:60vh;object-fit:contain;touch-action:none;margin:8px auto';
+        canvas.setAttribute('aria-label','Captured question preview. Drag over private areas to cover them.');
+        const point = (event: PointerEvent) => {
+            const rect = canvas.getBoundingClientRect();
+            return {x:(event.clientX-rect.left)*canvas.width/rect.width, y:(event.clientY-rect.top)*canvas.height/rect.height};
+        };
+        let start: {x:number;y:number};
+        canvas.addEventListener('pointerdown', event => {
+            if (!event.isTrusted) return;
+            start = point(event);
+            canvas.setPointerCapture(event.pointerId);
+        });
+        canvas.addEventListener('pointerup', event => {
+            if (!event.isTrusted || !start) return;
+            const end = point(event);
+            context.fillStyle = '#000';
+            context.fillRect(Math.min(start.x,end.x),Math.min(start.y,end.y),Math.abs(start.x-end.x),Math.abs(start.y-end.y));
+            start = undefined;
+        });
+        canvas.addEventListener('pointercancel', () => {start = undefined;});
+        return new Promise(resolve => {
+            const host = document.createElement('div');
+            const shadow = host.attachShadow({mode:'closed'});
+            const dialog = document.createElement('dialog');
+            dialog.setAttribute('aria-label','Review screenshot before sending');
+            dialog.style.cssText = 'max-width:min(92vw,900px);color:#17233c;background:white;padding:16px;border:2px solid #5b39db;border-radius:10px;font:14px system-ui';
+            const title = document.createElement('strong');
+            title.textContent = 'Review screenshot before sending to the vision provider';
+            const help = document.createElement('p');
+            help.textContent = 'Drag over private information to cover it, or cancel and use Text Scan.';
+            const finish = (value: string | null) => {clearTimeout(timeout); host.remove(); resolve(value);};
+            const action = (label: string, fn: () => void) => {
+                const button = document.createElement('button');
+                button.type = 'button'; button.textContent = label;
+                button.style.marginRight = '8px';
+                button.addEventListener('click', event => {if (event.isTrusted) fn();});
+                return button;
+            };
+            const cancel = action('Cancel', () => finish(null));
+            dialog.append(title,help,canvas,cancel,action('Reset masks',reset),
+                action('Send reviewed image',() => finish(canvas.toDataURL('image/png'))));
+            dialog.addEventListener('cancel', event => {event.preventDefault(); finish(null);});
+            shadow.appendChild(dialog);
+            document.documentElement.appendChild(host);
+            const timeout = setTimeout(() => finish(null),120000);
+            dialog.showModal();
+            cancel.focus();
+        });
+    }
+
+    window.BrowserAssistantQuestionVisuals=Object.freeze({nodes,fingerprint,capture,requireBackend,reviewCapture});
 })();

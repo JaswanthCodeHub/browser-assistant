@@ -269,7 +269,7 @@ test('Aurora numbered span labels map all five fields including Conclusion follo
     const found=journal.fields(document);
     assert.ok(found);
     assert.equal(Object.keys(found).length,5);
-    journal.writeField(found.conclusion,'A final summary.');
+    found.conclusion.textContent='A final summary.';
     assert.equal(journal.readField(found.conclusion),'A final summary.');
     assert.ok(journal.fields(document));
 });
@@ -296,7 +296,8 @@ async function runJournal(changePage=false, shortcut=false, integrated=false, st
         begin.addEventListener('click',()=>{startClicks++;terms.remove();const holder=document.createElement('div');holder.innerHTML=writing;document.body.appendChild(holder);});
     }
     const storage=new Map();
-    const globals={document,location,HTMLTextAreaElement:window.HTMLTextAreaElement,Event:window.Event,
+    const globals={document,location,HTMLTextAreaElement:window.HTMLTextAreaElement,Event:window.Event,AbortController,
+        browserAssistantLocalInference: (_path, body, send) => send({body}),
         sessionStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v)},
         setInterval:()=>1,clearInterval:()=>{},setTimeout:fn=>setTimeout(fn,0),
         chrome:{runtime:{sendMessage:async()=>{
@@ -316,22 +317,23 @@ async function runJournal(changePage=false, shortcut=false, integrated=false, st
         controller.mount(document.querySelector('#assistant-journal-slot'));
         assert.equal(document.querySelector('#assistant-root #assistant-journal textarea').value,'My class notes');
     }
+    document.querySelector('#assistant-journal textarea').value='I practiced linked lists and felt more confident.';
     if (shortcut) {
         for (let i=0;i<2;i++) {
             const event = new window.Event('keydown',{bubbles:true,cancelable:true});
-            Object.assign(event,{altKey:true,shiftKey:true,code:'KeyJ',key:'J',repeat:false});
+            Object.assign(event,{isTrusted:true,altKey:true,shiftKey:true,code:'KeyJ',key:'J',repeat:false});
             document.querySelector('section textarea').dispatchEvent(event);
         }
-    } else if (integrated) globals.BrowserAssistantJournal.start();
-    else document.querySelector('#assistant-journal button').click();
+    } else void globals.BrowserAssistantJournal.start();
     if (stopPending) globals.BrowserAssistantJournal.stop();
     for (let wait=0;wait<100 && globals.BrowserAssistantJournalBusy;wait++) await new Promise(resolve=>setTimeout(resolve,5));
     return {clicks,document,globals,ticks,startClicks};
 }
-test('one deliberate run fills five fields and submits once, then verifies page confirmation',async()=>{
+test('one deliberate run prepares five editable sections',async()=>{
     const {clicks,document,globals}=await runJournal();
-    assert.equal(clicks,1,document.querySelector('#assistant-journal [role=status]').textContent);
-    assert.match(document.querySelector('#assistant-journal [role=status]').textContent,/Submission confirmed/);
+    assert.equal(clicks,0);
+    assert.equal(document.querySelectorAll('#assistant-journal section textarea').length,5);
+    assert.match(document.querySelector('#assistant-journal [role=status]').textContent,/Draft ready/);
     assert.equal(globals.BrowserAssistantJournalBusy,false);
 });
 test('navigation during generation cannot fill or submit the next journal',async()=>{
@@ -340,15 +342,16 @@ test('navigation during generation cannot fill or submit the next journal',async
     assert.equal(document.querySelector('section textarea').value,'');
     assert.match(document.querySelector('#assistant-journal [role=status]').textContent,/page changed/);
 });
-test('journal shortcut works from a text field and repeated presses cannot duplicate submission',async()=>{
+test('trusted journal shortcut prepares one draft from a text field',async()=>{
     const {clicks,document}=await runJournal(false,true);
-    assert.equal(clicks,1,document.querySelector('#assistant-journal [role=status]').textContent);
-    assert.match(document.querySelector('#assistant-journal [role=status]').textContent,/Submission confirmed/);
+    assert.equal(clicks,0);
+    assert.equal(document.querySelectorAll('#assistant-journal section textarea').length,5);
+    assert.match(document.querySelector('#assistant-journal [role=status]').textContent,/Draft ready/);
 });
-test('integrated QA controller retains notes across panel renders and runs the same submit flow',async()=>{
+test('integrated QA controller retains notes across panel renders and prepares a draft',async()=>{
     const {clicks,document,globals}=await runJournal(false,false,true);
-    assert.equal(clicks,1);
-    assert.equal(globals.BrowserAssistantJournal.getState().state,'COMPLETED');
+    assert.equal(clicks,0);
+    assert.equal(globals.BrowserAssistantJournal.getState().state,'REVIEW_DRAFT');
     assert.equal(document.querySelectorAll('#assistant-journal').length,1);
     assert.ok(document.querySelector('#assistant-root #assistant-journal'));
 });
@@ -366,15 +369,15 @@ test('main automation Start routes journals to the journal controller before cod
     await ctx.startPracticeAutomation();
     assert.equal(starts,1);assert.equal(updates,1);
 });
-test('guidelines flow ticks only the journal declaration, starts once, then fills and submits',async()=>{
+test('draft review leaves the declaration and portal Start to the student',async()=>{
     const {clicks,ticks,startClicks,globals}=await runJournal(false,false,true,false,true);
-    assert.equal(ticks,1);assert.equal(startClicks,1);assert.equal(clicks,1);
-    assert.equal(globals.BrowserAssistantJournal.getState().state,'COMPLETED');
+    assert.equal(ticks,0);assert.equal(startClicks,0);assert.equal(clicks,0);
+    assert.equal(globals.BrowserAssistantJournal.getState().state,'REVIEW_DRAFT');
 });
-test('unrecognized declaration stops without clicking unrelated checkboxes or starting',async()=>{
+test('draft preparation works independently of portal declaration wording',async()=>{
     const {clicks,ticks,startClicks,globals}=await runJournal(false,false,true,false,'missing');
     assert.equal(ticks,0);assert.equal(startClicks,0);assert.equal(clicks,0);
-    assert.equal(globals.BrowserAssistantJournal.getState().state,'ERROR');
+    assert.equal(globals.BrowserAssistantJournal.getState().state,'REVIEW_DRAFT');
 });
 test('assessment-list shortcut opens the ongoing pencil once and ignores missed/upcoming journals',()=>{
     const {window}=parseHTML('<html><body><table>'+['Ongoing','Missed','Upcoming'].map((status,i)=>`<tr><td>Reflective Journal ${i+1}</td><td>${status}</td><td><a href="/modules/reflective-journal/journal${i+1}">Start journal</a></td></tr>`).join('')+'</table></body></html>');
@@ -389,11 +392,10 @@ test('assessment-list shortcut opens the ongoing pencil once and ignores missed/
     vm.runInNewContext(fs.readFileSync(`${__dirname}/journal-automation.js`,'utf8'),globals);
     for(let i=0;i<2;i++) {
         const event=new window.Event('keydown',{bubbles:true,cancelable:true});
-        Object.assign(event,{altKey:true,shiftKey:true,code:'KeyJ',key:'J'});
+        Object.assign(event,{isTrusted:true,altKey:true,shiftKey:true,code:'KeyJ',key:'J'});
         document.dispatchEvent(event);
     }
     assert.deepEqual(clicks,['/modules/reflective-journal/journal1']);
-    assert.equal(JSON.parse(stored.get('assistantPendingJournal')).path,'/modules/reflective-journal/journal1');
     globals.BrowserAssistantJournal.stop();
     assert.equal(stored.has('assistantPendingJournal'),false);
 });

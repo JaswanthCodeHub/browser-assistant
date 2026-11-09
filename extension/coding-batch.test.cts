@@ -159,12 +159,13 @@ test('disabled plain pager targets are not clicked', () => {
 for (const pass of [true, false]) {
     test(`batch opens an unattempted question and ${pass ? 'persists list return after passing' : 'does not advance after failure'}`, async () => {
         const sourceCode = source('content.js');
-        const code = sourceCode.slice(sourceCode.indexOf('    const CODING_BATCH_KEY'), sourceCode.indexOf('    async function startPracticeAutomation'));
+        const code = sourceCode.slice(sourceCode.indexOf('    function codingQuestionPath('), sourceCode.indexOf('    async function startPracticeAutomation'));
         const store = new Map(); let navigated = null, backClicks = 0;
         const automation = { runId: 0 };
         const location = { origin: 'https://learning.ccbp.in', href: 'https://learning.ccbp.in/problems-set', pathname: '/problems-set', assign: url => { navigated = url; } };
         const context = vm.createContext({
             URL, Date, location, automation, document: {}, isCollapsed: true, selectedTab: 'qa',
+            saveCheckpoint: async (_kind, value) => { store.set('browserAssistantCodingBatch', JSON.stringify(value)); return {ok:true}; },
             sessionStorage: { setItem: (key, value) => store.set(key, value), getItem: key => store.get(key), removeItem: key => store.delete(key) },
             getAutomationContext: () => ({ mode: 'FULL', target: { id: 'ccbp-learning-practice' } }),
             automationPolicy: { canExecute: () => true }, render() {}, updateAutomationUI() {},

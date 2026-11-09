@@ -18,24 +18,29 @@ jobs:
       tag: ${{ steps.pack.outputs.tag }}
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22'
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.11'
       - run: npm ci
       - run: npm test
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
       - run: python scripts/check_repo.py
       - run: python -m pip install --require-hashes -r server/requirements.lock.txt
       - run: python test_clean.py
         working-directory: server
       - run: python -m unittest discover -p 'test*.py' -v
         working-directory: server
+      - run: python scripts/smoke_backend.py
       - name: Package matching version
         id: pack
         env:
@@ -54,12 +59,18 @@ jobs:
           echo "Verified original MIT LICENSE in $archive"
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: npm-package
           path: ${{ steps.pack.outputs.archive }}
           if-no-files-found: error
-      - uses: softprops/action-gh-release@v2
+      - name: Attest release archives
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: |
+            dist/v*/*.zip
+            dist/v*/*.tgz
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ steps.pack.outputs.tag }}
           fail_on_unmatched_files: true
@@ -75,12 +86,12 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: npm-package
       - name: Publish with npm Trusted Publishing
@@ -100,13 +111,13 @@ jobs:
     permissions:
       packages: write
     steps:
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
           registry-url: https://npm.pkg.github.com
           scope: '@jaswanthcodehub'
           package-manager-cache: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: npm-package
       - name: Publish the scoped package

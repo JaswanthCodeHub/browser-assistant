@@ -51,6 +51,7 @@
             id: `website:${origin}`,
             origins: [origin],
             adapter: 'semantic-mcq',
+            assistOnly: true,
             pageTypes: ['practice', 'quiz', 'code'],
             capabilities: { detect: true, read: true, fill: true, select: true, click: true, navigate: true, validate: true, submit: true },
         };
@@ -59,7 +60,7 @@
     function determineMode(context) {
         if (!context?.authorizationVerified) return 'ASSIST';
         if (context.target?.restricted) return 'DISABLED';
-        if (!context.target?.authorized || !context.page?.authorized) return 'ASSIST';
+        if (context.target?.assistOnly || !context.target?.authorized || !context.page?.authorized) return 'ASSIST';
         return 'FULL';
     }
 

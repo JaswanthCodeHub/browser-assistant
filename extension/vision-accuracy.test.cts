@@ -11,7 +11,7 @@ function setup({changed=false,raw=false,code=false,mismatch=false}={}) {
     const requests=[],errors=[],displayed=[],captures=[];
     const journalCountdownBadge={style:{visibility:''}};
     const ctx=vm.createContext({window:{BrowserAssistantQuestionVisuals:{
-        nodes:()=>code?[]:[{}],fingerprint:()=> 'chart-unchanged',
+        nodes:()=>code?[]:[{}],fingerprint:()=> 'chart-unchanged',reviewCapture:async image=>image,
         capture:async()=>({images:['data:image/png;base64,FULL_CHART','data:image/png;base64,FULL_LEGEND'],fingerprint:'chart-unchanged'})}},
         location:{href:'https://learning.ccbp.in/primitive-coding/practice/a/b',origin:'https://learning.ccbp.in'},
         document:{querySelector:()=>code?{}:null},root:{style:{visibility:''}},journalCountdownBadge,selectedMode:'auto',isScanning:false,isCollapsed:false,

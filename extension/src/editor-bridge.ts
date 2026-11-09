@@ -66,8 +66,8 @@ function browserAssistantEditor(operation: string, selector: string, expected: s
     } catch (error) { return { ok: false, error: error.message }; }
 }
 
-// Run the IDE's normal paste and autosave flow. The terminal only verifies and
-// grades the saved file; generated source is never passed to the shell.
+// Run the IDE's normal paste and autosave flow. The terminal verifies the saved
+// file and checks syntax. The portal's grading command is a separate user action.
 async function browserAssistantOnlineIde(action: string, workspace: string, questionId: string, token: string, source: string) {
     if (location.origin !== 'https://ide.ccbp.in' || location.pathname.replace(/\/$/, '') !== `/playground/${workspace}`) return null;
     const visible = node => node.getClientRects().length > 0;
@@ -90,14 +90,10 @@ async function browserAssistantOnlineIde(action: string, workspace: string, ques
         const lines = rows();
         const result = lines.find(line=>line.startsWith(`${finishMarker}:`));
         if (!result) return {ok:true,done:false};
-        const index = lines.findLastIndex(line=>line.includes('Open Submission URL'));
-        const report = index >= 0 && reports(lines.slice(index)).find(id=>!previous.reports.includes(id));
-        const passed = result === `${finishMarker}:0` && Boolean(report) && index > 0
-            && lines.slice(Math.max(0,index-3),index).includes('All test cases passed');
-        return {ok:true,done:true,passed,submitted:Boolean(report),saveUnconfirmed:lines.includes(saveMarker),url:report ? reportPrefix + report : null};
+        return {ok:true,done:true,saved:result === `${finishMarker}:0`,saveUnconfirmed:lines.includes(saveMarker)};
     }
     if (previous?.token === token) return {ok:false,error:'This IDE run was already started. Check the terminal.'};
-    if (document.visibilityState !== 'visible') return {ok:false,error:'Keep the matching IDE tab active to submit.'};
+    if (document.visibilityState !== 'visible') return {ok:false,error:'Keep the matching IDE tab active to apply code.'};
     const before = rows();
     const prompt = before.at(-1)?.match(/^nxtwave@([a-z0-9]+):~\/nodejs\/coding-practices\/([a-z0-9_-]+)\$$/i);
     if (!prompt || prompt[1] !== workspace) return {ok:false,retry:true,error:'Waiting for the correct workspace shell prompt.'};
@@ -164,13 +160,13 @@ async function browserAssistantOnlineIde(action: string, workspace: string, ques
     // All interpolated values have restricted alphabets.
     const saved = `printf '%s  app.js\\n' '${digest}' | sha256sum --check --status`;
     const echoMarker = `BA_COMMAND_${token}`;
-    const command = `( for ba_try in 1 2 3 4 5 6 7 8 9 10; do ${saved} && break; sleep 0.5; done; if ${saved}; then node --check app.js && ccbp submit ${workspace}; else printf '%s\\n' ${saveMarker}; false; fi ); printf '\\n${finishMarker}:%s\\n' "$?" #${echoMarker}`;
-    if (rows().at(-1) !== before.at(-1)) return {ok:false,error:'Code is in app.js, but the IDE terminal changed before grading.'};
+    const command = `( for ba_try in 1 2 3 4 5 6 7 8 9 10; do ${saved} && break; sleep 0.5; done; if ${saved}; then node --check app.js; else printf '%s\\n' ${saveMarker}; false; fi ); printf '\\n${finishMarker}:%s\\n' "$?" #${echoMarker}`;
+    if (rows().at(-1) !== before.at(-1)) return {ok:false,error:'Code is in app.js, but the IDE terminal changed before the syntax check.'};
     input.focus();
     if (document.activeElement !== input) return {ok:false,error:'The IDE terminal could not be focused.'};
     const data = new DataTransfer();
     data.setData('text/plain',command);
-    window[key] = {token,reports:reports(before)};
+    window[key] = {token};
     input.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));
     const deadline = Date.now() + 2500;
     while (Date.now() < deadline && document.activeElement === input && document.visibilityState === 'visible') {

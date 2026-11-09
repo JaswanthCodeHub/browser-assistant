@@ -99,7 +99,7 @@ test("T19c: vision code output requests configured language", build_vision_syste
      lambda r: '"language": "java"' in r and 'Generate the solution in Java only' in r)
 
 up = build_user_prompt("test text", "http://example.com")
-test("T20: user prompt has URL", up, lambda r: 'http://example.com' in r)
+test("T20: user prompt excludes the page URL", up, lambda r: 'http://example.com' not in r)
 test("T21: user prompt has text", up, lambda r: 'test text' in r)
 test("T21a: user prompt has content", up, lambda r: 'Analyze' in r and 'TEXT CONTENT' in r)
 

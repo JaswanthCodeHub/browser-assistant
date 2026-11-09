@@ -15,7 +15,10 @@ class TokenLimitTests(unittest.IsolatedAsyncioTestCase):
             result=await main.try_groq([],model='openai/gpt-oss-20b',_review=True,_token_limit=main.GROQ_REVIEW_TOKEN_LIMIT)
         self.assertIn('"pass"',result)
         for call in create.call_args_list:
-            self.assertEqual(call.kwargs['response_format'],{'type':'json_object'})
+            response_format = call.kwargs['response_format']
+            self.assertEqual(response_format['type'], 'json_schema')
+            self.assertTrue(response_format['json_schema']['strict'])
+            self.assertEqual(response_format['json_schema']['schema']['required'], ['verdict', 'issues'])
             self.assertEqual(call.kwargs['reasoning_effort'],'low')
         self.assertEqual(create.call_args_list[-1].kwargs['max_completion_tokens'],main.GROQ_RETRY_TOKEN_LIMIT)
 
