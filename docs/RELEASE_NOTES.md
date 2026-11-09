@@ -1,4 +1,6 @@
-# Browser Assistant 2.8.23
+# Browser Assistant 2.8.25
+
+- Press **Alt+A** to start, pause or resume automation. The previous **Alt+Shift+A** remains supported, including when a code editor has focus.
 
 - CCBP Online IDE automation opens `app.js` and pastes the reviewed solution in the editor. Grading starts only after the saved file matches the pasted code and passes a syntax check. If the editor blocks the paste or the save cannot be confirmed, the extension reports the issue for review.
 

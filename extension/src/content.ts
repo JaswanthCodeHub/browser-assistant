@@ -1721,7 +1721,7 @@ function mountJournalCountdown(signal: AbortSignal) {
     }
 
     function handleAutomationShortcut(e) {
-        if (e.repeat || e.isComposing || e.defaultPrevented || !e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey
+        if (e.repeat || e.isComposing || e.defaultPrevented || !e.altKey || e.ctrlKey || e.metaKey
             || (e.code !== 'KeyA' && String(e.key).toLowerCase() !== 'a')) return false;
         e.preventDefault();
         e.stopPropagation();
@@ -2233,11 +2233,11 @@ function mountJournalCountdown(signal: AbortSignal) {
                 <div class="assistant-qa-latest" id="assistant-automation-latest" aria-live="polite"></div>
                 <div id="assistant-journal-slot"></div>
                 <div class="assistant-automation-actions assistant-qa-actions">
-                    <button class="assistant-auto-btn start" id="assistant-auto-start-btn" aria-keyshortcuts="Alt+Shift+A" title="Start automation (Alt + Shift + A)">▶ Start automation</button>
-                    <button class="assistant-auto-btn" id="assistant-auto-pause-btn" aria-keyshortcuts="Alt+Shift+A" title="Pause or resume (Alt + Shift + A)" disabled>Pause</button>
+                    <button class="assistant-auto-btn start" id="assistant-auto-start-btn" aria-keyshortcuts="Alt+A Alt+Shift+A" title="Start automation (Alt + A)">▶ Start automation</button>
+                    <button class="assistant-auto-btn" id="assistant-auto-pause-btn" aria-keyshortcuts="Alt+A Alt+Shift+A" title="Pause or resume (Alt + A)" disabled>Pause</button>
                     <button class="assistant-auto-btn stop" id="assistant-auto-stop-btn" disabled>■ Stop</button>
                 </div>
-                <p class="assistant-automation-status">Alt + Shift + A: Start / Pause / Resume</p>
+                <p class="assistant-automation-status">Alt + A: Start / Pause / Resume</p>
                 <button class="assistant-auto-btn" id="assistant-export-question-btn">Export question details</button>
             </section>
         `;

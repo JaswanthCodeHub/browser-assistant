@@ -1,3 +1,7 @@
+# 2.8.25
+
+- Start, pause and resume automation with Alt+A. Keep Alt+Shift+A as a compatible alternative and update the popup and button hints.
+
 # 2.8.23
 
 - Paste reviewed Node.js code into an empty `app.js` in the CCBP Online IDE. Check that the editor saved the code and that it passes JavaScript syntax checks before starting grading.

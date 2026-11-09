@@ -17,12 +17,12 @@ function harness(activeElement={}){
     const start=source.indexOf('    function handleAutomationShortcut(');
     vm.runInContext(source.slice(start,source.indexOf('    // ── Vision scan',start)),ctx);
     const key=(overrides={})=>{
-        const e={key:'A',code:'KeyA',altKey:true,shiftKey:true,preventDefault(){this.prevented=true;},stopPropagation(){this.stopped=true;},...overrides};
+        const e={key:'A',code:'KeyA',altKey:true,shiftKey:false,preventDefault(){this.prevented=true;},stopPropagation(){this.stopped=true;},...overrides};
         listener(e);return e;
     };
     return {ctx,automation,key,starts:()=>starts,updates:()=>updates};
 }
-test('Alt Shift A starts once, opens QA Control, then pauses and resumes the same run',()=>{
+test('Alt A starts once, opens QA Control, then pauses and resumes the same run',()=>{
     const h=harness();const e=h.key();
     assert.equal(h.starts(),1);assert.equal(h.ctx.selectedTab,'qa');assert.equal(h.ctx.root.style.display,'block');
     assert.equal(h.ctx.isHidden,false);assert.equal(h.ctx.isCollapsed,false);assert.equal(e.prevented,true);
@@ -35,7 +35,7 @@ test('automation shortcut works with a code editor focused',()=>{
 });
 test('held keys, composition and extra or missing modifiers do not toggle automation',()=>{
     const h=harness();
-    for(const event of [{repeat:true},{isComposing:true},{ctrlKey:true},{metaKey:true},{altKey:false},{shiftKey:false},
+    for(const event of [{repeat:true},{isComposing:true},{ctrlKey:true},{metaKey:true},{altKey:false},
         {key:'B',code:'KeyB'},{defaultPrevented:true}]){
         assert.equal(h.key(event).prevented,undefined);
     }
@@ -51,4 +51,9 @@ test('shortcut start failures produce an error state rather than an unhandled re
     const h=harness();h.ctx.startPracticeAutomation=async()=>{throw Error('Cannot start on this page');};
     h.key();await Promise.resolve();await Promise.resolve();
     assert.equal(h.automation.state,'ERROR');assert.equal(h.automation.error,'Cannot start on this page');
+});
+
+test('legacy Alt Shift A remains available',()=>{
+    const h=harness();h.key({shiftKey:true});assert.equal(h.starts(),1);
+    h.key({shiftKey:true});assert.equal(h.automation.paused,true);
 });
