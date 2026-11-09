@@ -5,14 +5,14 @@ A Chrome Manifest V3 extension with a local Python backend for exploring multipl
 ## What it does
 
 - Extracts page text and requests answers from Groq, with Ollama fallback for text requests.
-- Uses question illustrations for Groq vision where available and shows a crop and redaction preview before sending a tab screenshot.
+- Captures the visible browser tab for Groq vision analysis.
 - Detects requested programming languages and validates generated code syntax; model review does not prove correctness.
-- Displays results in an in-page panel, offers code copying, and optionally saves successful scans in local SQLite history.
+- Displays results in an in-page panel, offers code copying, and saves successful scans in local SQLite history.
 - Includes a local practice page and automation for selecting answers, filling editors, and submitting supported forms after starting a run.
 - Resumes CCBP practice from an already submitted answer through its submitted-question Next control, without generating or submitting that answer again. Delayed Submit controls are awaited for up to 15 seconds while the question and selected answer remain unchanged.
 - Press **Alt + A** on the webpage to start automation, then press it again to pause or resume. The previous **Alt + Shift + A** shortcut also works. It also works with the code editor focused and opens QA Control. Journal automation uses the same toggle; its existing **Alt + Shift + J** shortcut remains available.
 
-AI answers can be wrong. Automation can change or submit page content: use it only where authorized, review results, and avoid restricted assessments. Site detection is heuristic; custom controls, frames, editors, and navigation can fail. Generic HTTP/HTTPS pages support manual scans after you choose **Open on this tab** in the toolbar popup.
+AI answers can be wrong. Automation can change or submit page content: use it only where authorized, review results, and avoid restricted assessments. Site detection is heuristic; custom controls, frames, editors, and navigation can fail. The policy includes a general HTTP/HTTPS fallback, so it is not a strict site allowlist.
 
 ## First run
 
@@ -21,7 +21,7 @@ AI answers can be wrong. Automation can change or submit page content: use it on
 On CCBP `/problems-set`, start on page 1 and keep both **Not Attempted** and
 **In Progress** visible in the status filters. Choose **QA Control → Start automation**.
 The batch skips Solved rows, opens an eligible question, reads its language and
-existing code, asks for approval to apply and submit a generated solution, and returns to the list only after
+existing code, generates and submits a solution, and returns to the list only after
 a confirmed passing result. It follows numbered pages within the selected filters.
 Keep the browser tab and local AI server open; Pause/Resume and Stop are available.
 Failed tests, unsupported layouts, or unconfirmed results stop the batch with a reason.
@@ -83,21 +83,20 @@ For local text inference, install [Ollama](https://github.com/ollama/ollama), ru
 1. Extract the extension ZIP from Releases. If using a clone or the source ZIP, run `npm ci` and `npm run build` from its root to prepare the `extension` folder.
 2. Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select the prepared folder containing `manifest.json`.
 3. Open `http://127.0.0.1:8000/health`. A JSON `status: "ok"` confirms the backend is running; it does not test model access.
-4. Run the pairing command for your install in [setup](docs/SETUP.md). Paste the token into **Local server token** in the toolbar popup and click **Pair**.
-5. Open `http://127.0.0.1:8000/practice`, then use the floating panel's Text Scan. Review the answer before trying automation with Start.
-6. After changing extension files, reload it in the extensions page and refresh the practice tab.
+4. Open `http://127.0.0.1:8000/practice`, then use the floating panel's Text Scan. Review the answer before trying automation with Start.
+5. After changing extension files, reload it in the extensions page and refresh the practice tab.
 
-The toolbar popup reports backend status. In-page shortcuts are backtick (open), `]` (close), `\` (vision scan), and `[` (minimal mode). You can assign a browser-level automation shortcut at `chrome://extensions/shortcuts`.
+The toolbar popup reports backend status. In-page shortcuts are backtick (open), `]` (close), `\` (vision scan), and `[` (minimal mode). They are hardcoded page listeners, not configurable Chrome extension commands.
 
 ## Data and permissions
 
-The backend binds to `127.0.0.1:8000`. The extension sends a local pairing token on protected routes. Keep the server on loopback and store the token privately.
+The backend binds to `127.0.0.1:8000` by default and has **no authentication**. Keep it local. Its address is fixed in the extension.
 
-Chrome loads the panel automatically on CCBP Learning, Aurora and the bundled local server. The toolbar grants access to the active tab when you explicitly open the panel on another website. Editor integration is limited to supported pages.
+The manifest requests `activeTab`, `tabs`, `scripting`, and `clipboardWrite`, plus access to all URLs and localhost. Content scripts run on matching pages; scripting bridges supported page editors, tabs support capture and messaging, and clipboard access supports code copying. These are broad permissions; install only if you accept page access.
 
-Text and image content used for a scan can reach the configured cloud provider. When a tab capture is needed, the preview supports redaction before upload. Review what is visible in the preview. Raw screenshots stay in memory on the local server. Provider retention follows the provider's terms.
+Text scans send extracted text and the current URL to the backend. Groq receives model prompts containing question text; vision scans capture the entire visible tab, compress the image, and send it to Groq. Sensitive content visible in a tab may therefore leave your machine. There is no screenshot redaction step. The application does not explicitly save raw screenshots to disk; request data exists in memory, and providers have their own retention policies.
 
-History starts disabled. When enabled, SQLite stores the date, scan type, provider, language, answer JSON and URL without its query or fragment, up to 100 entries. Clear History deletes the rows. Extension-owned session storage keeps short-lived automation checkpoints. Page storage keeps panel placement.
+Successful scans are saved by the extension through `/history`: URL, timestamp, scan type, provider, language, and answer JSON are kept in `server/scan_history.db`, capped at 100 entries. Clear History deletes rows, not a forensic secure erase. Stop the backend and remove the database and its `-wal`/`-shm` companions for file-level removal; backups may still contain data. Panel position uses the page's localStorage, and automation resume state uses its sessionStorage. Clear site data to remove those settings. Minimal/stealth controls change presentation; they do not guarantee invisibility or privacy.
 
 ## Development and Docker
 
@@ -106,8 +105,6 @@ From the repository root:
 ```bash
 npm ci
 npm test
-npx playwright install chromium
-npm run test:browser
 python scripts/check_repo.py
 ```
 

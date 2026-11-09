@@ -1,10 +1,6 @@
-# 2.9.0
+# 2.9.1
 
-- Pair the extension to the loopback server and keep inference, provider checks and history behind the pairing token.
-- Restrict automatic site access, keep navigation checkpoints in extension storage, and require a trusted Start.
-- Prefer question illustrations and require an editable privacy preview before sending a full-tab screenshot. Make history opt-in.
-- Prepare editable journal drafts from student notes and show portal countdowns. Add approval before applying code and before embedded editor submissions. The Online IDE stops after save and syntax verification.
-- Add cancellable inference jobs, structured code reviews, provider diagnostics, persistent Docker storage and a real Chromium check.
+- Roll back the v2.9.0 feature set and restore the v2.8.26 implementation.
 
 # 2.8.26
 

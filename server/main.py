@@ -21,7 +21,7 @@ from code_contract import validate_starter_interface, normalize_starter_code
 from fastapi import Query, status
 from fastapi.responses import FileResponse
 from fastapi.exception_handlers import http_exception_handler
-from local_security import install_local_guards, pairing_token, redact, sanitize_data
+from local_security import install_local_guards, redact, sanitize_data
 from vision_images import (compress_image_base64, unique_image_blocks, collect_image_evidence,
                            cross_check_visual_answers, relative_percentage_question, RELATIVE_PERCENTAGE_INSTRUCTION,
                            answer_permutation, cross_check_text_answers, solve_matrix_choice, solve_row_parallel_choice,
@@ -184,7 +184,6 @@ def initialize_history_database() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     initialize_history_database()
-    _app.state.local_token = pairing_token(HISTORY_DB_PATH.with_name('assistant-pairing.token'))
     try:
         yield
     finally:
@@ -192,7 +191,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.9.0", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.9.1", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)
@@ -288,8 +287,6 @@ async def health():
     return {
         "status": "ok",
         "version": app.version,
-        "pairing_required": True,
-        "inference_jobs": True,
         "journal_syllabus_subjects": list(load_syllabus()),
         "journal_syllabus_live_reload": True,
         "code_review_before_submit": True,
@@ -314,31 +311,6 @@ async def health():
         "groq_completion_token_limit": GROQ_COMPLETION_TOKEN_LIMIT,
         "code_default_language": CODE_DEFAULT_LANGUAGE,
     }
-
-
-@app.post('/provider-status')
-async def provider_status():
-    def probe_groq():
-        client = get_groq_client()
-        if not client:
-            return 'not configured'
-        try:
-            ids = {item.id for item in client.with_options(timeout=4.0, max_retries=0).models.list().data}
-            return 'text model listed' if GROQ_TEXT_MODEL in ids else 'configured text model unavailable'
-        except Exception as error:
-            return {401:'key rejected',403:'access denied',429:'rate limited'}.get(
-                getattr(error,'status_code',None),'unreachable')
-
-    def probe_ollama():
-        try:
-            with ollama.Client(timeout=4.0) as client:
-                installed = {item.model for item in client.list().models}
-            return 'model installed' if OLLAMA_MODEL in installed or OLLAMA_MODEL + ':latest' in installed else 'configured model missing'
-        except Exception:
-            return 'unreachable'
-
-    cloud, local = await asyncio.gather(asyncio.to_thread(probe_groq), asyncio.to_thread(probe_ollama))
-    return {'groq':cloud, 'ollama':local}
 
 
 @app.get('/extension-release')
@@ -377,8 +349,7 @@ def save_history(entry: HistoryEntry):
         cursor = connection.execute(
             """INSERT INTO scan_history (created_at, scan_type, url, provider, results, language)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (created_at, entry.scan_type, re.split(r'[?#]', entry.url, maxsplit=1)[0],
-             entry.provider, entry.results, entry.language),
+            (created_at, entry.scan_type, entry.url, entry.provider, entry.results, entry.language),
         )
         connection.execute(
             """DELETE FROM scan_history WHERE id NOT IN (
@@ -415,22 +386,6 @@ async def try_groq(messages: list, model: str = None, temperature: float = 0.0, 
         review_options['response_format'] = {'type': 'json_object'}
         if use_model in {'openai/gpt-oss-20b', 'openai/gpt-oss-120b'}:
             review_options['reasoning_effort'] = 'low'
-            review_options['response_format'] = {
-                'type': 'json_schema',
-                'json_schema': {
-                    'name': 'code_review',
-                    'strict': True,
-                    'schema': {
-                        'type': 'object',
-                        'properties': {
-                            'verdict': {'type': 'string', 'enum': ['pass', 'fail']},
-                            'issues': {'type': 'array', 'items': {'type': 'string'}},
-                        },
-                        'required': ['verdict', 'issues'],
-                        'additionalProperties': False,
-                    },
-                },
-            }
 
     # Try up to len(_groq_clients) keys on rate limit
     attempts = len(_groq_clients)
@@ -925,6 +880,7 @@ def build_user_prompt(text: str, url: str, language: str | None = None) -> str:
     """Build the user message with page content."""
     return f"""Analyze the following text extracted from a webpage and solve ALL questions.
 
+URL: {url}
 {f"Requested code language: {LANGUAGE_NAMES[language]} only." if language else ""}
 
 TEXT CONTENT:
@@ -964,7 +920,7 @@ def build_ollama_code_messages(text: str, url: str, language: str) -> list:
         },
         {
             "role": "user",
-            "content": f"Coding problem:\n\n{local_text}",
+            "content": f"Coding problem from {url}:\n\n{local_text}",
         },
     ]
 
@@ -1885,21 +1841,10 @@ def normalize_vision_results(raw: str) -> str:
     return clean_json(raw)
 
 
-from journal import JournalRequest, register_journal, load_syllabus
-from inference_jobs import register_inference_jobs
-
-generate_journal = register_journal(app, try_groq, try_ollama)
-register_inference_jobs(app, {
-    '/solve':(PageContent,solve_questions),
-    '/solve-vision':(VisionContent,solve_vision),
-    '/journal':(JournalRequest,generate_journal),
-}, lambda value: sanitize_data(value,_groq_keys))
+from journal import register_journal, load_syllabus
+register_journal(app, try_groq, try_ollama)
 
 if __name__ == "__main__":
-    import sys
-    if sys.argv[1:] == ['--show-pairing-token']:
-        print(pairing_token(HISTORY_DB_PATH.with_name('assistant-pairing.token')))
-        raise SystemExit(0)
     # The extension talks to this API through its background worker. Binding to
     # loopback keeps direct local runs unavailable to other network devices.
     # Docker overrides SERVER_HOST because its published port is already bound

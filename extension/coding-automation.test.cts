@@ -42,7 +42,7 @@ test('MCQ fixture adapter and authorization remain available', () => {
 test('coding identity ignores description rerenders but detects language or title changes', () => {
     const content = source('content.js');
     const start = content.indexOf('    function getAuthorizedQuestion(');
-    const end = content.indexOf('    function questionDetectionError(', start);
+    const end = content.indexOf('    const AUTO_RESUME_KEY', start);
     const coding = { type: 'code', title: 'Right Angled Triangle - 6', text: 'Initial description', language: 'python' };
     const context = vm.createContext({
         document: {},
@@ -70,7 +70,7 @@ test('CCBP UUID identity survives a missing title and late example text, but rej
     const context = vm.createContext({ document: {}, window: { location, BrowserAssistantCoding: { getQuestion: () => coding } },
         getAutomationContext: () => ({}), getAutomationAdapter: () => ({}), automationPolicy: { canExecute: () => true },
         normalizeAutomationText: value => String(value || '').replace(/\s+/g, ' ').trim() });
-    vm.runInContext(content.slice(content.indexOf('    function getAuthorizedQuestion('), content.indexOf('    function questionDetectionError(')), context);
+    vm.runInContext(content.slice(content.indexOf('    function getAuthorizedQuestion('), content.indexOf('    const AUTO_RESUME_KEY')), context);
     const before = context.getAuthorizedQuestion().signature;
     coding.title = ''; coding.text = 'Description Submissions Get Help Inverted Right Angled Triangle with newly loaded examples';
     assert.equal(context.getAuthorizedQuestion().signature, before);
@@ -115,7 +115,6 @@ for (const scenario of ['success', 'repair failure', 'editor rerender', 'submiss
                 return { ok: true, data: { code_reviewed: scenario !== 'unreviewed code', results: JSON.stringify([{ type: 'code', code: 'print("hello")' }]) } };
             },
             waitWhilePaused: async () => automation.running,
-            reviewCodingAction: async () => true,
             getAutomationContext: () => ({}), automationPolicy: { canExecute: () => true },
             getAuthorizedQuestion: () => submits && scenario.includes('submissions tab') ? null : changed ? { signature: 'two' } : scenario === 'editor rerender' ? { ...question, editorSelector: '#replacement-editor' } : question,
             updateAutomationUI: () => {}, stopAutomation: state => { automation.state = state; automation.running = false; },

@@ -192,7 +192,6 @@ class LocalApiTests(unittest.TestCase):
         self.dbpatch=patch.object(main,'HISTORY_DB_PATH',self.path);self.dbpatch.start()
         self.keypatch=patch.object(main,'_groq_clients',[]);self.keypatch.start()
         self.client=TestClient(main.app);self.client.__enter__()
-        self.client.headers.update({'X-Assistant-Token': main.app.state.local_token})
 
     def tearDown(self):
         self.client.__exit__(None,None,None)
@@ -205,9 +204,6 @@ class LocalApiTests(unittest.TestCase):
         self.assertEqual(self.client.get('/history',headers={'Origin':'https://evil.example'}).status_code,403)
         self.assertEqual(self.client.get('/history',headers={'Host':'evil.example'}).status_code,400)
         self.assertEqual(self.client.get('/history',headers={'Origin':'null'}).status_code,403)
-        self.assertEqual(self.client.get('/history',headers={'X-Assistant-Token':''}).status_code,401)
-        self.assertEqual(self.client.delete('/history',headers={'X-Assistant-Token':'wrong'}).status_code,401)
-        self.assertEqual(self.client.post('/solve',content=b'x'*513000).status_code,413)
 
     def test_database_persistence_and_sql_injection_like_text_remain_data(self):
         entry={'scan_type':'text','url':"https://example.test/'; DROP TABLE scan_history; --",'provider':'mock', 'results':ANSWER}

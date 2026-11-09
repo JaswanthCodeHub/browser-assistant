@@ -30,31 +30,19 @@ async function checkWorkspaceUpdate() {
     finally {updateCheckRunning=false;}
 }
 async function attachUpdatedPanels() {
-    const tabs=await chrome.tabs.query({url:[
-        'https://learning.ccbp.in/*','https://admissions.aurora.edu.in/*','http://127.0.0.1:8000/*',
-    ]});
+    const manifest=chrome.runtime.getManifest();
+    const tabs=(await chrome.tabs.query({})).filter(tab=>/^https?:\/\//.test(tab.url || ''));
     for(const tab of tabs) {
         try {
-            await attachAssistantPanel(tab.id);
+            const existing=await chrome.scripting.executeScript({target:{tabId:tab.id},func:()=>Boolean(document.getElementById('assistant-root'))});
+            if(existing[0]?.result) continue;
+            for(const group of manifest.content_scripts) {
+                await chrome.scripting.insertCSS({target:{tabId:tab.id},files:group.css || []});
+                await chrome.scripting.executeScript({target:{tabId:tab.id},files:group.js});
+            }
         } catch { /* Chrome may restrict particular sites; leave them alone. */ }
     }
 }
-
-async function attachAssistantPanel(tabId: number) {
-    const target = {tabId};
-    const existing = await chrome.scripting.executeScript({target,func:()=>Boolean(document.getElementById('assistant-root'))});
-    if (existing[0]?.result) return;
-    for (const group of chrome.runtime.getManifest().content_scripts || []) {
-        if (group.css?.length) await chrome.scripting.insertCSS({target,files:group.css});
-        if (group.js?.length) await chrome.scripting.executeScript({target,files:group.js});
-    }
-}
-
-chrome.commands?.onCommand.addListener((command,tab) => {
-    if (command === 'toggle-automation' && tab?.id) {
-        void chrome.tabs.sendMessage(tab.id,{action:'assistantToggleAutomation'}).catch(() => {});
-    }
-});
 chrome.alarms.create('assistant-workspace-update',{periodInMinutes:1});
 chrome.alarms.onAlarm.addListener(alarm => {
     if (alarm.name !== 'assistant-workspace-update') return;
@@ -117,116 +105,9 @@ chrome.storage?.local.onChanged?.addListener(changes => {
 });
 void updateJournalBadge();
 
-// Serialize saves and consumes so a new document cannot replay a checkpoint
-// and Stop cannot race a pending save. Page storage is never read here.
-let checkpointQueue = Promise.resolve();
-function handleAutomationCheckpoint(request: AssistantMessage, sender: chrome.runtime.MessageSender, reply: (value: unknown) => void) {
-    const storage = chrome.storage?.session;
-    if (!storage || sender.id !== chrome.runtime.id || !Number.isInteger(sender.tab?.id)
-        || sender.frameId !== 0 || !sender.documentId || !['practice', 'coding'].includes(request.checkpointKind)) {
-        reply({ok:false});
-        return;
-    }
-    let page: URL;
-    try {
-        const source = new URL(sender.url);
-        page = new URL(sender.tab.url || sender.url);
-        if (page.origin !== source.origin || !['https://learning.ccbp.in', 'http://127.0.0.1:8000'].includes(page.origin)) throw Error();
-    } catch { reply({ok:false}); return; }
-    const key = `assistantCheckpoint:${sender.tab.id}:${request.checkpointKind}`;
-    checkpointQueue = checkpointQueue.then(async () => {
-        if (request.action === 'clearCheckpoint') {
-            await storage.remove(key);
-            return reply({ok:true});
-        }
-        if (request.action === 'saveCheckpoint') {
-            const checkpoint = request.checkpoint;
-            if (!checkpoint || checkpoint.kind !== request.checkpointKind || JSON.stringify(checkpoint).length > 120000) return reply({ok:false});
-            let path: string;
-            if (checkpoint.expectedUrl) {
-                const target = new URL(checkpoint.expectedUrl, page);
-                if (target.origin !== page.origin) return reply({ok:false});
-                path = target.pathname;
-            }
-            await storage.set({[key]:{origin:page.origin, path, documentId:sender.documentId, expires:Date.now()+120000, value:checkpoint.value}});
-            return reply({ok:true});
-        }
-        const record = (await storage.get(key))[key] as {
-            expires:number; origin:string; path?:string; documentId:string; value:unknown;
-        } | undefined;
-        if (!record) return reply({ok:true});
-        if (record.expires <= Date.now() || record.origin !== page.origin) {
-            await storage.remove(key);
-            return reply({ok:true});
-        }
-        if (record.path ? record.path !== page.pathname : record.documentId !== sender.documentId) return reply({ok:true});
-        await storage.remove(key);
-        reply({ok:true,checkpoint:record.value});
-    }).catch(() => { reply({ok:false}); });
-}
-
-const LOCAL_API = 'http://127.0.0.1:8000';
-let pairingDatabase: Promise<IDBDatabase>;
-function localPairing(token?: string): Promise<string> {
-    pairingDatabase ??= new Promise<IDBDatabase>((resolve, reject) => {
-        const request = indexedDB.open('assistant-local-settings', 1);
-        request.onupgradeneeded = () => request.result.createObjectStore('settings');
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-    }).catch(error => { pairingDatabase = undefined; throw error; });
-    return pairingDatabase.then(database => new Promise((resolve, reject) => {
-        const transaction = database.transaction('settings', token === undefined ? 'readonly' : 'readwrite');
-        const store = transaction.objectStore('settings');
-        const request = token === undefined ? store.get('pairing') : token ? store.put(token, 'pairing') : store.delete('pairing');
-        transaction.oncomplete = () => resolve(token ?? request.result ?? '');
-        transaction.onabort = () => reject(transaction.error);
-    }));
-}
-
-function isAssistantPopup(sender: chrome.runtime.MessageSender) {
-    const popup = chrome.runtime.getURL('popup.html');
-    return sender.id === chrome.runtime.id && sender.url?.split('#', 1)[0] === popup;
-}
-
-const tabCaptureEpoch = new Map<number, number>();
-function invalidateCapture(windowId: number) {
-    tabCaptureEpoch.set(windowId, (tabCaptureEpoch.get(windowId) || 0) + 1);
-}
-chrome.tabs?.onActivated?.addListener(info => invalidateCapture(info.windowId));
-chrome.tabs?.onUpdated?.addListener((_id, change, tab) => {
-    if (tab.active && (change.url || change.status === 'loading')) invalidateCapture(tab.windowId);
-});
-chrome.windows?.onRemoved?.addListener(id => tabCaptureEpoch.delete(id));
-
 chrome.runtime.onMessage.addListener((request: AssistantMessage, sender, sendResponse) => {
     if (!request || typeof request.action !== 'string') {
         sendResponse({error:'Invalid extension message'}); return false;
-    }
-    if (['saveCheckpoint', 'takeCheckpoint', 'clearCheckpoint'].includes(request.action)) {
-        handleAutomationCheckpoint(request, sender, sendResponse);
-        return true;
-    }
-    if (['pairLocalServer','unpairLocalServer','pairingStatus','openAssistantOnTab'].includes(request.action)) {
-        if (!isAssistantPopup(sender)) { sendResponse({ok:false,error:'Open the Browser Assistant toolbar popup.'}); return false; }
-        (async () => {
-            if (request.action === 'openAssistantOnTab') {
-                const [tab] = await chrome.tabs.query({active:true,currentWindow:true});
-                if (!tab?.id || !/^https?:\/\//.test(tab.url || '')) throw Error('Open an HTTP or HTTPS page first.');
-                await attachAssistantPanel(tab.id);
-                await chrome.tabs.sendMessage(tab.id,{action:'assistantShowPanel'});
-                return {ok:true};
-            }
-            if (request.action === 'pairingStatus') return {ok:true,paired:Boolean(await localPairing())};
-            if (request.action === 'unpairLocalServer') { await localPairing(''); return {ok:true}; }
-            if (!/^[A-Za-z0-9_-]{32,128}$/.test(request.token || '')) throw Error('Enter the pairing token shown by your local server.');
-            const response = await fetch(LOCAL_API+'/history?limit=1', {
-                headers:{'X-Assistant-Token':request.token}, signal:AbortSignal.timeout(4000), redirect:'error', cache:'no-store',
-            });
-            if (!response.ok) throw Error(response.status === 401 ? 'The local server rejected the token.' : 'Could not verify local server pairing.');
-            await localPairing(request.token);
-            return {ok:true,paired:true};
-        })().then(sendResponse).catch(error => sendResponse({ok:false,error:error.message}));
-        return true;
     }
     if (request.action === 'journalCountdowns' && sender.id === chrome.runtime.id) {
         chrome.storage.local.get<AssistantJournalTimerData>().then(data => sendResponse(activeJournalTimers(data)))
@@ -234,15 +115,14 @@ chrome.runtime.onMessage.addListener((request: AssistantMessage, sender, sendRes
         return true;
     }
     if (request.action === 'questionImage') {
-        let url, source;
-        try { url=new URL(request.url); source=new URL(sender.url); } catch {}
+        let url;
+        try { url=new URL(request.url); } catch {}
         if (sender.id !== chrome.runtime.id || !sender.tab || !/^https?:/.test(sender.url || '')
-            || !url || !['https:','http:'].includes(url.protocol) || url.username || url.password
-            || !source || url.origin !== source.origin) {
+            || !url || !['https:','http:'].includes(url.protocol) || url.username || url.password) {
             sendResponse({error:'Question image access is not authorized.'}); return false;
         }
         (async()=>{
-            const response=await fetch(url.href,{credentials:'omit',redirect:'error',signal:AbortSignal.timeout(10000)});
+            const response=await fetch(url.href,{credentials:'omit',signal:AbortSignal.timeout(10000)});
             if (!response.ok || !response.headers.get('content-type')?.startsWith('image/')) throw new Error('Question image download failed.');
             if (Number(response.headers.get('content-length')) > 10000000) throw new Error('Question image is too large.');
             const reader=response.body.getReader(); const parts=[]; let size=0;
@@ -347,36 +227,29 @@ chrome.runtime.onMessage.addListener((request: AssistantMessage, sender, sendRes
         if (sender.id !== chrome.runtime.id || !sender.tab || !/^https?:\/\//.test(sender.url || sender.tab.url || '')) {
             sendResponse({error:'Screenshot access is not authorized.'}); return false;
         }
-        (async () => {
-            const windowId = sender.tab.windowId;
-            const epoch = tabCaptureEpoch.get(windowId);
-            const expectedUrl = request.url || sender.tab.url || sender.url;
-            async function current() {
-                const tabs = await chrome.tabs.query({active:true,windowId});
-                return tabs.length === 1 && tabs[0].id === sender.tab.id
-                    && tabs[0].url === expectedUrl && tabCaptureEpoch.get(windowId) === epoch;
+        // A tab can lose focus while capture is queued. Never capture another
+        // tab/window and send that screenshot with the requesting page's URL.
+        chrome.tabs.query({active:true,windowId:sender.tab.windowId}).then(active => {
+            if (active.length !== 1 || active[0].id !== sender.tab.id) {
+                sendResponse({error:'The requesting tab is no longer active. Focus it and try Vision Scan again.'}); return;
             }
-            if (!(await current())) throw Error('The requesting tab is no longer active. Focus it and try Vision Scan again.');
-            const dataUrl = await new Promise<string>((resolve, reject) => {
-                chrome.tabs.captureVisibleTab(windowId,{format:'png'}, value => {
-                    if (chrome.runtime.lastError || !value) reject(Error('Open the extension toolbar on this tab to allow screenshot capture.'));
-                    else resolve(value);
-                });
+            chrome.tabs.captureVisibleTab(sender.tab.windowId, { format: "png" }, (dataUrl) => {
+            if (chrome.runtime.lastError) {
+                console.error("Capture failed:", chrome.runtime.lastError.message);
+                sendResponse({ error: chrome.runtime.lastError.message });
+            } else {
+                sendResponse({ dataUrl: dataUrl });
+            }
             });
-            if (!(await current())) throw Error('The tab changed during capture. Try Vision Scan again.');
-            return {dataUrl};
-        })().then(sendResponse).catch(error => sendResponse({error:error.message}));
-        return true;
+        }).catch(()=>sendResponse({error:'Could not verify the active screenshot tab.'}));
+        return true; // Keep the message channel open for async response
     }
 
     if (request.action === "apiRequest") {
         const allowedMethods = {'/health':['GET'],'/solve':['POST'],'/solve-vision':['POST'],
-            '/history':['GET','POST','DELETE'],'/journal':['POST'],'/provider-status':['POST'],'/jobs':['POST']};
+            '/history':['GET','POST','DELETE'],'/journal':['POST']};
         const method = request.method || 'POST';
-        const permitted = Object.hasOwn(allowedMethods,request.path)
-            ? allowedMethods[request.path].includes(method)
-            : /^\/jobs\/[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(request.path || '') && ['GET','DELETE'].includes(method);
-        if (sender.id !== chrome.runtime.id || !permitted) {
+        if (sender.id !== chrome.runtime.id || !allowedMethods[request.path]?.includes(method)) {
             sendResponse({ error: "Blocked API sender, path or method" });
             return false;
         }
@@ -388,20 +261,13 @@ chrome.runtime.onMessage.addListener((request: AssistantMessage, sender, sendRes
         const longRequest = ['/solve','/solve-vision','/journal'].includes(request.path);
         const keepAlive = longRequest && typeof chrome.runtime.getPlatformInfo === 'function'
             ? setInterval(()=>chrome.runtime.getPlatformInfo(()=>{ void chrome.runtime.lastError; }),25000) : null;
-        (async () => {
-            const headers = {"Content-Type":"application/json"};
-            if (request.path !== '/health') {
-                const token = await localPairing();
-                if (!token) return {status:401,ok:false,data:{detail:'Pair the local server in the Browser Assistant toolbar popup.'}};
-                headers['X-Assistant-Token'] = token;
-            }
-            return fetch(`${LOCAL_API}${request.path}`, {
-                signal:AbortSignal.timeout(longRequest ? 360000 : 12000),
-                method,headers,body,redirect:'error',cache:'no-store',
-            });
-        })()
+        fetch(`http://127.0.0.1:8000${request.path}`, {
+            signal: AbortSignal.timeout(['/solve', '/solve-vision', '/journal'].includes(request.path) ? 360000 : 8000),
+            method,
+            headers: { "Content-Type": "application/json" },
+            body,
+        })
             .then(async (response) => {
-                if (!('text' in response)) { sendResponse(response); return; }
                 const text = await response.text();
                 let data;
                 try { data = text ? JSON.parse(text) : {}; }

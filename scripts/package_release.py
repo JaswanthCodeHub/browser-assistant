@@ -9,7 +9,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 ROOT = Path(__file__).resolve().parents[1]
 EXTENSION = ('manifest.json', 'background.js', 'editor-bridge.js', 'automation-policy.js',
              'question-visuals.js', 'answer-requests.js', 'coding-automation.js', 'coding-batch.js', 'content.js', 'journal-automation.js', 'popup.html', 'popup.js', 'styles.css')
-BACKEND = ('server/main.py', 'server/code_contract.py', 'server/local_security.py', 'server/inference_jobs.py', 'server/vision_images.py', 'server/journal.py', 'server/journal_prompt.md', 'server/journal_syllabus.json', 'server/practice_quiz.html', 'server/requirements.txt', 'server/requirements.lock.txt',
+BACKEND = ('server/main.py', 'server/code_contract.py', 'server/local_security.py', 'server/vision_images.py', 'server/journal.py', 'server/journal_prompt.md', 'server/journal_syllabus.json', 'server/practice_quiz.html', 'server/requirements.txt', 'server/requirements.lock.txt',
            'server/.env.example', 'server/Dockerfile', 'server/.dockerignore',
            'docker-compose.yml', 'README.md', 'LICENSE', 'CONTRIBUTING.md', 'SECURITY.md', 'CODE_OF_CONDUCT.md', 'CHANGELOG.md',
            'docs/SETUP.md', 'docs/API.md', 'docs/JOURNALS.md', 'docs/ARCHITECTURE.md', 'docs/AUDIT.md', 'docs/LAUNCH.md',
@@ -27,7 +27,7 @@ def release_files():
     tests += tuple(path.relative_to(ROOT).as_posix() for path in sorted((ROOT/'server').glob('test_*.py')))
     source = tuple(dict.fromkeys((*extension_assets, *typescript, *BACKEND, *tests, 'extension/fixtures/ccbp-ordering.html',
         'package.json','package-lock.json','tsconfig.json','.gitignore','.editorconfig','AGENTS.md','scripts/check_repo.py',
-        'scripts/package_release.py','scripts/start_journal_assistant.ps1','scripts/smoke_backend.py','scripts/browser_smoke.cjs',
+        'scripts/package_release.py','scripts/start_journal_assistant.ps1','scripts/smoke_backend.py',
         '.github/workflows/ci.yml','.github/workflows/release.yml')))
     return [('extension',extension),('backend',BACKEND),('source',source)]
 

@@ -195,7 +195,6 @@ function mountJournalCountdown(signal: AbortSignal) {
     let isHidden = false;
     let serverOnline = null; // null = unknown, true/false = checked
     let isScanning = false;
-    const pendingInference = new Set<AbortController>();
     let extensionAlive = true; // false after extension reload invalidates context
     let historyItems = [];
     let isHistoryOpen = false;
@@ -205,21 +204,13 @@ function mountJournalCountdown(signal: AbortSignal) {
         processed: new Set(), completed: 0, error: '', currentSignature: '',
     };
 
-    const updateListener = (request, sender, sendResponse) => {
-        if (request.action === 'assistantShowPanel' || request.action === 'assistantToggleAutomation') {
-            if (sender.id !== chrome.runtime.id) return false;
-            if (request.action === 'assistantShowPanel') openPanel();
-            else toggleAutomation();
-            sendResponse({ok:true});
-            return false;
-        }
+    const updateListener = (request, _sender, sendResponse) => {
         const busy = automation.running || isScanning || Boolean(window.BrowserAssistantJournalBusy);
         if (request.action === 'assistantUpdateStatus') {sendResponse({busy});return false;}
         if (request.action !== 'assistantPrepareUpdate') return false;
         if (busy) {sendResponse({ready:false});return false;}
         try {sessionStorage.setItem('browserAssistantReopenAfterUpdate',isCollapsed?'false':'true');} catch {}
         disposed = true; extensionAlive = false; automation.runId++;
-        for (const request of pendingInference) request.abort();
         lifecycle.abort();
         for (const cleanup of navigationCleanup) cleanup();
         for (const timer of pendingTimeouts) window.clearTimeout(timer);
@@ -267,14 +258,13 @@ function mountJournalCountdown(signal: AbortSignal) {
         );
     }
 
-    function getAuthorizedQuestion(context = getAutomationContext(), manual = false) {
+    function getAuthorizedQuestion(context = getAutomationContext()) {
         // The dashboard contains mentor feedback radios, not quiz answers.
         if (window.location.origin === 'https://learning.ccbp.in' && window.location.pathname === '/') return null;
         // Problem-list filters are checkboxes, not an MCQ question.
         if (window.location.pathname.replace(/\/$/, '') === '/problems-set') return null;
-        const readOnly = manual && context.target?.assistOnly === true;
-        const adapter = readOnly ? automationPolicy.getAdapter('semantic-mcq') : getAutomationAdapter(context);
-        if (!adapter || (!readOnly && (!automationPolicy.canExecute('detect', context) || !automationPolicy.canExecute('read', context)))) return null;
+        const adapter = getAutomationAdapter(context);
+        if (!adapter || !automationPolicy.canExecute('detect', context) || !automationPolicy.canExecute('read', context)) return null;
         const coding = window.BrowserAssistantCoding?.getQuestion(document);
         if (coding) {
             // CCBP re-renders description content while an answer is being
@@ -295,6 +285,8 @@ function mountJournalCountdown(signal: AbortSignal) {
         })), signature: questionSignature(question.identityText || question.text, question.options)
             + (window.BrowserAssistantQuestionVisuals?.nodes(question).length ? `|visual:${window.BrowserAssistantQuestionVisuals.fingerprint(question)}` : '') };
     }
+
+    const AUTO_RESUME_KEY = 'browserAssistantResumeAuthorizedQa';
 
     function questionDetectionError() {
         const codingPage = window.location.origin === 'https://learning.ccbp.in'
@@ -430,7 +422,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             if (question) question.textContent = current.title || 'Select an ongoing reflective journal';
             if (progress) progress.textContent = `${current.completed || 0} / 1`;
             if (latest) {latest.textContent = current.message; latest.classList.remove('has-error');}
-            if (start) {start.disabled = current.running; start.textContent = '▶ Prepare journal draft';}
+            if (start) {start.disabled = current.running; start.textContent = '▶ Start journal automation';}
             if (pause) {pause.disabled = !current.running || current.submitting; pause.textContent = current.paused ? 'Resume' : 'Pause';}
             if (stop) stop.disabled = !current.running;
             const diagnostic = document.getElementById('assistant-export-question-btn');
@@ -483,11 +475,8 @@ function mountJournalCountdown(signal: AbortSignal) {
 
     function stopAutomation(reason = 'STOPPED') {
         if (window.BrowserAssistantJournal?.matches()) {window.BrowserAssistantJournal.stop(); updateAutomationUI(); return;}
-        for (const checkpointKind of ['practice', 'coding'] as const) {
-            void safeSendMessage({action:'clearCheckpoint',checkpointKind}).catch(() => {});
-        }
+        try { sessionStorage.removeItem('browserAssistantCodingBatch'); } catch { /* Stop must work when site storage is blocked. */ }
         automation.batch = null;
-        for (const request of pendingInference) request.abort();
         automation.runId += 1;
         automation.running = false;
         automation.paused = false;
@@ -658,13 +647,12 @@ function mountJournalCountdown(signal: AbortSignal) {
         return false;
     }
 
-    async function saveCheckpoint(kind: AssistantCheckpoint['kind'], value: unknown, expectedUrl?: string) {
-        return safeSendMessage({action:'saveCheckpoint',checkpointKind:kind,checkpoint:{kind,value,expectedUrl}});
-    }
-
-    function saveCourseResume(stage: string, context: AssistantContext, control: HTMLElement, details = {}) {
-        return saveCheckpoint('practice', {stage,targetId:context.target.id,...details},
-            control.closest?.<HTMLAnchorElement>('a[href]')?.href);
+    function saveCourseResume(stage, context, details = {}) {
+        try {
+            sessionStorage.setItem(AUTO_RESUME_KEY, JSON.stringify({
+                stage, targetId: context.target.id, createdAt: Date.now(), ...details,
+            }));
+        } catch { /* Resuming after a full page navigation is optional. */ }
     }
 
     async function waitForCourseAction(getAction, timeoutMs = 12000) {
@@ -675,43 +663,6 @@ function mountJournalCountdown(signal: AbortSignal) {
             await new Promise(resolve => setTimeout(resolve, 200));
         }
         return null;
-    }
-
-    function reviewCodingAction(title: string, confirmLabel: string, current?: string, proposed?: string): Promise<boolean> {
-        return new Promise(resolve => {
-            const host = document.createElement('div');
-            const shadow = host.attachShadow({mode:'closed'});
-            const dialog = document.createElement('dialog');
-            dialog.setAttribute('aria-label',title);
-            dialog.style.cssText = 'max-width:92vw;max-height:85vh;padding:16px;color:#17233c;background:white;font:14px system-ui';
-            const heading = document.createElement('h2');
-            heading.textContent = title;
-            dialog.appendChild(heading);
-            for (const [label, code] of [['Current code',current],['Proposed code',proposed]]) {
-                if (code === undefined) continue;
-                const caption = document.createElement('h3');
-                caption.textContent = label;
-                const block = document.createElement('pre');
-                block.textContent = code;
-                block.style.cssText = 'max-height:24vh;max-width:82vw;overflow:auto;border:1px solid #aaa;padding:8px';
-                block.tabIndex = 0;
-                dialog.append(caption,block);
-            }
-            const cancel = document.createElement('button');
-            cancel.textContent = 'Cancel';
-            const approve = document.createElement('button');
-            approve.textContent = confirmLabel;
-            const finish = (accepted: boolean) => {clearTimeout(timeout);host.remove();resolve(accepted);};
-            cancel.addEventListener('click',event => {if (event.isTrusted) finish(false);});
-            approve.addEventListener('click',event => {if (event.isTrusted) finish(true);});
-            dialog.addEventListener('cancel',event => {event.preventDefault();finish(false);});
-            dialog.append(cancel,approve);
-            shadow.appendChild(dialog);
-            document.documentElement.appendChild(host);
-            const timeout = setTimeout(() => finish(false),120000);
-            dialog.showModal();
-            cancel.focus();
-        });
     }
 
     async function runCodingAutomation(question, runId, repairAttempt = 0, feedback = '', starterCode = null) {
@@ -744,7 +695,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             if (!webProject && response.data.code_reviewed !== true) {
                 throw new Error('The running server has not enabled code review before submission. Restart the updated Browser Assistant server. No code was submitted.');
             }
-            const results = response.data.items ?? (typeof response.data.results === 'string' ? JSON.parse(response.data.results) : response.data.results);
+            const results = typeof response.data.results === 'string' ? JSON.parse(response.data.results) : response.data.results;
             const solutions = results?.filter(item => item.type === 'code' && typeof item.code === 'string' && item.code.trim());
             if (solutions?.length !== 1) throw new Error('Expected one complete coding solution.');
             const code = solutions[0].code;
@@ -759,12 +710,6 @@ function mountJournalCountdown(signal: AbortSignal) {
             if (!(await waitWhilePaused(runId))) return;
             if (!refreshed?.ok || refreshed.value !== original.value) throw new Error('Starter code changed while generating the solution. Restart to use the current code.');
             if (getAuthorizedQuestion()?.signature !== question.signature) throw new Error('Question changed before code insertion.');
-            automation.state = 'WAITING_FOR_CODE_REVIEW'; updateAutomationUI();
-            if (!(await reviewCodingAction('Review the code change','Apply reviewed code',original.value,code))) {
-                if (active()) stopAutomation('REVIEW_NEEDED');
-                return false;
-            }
-            if (!(await waitWhilePaused(runId)) || getAuthorizedQuestion()?.signature !== question.signature) return false;
             automation.state = 'FILLING_CODE'; updateAutomationUI();
             const filled = await safeSendMessage({ action: 'codingEditor', operation: webProject ? 'writeProject' : 'write', selector: question.editorSelector, expected: original.value, value: code });
             if (!active()) return;
@@ -774,16 +719,6 @@ function mountJournalCountdown(signal: AbortSignal) {
             if (!active()) return;
             const current = getAutomationContext();
             if (!verified?.ok || verified.value !== code || getAuthorizedQuestion(current)?.signature !== question.signature) throw new Error('Editor or question changed before submission.');
-            automation.state = 'WAITING_FOR_SUBMIT_APPROVAL'; updateAutomationUI();
-            if (!(await reviewCodingAction('Code applied. Submit for portal grading?','Submit for grading'))) {
-                if (active()) stopAutomation('REVIEW_NEEDED');
-                return false;
-            }
-            if (!(await waitWhilePaused(runId))) return false;
-            const latest = await read();
-            if (!active() || latest?.value !== code || getAuthorizedQuestion()?.signature !== question.signature) {
-                throw Error('Editor or question changed after review.');
-            }
             const submit = window.BrowserAssistantCoding.getSubmit(document);
             if (!automationPolicy.canExecute('submit', current) || !submit) throw new Error('Code filled. No unique enabled Submit button found.');
             const previousResult = window.BrowserAssistantCoding.getResult(document);
@@ -847,6 +782,8 @@ function mountJournalCountdown(signal: AbortSignal) {
         }
     }
 
+    const CODING_BATCH_KEY = 'browserAssistantCodingBatch';
+
     function codingQuestionPath(value, baseUrl) {
         if (!value) return '';
         try { return new URL(value, baseUrl).pathname.replace(/\/$/, ''); }
@@ -881,11 +818,9 @@ function mountJournalCountdown(signal: AbortSignal) {
         automation.targetId = context.target.id; automation.batch = batch;
         automation.completed = batch.completed;
         isCollapsed = false; selectedTab = 'qa'; render();
-        const persist = async phase => {
-            batch.phase = phase;
-            const expected = phase === 'question' ? batch.questionUrl : phase === 'list' ? batch.listUrl : location.href;
-            const saved = await saveCheckpoint('coding', batch, expected);
-            if (!saved?.ok) throw Error('Could not save the coding checkpoint. Restart from the problem list.');
+        const persist = phase => {
+            batch.phase = phase; batch.updatedAt = Date.now();
+            sessionStorage.setItem(CODING_BATCH_KEY, JSON.stringify(batch));
         };
         const waitFor = async (predicate, timeout = 20000) => {
             const deadline = Date.now() + timeout;
@@ -916,7 +851,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                     });
                     if (!automation.running || automation.runId !== runId) return;
                     if (!question) throw new Error(window.BrowserAssistantCoding.getDetectionError() || 'Selected coding question did not load or its title did not match.');
-                    await persist('busy');
+                    persist('busy');
                     const passed = await runCodingAutomation(question, runId);
                     if (!passed || !automation.running || automation.runId !== runId) return;
                     // Keep both title and URL. CCBP may leave a newly accepted
@@ -924,11 +859,10 @@ function mountJournalCountdown(signal: AbortSignal) {
                     // list, so status alone is not enough to prevent a retry.
                     rememberCompletedCodingQuestion(batch); batch.completed = automation.completed;
                     }
-                    await persist('list');
+                    persist('list');
                     automation.state = 'RETURNING_TO_LIST'; automation.pendingNavigation = true; updateAutomationUI();
                     const back = window.BrowserAssistantCodingBatch.getBackControl(document, batch.listUrl);
                     if (!back) throw new Error('Accepted. Question Bank Back button was not found; return to the list to continue.');
-                    if (!(await waitWhilePaused(runId))) return;
                     back.click();
                     let saveConfirmed = false;
                     const returned = await waitFor(() => {
@@ -944,7 +878,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                     });
                     if (!automation.running || automation.runId !== runId) return;
                     if (!returned) throw new Error('Accepted. Back was clicked, but the problem list did not load.');
-                    visited.clear(); batch.title = ''; await persist('list');
+                    visited.clear(); batch.title = ''; persist('list');
                     continue;
                 }
                 automation.state = 'FINDING_UNSOLVED'; updateAutomationUI();
@@ -964,9 +898,8 @@ function mountJournalCountdown(signal: AbortSignal) {
                 const rows = window.BrowserAssistantCodingBatch.rows(document);
                 const next = rows.find(row => !wasCompletedCodingQuestion(batch, row));
                 if (next) {
-                    batch.title = next.title; batch.questionUrl = next.href || null; await persist('question');
+                    batch.title = next.title; batch.questionUrl = next.href || null; persist('question');
                     automation.state = 'OPENING_QUESTION'; automation.pendingNavigation = true; updateAutomationUI();
-                    if (!(await waitWhilePaused(runId))) return;
                     next.action.click();
                     continue;
                 }
@@ -979,9 +912,8 @@ function mountJournalCountdown(signal: AbortSignal) {
                     if (range && range.end >= range.total) { stopAutomation('COMPLETED'); return; }
                     throw new Error('No Not Attempted or In Progress questions on this page; the next-page control could not be identified.');
                 }
-                await persist('list');
+                persist('list');
                 automation.state = 'NEXT_LIST_PAGE'; automation.pendingNavigation = true; updateAutomationUI();
-                if (!(await waitWhilePaused(runId))) return;
                 nextPage.click();
                 const changed = await waitFor(() => {
                     const updated = window.BrowserAssistantCodingBatch.pageRange(document);
@@ -997,10 +929,13 @@ function mountJournalCountdown(signal: AbortSignal) {
     }
 
     async function resumeCodingBatch() {
-        const generation = automation.runId;
-        const response = await safeSendMessage({action:'takeCheckpoint',checkpointKind:'coding'}).catch(() => null);
-        if (!response?.checkpoint || generation !== automation.runId || automation.running) return false;
-        await startCodingBatch(response.checkpoint);
+        let saved;
+        try { saved = JSON.parse(sessionStorage.getItem(CODING_BATCH_KEY) || 'null'); } catch { return false; }
+        if (!saved) return false;
+        if (saved.origin !== location.origin || Date.now() - saved.updatedAt > 120000) {
+            sessionStorage.removeItem(CODING_BATCH_KEY); return false;
+        }
+        await startCodingBatch(saved);
         return true;
     }
 
@@ -1038,26 +973,18 @@ function mountJournalCountdown(signal: AbortSignal) {
             return ide;
         }
         try {
-            const response = await apiRequest('/solve', 'POST', {
+            const [ide, response] = await Promise.all([openOnlineIde(), apiRequest('/solve', 'POST', {
                 url, practice_type:'code', language:'javascript', review_before_submit:true,
                 text: `${question.text}\n\nGenerate the complete app.js for the online Node.js IDE. Use the stated database, route methods, response bodies and module format. Use parameterized SQL where applicable. Return source code for app.js only.`,
-            });
+            })]);
             if (!(await waitWhilePaused(runId)) || !current()) return;
             if (!response?.ok) throw window.BrowserAssistantAnswerRequests.failure(response);
-            const solutions = response.data.items ?? JSON.parse(response.data.results);
+            const solutions = JSON.parse(response.data.results);
             if (!Array.isArray(solutions) || solutions.length !== 1 || solutions[0].type !== 'code'
                 || typeof solutions[0].code !== 'string' || !solutions[0].code.trim()) {
                 throw new Error('The server did not return a complete app.js solution.');
             }
             const solution = solutions[0];
-            automation.state = 'WAITING_FOR_CODE_REVIEW'; updateAutomationUI();
-            if (!(await reviewCodingAction('Review the proposed app.js','Open IDE and apply',undefined,solution.code))) {
-                if (current()) stopAutomation('REVIEW_NEEDED');
-                return;
-            }
-            if (!(await waitWhilePaused(runId)) || !current()) return;
-            const ide = await openOnlineIde();
-            if (!current()) return;
             let instructions = ide?.found
                 ? 'Copy into app.js in the IDE tab after the workspace is ready, then save.'
                 : 'Use the portal Open IDE button, then copy into app.js and save.';
@@ -1079,7 +1006,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                 if (!current()) return;
                 if (launched?.alreadyPassed) {stopAutomation('ALREADY_SOLVED'); return;}
                 if (launched?.started) {
-                    automation.state = 'VERIFYING_IDE_SAVE';
+                    automation.state = 'WAITING_FOR_IDE_GRADING';
                     updateAutomationUI();
                     const resultDeadline = Date.now() + 240000;
                     while (current() && Date.now() < resultDeadline) {
@@ -1087,16 +1014,10 @@ function mountJournalCountdown(signal: AbortSignal) {
                         const result = await safeSendMessage({action:'onlineIdeStatus',...target});
                         if (!current()) return;
                         if (result?.done) {
-                            if (result.saved) {
-                                automation.completed = 1;
-                                stopAutomation('IDE_READY_FOR_GRADING');
-                                displayResults([{...solution,title:'app.js',approach:'Saved and syntax checked. Use the portal grading command when you are ready.'}],response.data.provider);
-                            } else {
-                                automation.error = result.saveUnconfirmed
-                                    ? 'Code was pasted, but the saved file did not match. Check app.js and save it.'
-                                    : 'JavaScript syntax check failed. Review the IDE terminal.';
-                                stopAutomation('CHECK_IDE_RESULT');
-                            }
+                            if (result.passed) automation.completed = 1;
+                            else if (result.saveUnconfirmed) automation.error = 'Code was pasted into app.js, but the saved file did not match. Check app.js and save before running it.';
+                            else automation.error = result.submitted ? 'Grading finished. Review the test results in the IDE.' : 'The IDE command finished without a confirmed submission. Check the terminal.';
+                            stopAutomation(result.passed ? 'COMPLETED' : 'CHECK_IDE_RESULT');
                             return;
                         }
                         if (result?.ok === false && !result.retry) break;
@@ -1223,9 +1144,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                 automation.state = 'STARTING_PRACTICE';
                 automation.targetId = initialContext.target.id;
                 updateAutomationUI();
-                const generation = ++automation.runId;
-                await saveCourseResume('solve', initialContext, startPractice);
-                if (generation !== automation.runId) return;
+                saveCourseResume('solve', initialContext);
                 startPractice.click();
                 setTimeout(() => { void resumeAuthorizedQaAfterNavigation(); }, 900);
                 return;
@@ -1304,8 +1223,9 @@ function mountJournalCountdown(signal: AbortSignal) {
                 automation.pendingNavigation = true;
                 updateAutomationUI();
                 const previousUrl = window.location.href;
-                await saveCourseResume('solve', context, nextPractice);
-                if (!(await waitWhilePaused(runId))) return;
+                try {
+                    sessionStorage.setItem(AUTO_RESUME_KEY, JSON.stringify({ targetId: automation.targetId, fromUrl: previousUrl, createdAt: Date.now() }));
+                } catch { /* Resuming after a full page navigation is optional. */ }
                 nextPractice.click();
                 if (!(await waitForNextPracticeQuestion(previousUrl, runId))) {
                     automation.error = 'Next practice did not load in time.';
@@ -1387,7 +1307,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                 stopAutomation('PAUSED'); break;
             }
             let results;
-            try { results = response.data.items ?? JSON.parse(response.data.results); } catch { automation.error = 'AI returned an invalid answer.'; stopAutomation('ERROR'); break; }
+            try { results = JSON.parse(response.data.results); } catch { automation.error = 'AI returned an invalid answer.'; stopAutomation('ERROR'); break; }
             if (!Array.isArray(results) || results.length !== 1 || results[0]?.type !== 'mcq') {
                 automation.error = 'Expected one verified answer for the current question.';
                 stopAutomation('PAUSED'); break;
@@ -1488,14 +1408,10 @@ function mountJournalCountdown(signal: AbortSignal) {
                 automation.state = 'OPENING_COURSE';
                 automation.pendingNavigation = true;
                 updateAutomationUI();
-                await saveCourseResume('course', (transition as { context: AssistantContext }).context,
-                    (transition as { proceed: HTMLElement }).proceed, {
+                saveCourseResume('course', (transition as { context: AssistantContext }).context, {
                     currentTitle: currentAdapter.getCurrentPracticeTitle?.(document) || '',
                 });
-                if (!(await waitWhilePaused(runId))) return;
-                automation.running = false;
                 (transition as { proceed: HTMLElement }).proceed.click();
-                setTimeout(() => { void resumeAuthorizedQaAfterNavigation(); }, 900);
                 return;
             }
             if ((transition as { advance?: HTMLElement })?.advance) {
@@ -1601,16 +1517,10 @@ function mountJournalCountdown(signal: AbortSignal) {
     // Route local API traffic through the extension service worker instead of
     // the page context, so visited sites cannot directly access the API.
     async function apiRequest(path: string, method = 'POST', body?: object) {
-        let response;
-        if (method === 'POST' && ['/solve','/solve-vision'].includes(path)) {
-            const request = new AbortController();
-            pendingInference.add(request);
-            try {
-                response = await browserAssistantLocalInference(path,body,msg => safeSendMessage(msg,15000),request.signal);
-            } finally {pendingInference.delete(request);}
-        } else {
-            response = await safeSendMessage({action:'apiRequest',path,method,body},15000);
-        }
+        const response = await safeSendMessage(
+            { action: 'apiRequest', path, method, body },
+            370000,
+        );
         if (!response) throw new Error('Local server did not respond');
         if (response.error) throw new Error(response.error);
         return response;
@@ -1618,11 +1528,9 @@ function mountJournalCountdown(signal: AbortSignal) {
 
     async function saveScanHistory(results, provider, scanType, language = null) {
         try {
-            if (!(await chrome.storage.local.get({assistantSaveHistory:false})).assistantSaveHistory) return;
-            const page = new URL(location.href);
             const response = await apiRequest('/history', 'POST', {
                 scan_type: scanType,
-                url: page.origin + page.pathname,
+                url: window.location.href,
                 provider: provider || 'unknown',
                 results: JSON.stringify(results),
                 language,
@@ -1641,10 +1549,7 @@ function mountJournalCountdown(signal: AbortSignal) {
         try {
             const response = await apiRequest('/history', 'GET');
             if (!response.ok) throw new Error((response.data?.detail as string) || 'Could not load history');
-            historyItems = (response.data?.items || []).filter(item => {
-                try { return new URL(item.url).origin === location.origin; }
-                catch { return false; }
-            });
+            historyItems = response.data?.items || [];
             renderHistory();
         } catch (error) {
             renderHistoryError(error.message);
@@ -1816,15 +1721,10 @@ function mountJournalCountdown(signal: AbortSignal) {
     }
 
     function handleAutomationShortcut(e) {
-        if (!e.isTrusted || e.repeat || e.isComposing || e.defaultPrevented || !e.altKey || e.ctrlKey || e.metaKey
+        if (e.repeat || e.isComposing || e.defaultPrevented || !e.altKey || e.ctrlKey || e.metaKey
             || (e.code !== 'KeyA' && String(e.key).toLowerCase() !== 'a')) return false;
         e.preventDefault();
         e.stopPropagation();
-        toggleAutomation();
-        return true;
-    }
-
-    function toggleAutomation() {
         selectedTab = 'qa'; isHidden = false; isCollapsed = false;
         root.style.display = 'block'; render();
         const journal = window.BrowserAssistantJournal;
@@ -1838,12 +1738,13 @@ function mountJournalCountdown(signal: AbortSignal) {
                 stopAutomation('ERROR');
             });
         }
+        return true;
     }
 
     // ── Keyboard shortcuts ────────────────────────────────────────────────────
     document.addEventListener('keydown', (e) => {
         // Block held-key auto-repeat to prevent rapid-fire race conditions
-        if (!e.isTrusted || e.repeat || e.isComposing) return;
+        if (e.repeat || e.isComposing) return;
         // Explicit automation chord also works while the code editor has focus.
         if (handleAutomationShortcut(e)) return;
 
@@ -1917,13 +1818,9 @@ function mountJournalCountdown(signal: AbortSignal) {
                 context.visualSnapshot = snapshot.fingerprint;
             } else {
                 await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-                const response = await safeSendMessage({action:'captureVisibleTab',url:context.url});
+                const response = await safeSendMessage({ action: "captureVisibleTab" });
                 if (!response?.dataUrl || response.error) throw new Error(response?.error || 'Screenshot capture failed');
-                root.style.visibility = panelVisibility;
-                if (journalCountdownBadge) journalCountdownBadge.style.visibility = countdownVisibility;
-                const reviewed = await visuals.reviewCapture(response.dataUrl,context.question);
-                if (!reviewed) { render(); return; }
-                images = [reviewed];
+                images = [response.dataUrl];
             }
             root.style.visibility = panelVisibility;
             if (journalCountdownBadge) journalCountdownBadge.style.visibility = countdownVisibility;
@@ -1948,7 +1845,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             await assertVisionQuestionCurrent(context);
             let parsed;
             try {
-                parsed = data.items ?? JSON.parse(data.results);
+                parsed = JSON.parse(data.results);
             } catch (e) {
                 throw new Error('Vision returned an invalid answer format. Please scan a clear, complete question again.');
             }
@@ -1998,7 +1895,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             question: ReturnType<typeof getAuthorizedQuestion>;
             visualSnapshot?: string;
             codeSnapshot?: string;
-        } = {url: location.href, text: '', question: getAuthorizedQuestion(undefined, true)};
+        } = {url: location.href, text: '', question: getAuthorizedQuestion()};
         if (!context.question || context.question.type === 'code') {
             context.question = null;
             return context;
@@ -2028,7 +1925,7 @@ function mountJournalCountdown(signal: AbortSignal) {
     async function assertVisionQuestionCurrent(context) {
         if (context.url !== location.href) throw new Error('Page changed while scanning. Please scan the current question again.');
         if (!context.question) return;
-        const fresh = getAuthorizedQuestion(undefined, true);
+        const fresh = getAuthorizedQuestion();
         if (!hasSameQuestionOptions(context.question, fresh)
             || (context.visualSnapshot && window.BrowserAssistantQuestionVisuals.fingerprint(fresh) !== context.visualSnapshot)) {
             throw new Error('Question or illustration changed while scanning. Please scan again.');
@@ -2101,7 +1998,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             serverOnline = true;
             let parsed;
             try {
-                parsed = data.items ?? JSON.parse(data.results);
+                parsed = JSON.parse(data.results);
             } catch (e) {
                 if (question || practiceType !== 'code') throw new Error('The server returned an invalid answer format.');
                 const raw = data.results || "";
@@ -2183,7 +2080,7 @@ function mountJournalCountdown(signal: AbortSignal) {
         const retry = document.createElement('button');
         retry.className = 'assistant-history-btn';
         retry.textContent = 'Retry history';
-        retry.onclick = event => { if (event.isTrusted) void openHistory(); };
+        retry.onclick = openHistory;
         container.append(error, retry);
     }
 
@@ -2195,7 +2092,7 @@ function mountJournalCountdown(signal: AbortSignal) {
         const header = document.createElement('div');
         header.className = 'assistant-history-header';
         const title = document.createElement('strong');
-        title.textContent = 'Recent scans on this site';
+        title.textContent = 'Recent scans';
         const actions = document.createElement('div');
         const back = document.createElement('button');
         back.className = 'assistant-history-action';
@@ -2206,10 +2103,8 @@ function mountJournalCountdown(signal: AbortSignal) {
             const clear = document.createElement('button');
             clear.className = 'assistant-history-action danger';
             clear.id = 'assistant-clear-history-btn';
-            clear.textContent = 'Clear all sites';
-            clear.onclick = event => {
-                if (event.isTrusted && window.confirm('Delete saved scans for all sites?')) void clearHistory();
-            };
+            clear.textContent = 'Clear';
+            clear.onclick = clearHistory;
             actions.appendChild(clear);
         }
         header.append(title, actions);
@@ -2218,7 +2113,7 @@ function mountJournalCountdown(signal: AbortSignal) {
         if (!historyItems.length) {
             const empty = document.createElement('div');
             empty.className = 'assistant-placeholder';
-            empty.textContent = 'No saved scans for this site. Enable Save scan history in the toolbar popup to keep future scans.';
+            empty.textContent = 'No saved scans yet. Run Text Scan or Vision Scan to build your history.';
             container.appendChild(empty);
             return;
         }
@@ -2439,15 +2334,10 @@ function mountJournalCountdown(signal: AbortSignal) {
             document.getElementById('mode-code').onclick = () => selectTab('code');
             document.getElementById('mode-qa').onclick = () => selectTab('qa');
             bindTabKeyboardNavigation();
-            document.getElementById('assistant-history-btn').onclick = event => { if (event.isTrusted) void openHistory(); };
-            document.getElementById('assistant-scan-btn')?.addEventListener('click', event => { if (event.isTrusted) void scanPage(); });
-            document.getElementById('assistant-vision-btn')?.addEventListener('click', event => { if (event.isTrusted) void visionScan(); });
-            document.getElementById('assistant-auto-start-btn')?.addEventListener('click', event => {
-                if (event.isTrusted) void startPracticeAutomation().catch(error => {
-                    automation.error = error.message;
-                    stopAutomation('ERROR');
-                });
-            });
+            document.getElementById('assistant-history-btn').onclick = openHistory;
+            document.getElementById('assistant-scan-btn')?.addEventListener('click', scanPage);
+            document.getElementById('assistant-vision-btn')?.addEventListener('click', visionScan);
+            document.getElementById('assistant-auto-start-btn')?.addEventListener('click', startPracticeAutomation);
             document.getElementById('assistant-export-question-btn')?.addEventListener('click', exportQuestionDiagnostic);
             document.getElementById('assistant-auto-pause-btn')?.addEventListener('click', pauseOrResumeAutomation);
             document.getElementById('assistant-auto-stop-btn')?.addEventListener('click', () => stopAutomation());
@@ -2506,12 +2396,14 @@ function mountJournalCountdown(signal: AbortSignal) {
     }
 
     function renderFullResults(container, results, provider) {
+        // Show provider with verified badge if applicable
         provider = provider || "unknown";
-        const evidence = provider.includes('[verified]') ? 'Calculated locally'
-            : provider.includes('[cross-checked]') ? 'Model agreement'
-                : 'Provider result';
-        const safeProvider = escapeHtml(provider.replace(/\s*\[(?:verified|cross-checked)\]/g, ''));
-        container.innerHTML = `<div class="assistant-provider-badge">${evidence} · ${safeProvider}</div>`;
+        const isVerified = provider.includes('[verified]');
+        const safeProvider = escapeHtml(provider.toUpperCase());
+        const providerBadge = isVerified
+            ? `<div class="assistant-provider-badge verified">✅ via ${safeProvider}</div>`
+            : `<div class="assistant-provider-badge">via ${safeProvider}</div>`;
+        container.innerHTML = providerBadge;
 
         results.forEach((res, index) => {
             if (res.type === 'code') {
@@ -2603,12 +2495,14 @@ function mountJournalCountdown(signal: AbortSignal) {
     }
 
     async function resumeAuthorizedQaAfterNavigation() {
-        const generation = automation.runId;
-        const response = await safeSendMessage({action:'takeCheckpoint',checkpointKind:'practice'}).catch(() => null);
-        const resume = response?.checkpoint;
+        let resume;
+        try {
+            resume = JSON.parse(sessionStorage.getItem(AUTO_RESUME_KEY) || 'null');
+            sessionStorage.removeItem(AUTO_RESUME_KEY);
+        } catch { return; }
         const context = getAutomationContext();
-        if (generation !== automation.runId || automation.running || !resume
-            || resume.targetId !== context.target?.id || context.mode !== 'FULL') return;
+        const isFresh = Number.isFinite(resume?.createdAt) && Date.now() - resume.createdAt < 120000;
+        if (!isFresh || resume.targetId !== context.target?.id || context.mode !== 'FULL') return;
         isCollapsed = false;
         render();
         const adapter = getAutomationAdapter(context);
@@ -2618,10 +2512,9 @@ function mountJournalCountdown(signal: AbortSignal) {
             const nextPractice = await waitForCourseAction(() => adapter.getNextCoursePractice?.(document, resume.currentTitle));
             if (!nextPractice) { automation.state = 'PAUSED'; automation.error = 'Next MCQ practice was not found.'; updateAutomationUI(); return; }
             automation.state = 'OPENING_NEXT_PRACTICE'; updateAutomationUI();
-            await saveCourseResume('start', context, nextPractice);
-            if (generation !== automation.runId || !nextPractice.isConnected) return;
-            nextPractice.scrollIntoView({block:'center'});
-            nextPractice.click();
+            saveCourseResume('start', context);
+            nextPractice.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            setTimeout(() => nextPractice.click(), 250);
             setTimeout(() => { void resumeAuthorizedQaAfterNavigation(); }, 900);
             return;
         }
@@ -2630,8 +2523,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             const startPractice = await waitForCourseAction(() => adapter.getStartPractice?.(document));
             if (!startPractice) { automation.state = 'PAUSED'; automation.error = 'Start Practice button was not found.'; updateAutomationUI(); return; }
             automation.state = 'STARTING_PRACTICE'; updateAutomationUI();
-            await saveCourseResume('solve', context, startPractice);
-            if (generation !== automation.runId || !startPractice.isConnected) return;
+            saveCourseResume('solve', context);
             startPractice.click();
             setTimeout(() => { void resumeAuthorizedQaAfterNavigation(); }, 900);
             return;
@@ -2641,7 +2533,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             const question = await waitForCourseAction(() => getAuthorizedQuestion(context));
             if (!question) { automation.state = 'PAUSED'; automation.error = 'New MCQ question did not load.'; updateAutomationUI(); return; }
         }
-        if (generation === automation.runId) void startPracticeAutomation();
+        void startPracticeAutomation();
     }
 
     let reopenedAfterUpdate = false;
