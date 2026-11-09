@@ -39,11 +39,6 @@
         #server-status { color: #f59e0b; }
         #server-status.online { color: #10b981; }
         #server-status.offline { color: #ef4444; }
-        #journal-reminder { margin: 10px 0; font-size: 11px; }
-        #journal-reminder summary { cursor: pointer; }
-        #journal-reminder label { display: block; margin: 7px 0; }
-        #journal-reminder input { box-sizing: border-box; width: 100%; }
-        #journal-reminder-status { margin-top: 6px; }
     </style>
 </head>
 <body>
@@ -54,16 +49,6 @@
     <p>Extension active. The floating panel appears on every page.</p>
     <div class="status">Server: <span id="server-status">checking...</span></div>
     <p id="journal-countdown" hidden></p>
-    <details id="journal-reminder">
-        <summary>WhatsApp journal reminder</summary>
-        <form id="journal-reminder-form">
-            <label>n8n production webhook URL<input id="journal-webhook-url" type="url" required></label>
-            <label>Webhook token<input id="journal-webhook-token" type="password" required autocomplete="off"></label>
-            <button type="submit">Enable</button>
-            <button type="button" id="journal-reminder-disable">Disable</button>
-        </form>
-        <p id="journal-reminder-status" role="status">Checking settings…</p>
-    </details>
     <div class="shortcuts">
         <div class="shortcut-row"><span>Open panel</span> <kbd>`</kbd></div>
         <div class="shortcut-row"><span>Close panel</span> <kbd>]</kbd></div>

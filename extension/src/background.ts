@@ -47,13 +47,26 @@ chrome.alarms.create('assistant-workspace-update',{periodInMinutes:1});
 chrome.alarms.onAlarm.addListener(alarm => {
     if (alarm.name !== 'assistant-workspace-update') return;
     void checkWorkspaceUpdate();
-    void checkJournalReminder();
     void updateJournalBadge();
 });
-chrome.runtime.onInstalled.addListener(()=>{void attachUpdatedPanels();});
+chrome.runtime.onInstalled.addListener(details => {
+    void attachUpdatedPanels();
+    if (details.reason === 'update') void clearRetiredReminderSettings();
+});
+
+async function clearRetiredReminderSettings() {
+    try {
+        const storage = chrome.storage.local;
+        const keys = Object.keys(await storage.get()).filter(key =>
+            key === 'assistantJournalReminderConfig' || key.startsWith('assistantJournalReminder:'));
+        if (keys.length) await storage.remove(keys);
+    } catch (error) {
+        console.warn('Could not remove retired journal reminder settings.', error);
+    }
+}
 
 let journalBadgeRevision = 0;
-function activeJournalTimers(data: AssistantJournalReminderData, now = Date.now()): AssistantJournalTimer[] {
+function activeJournalTimers(data: AssistantJournalTimerData, now = Date.now()): AssistantJournalTimer[] {
     const prefix = 'assistantJournalTimer:';
     const timers = new Map<string, number>();
     const last = data.assistantJournalTimer;
@@ -71,7 +84,7 @@ async function updateJournalBadge() {
     if (!storage || !chrome.action) return;
     const revision = ++journalBadgeRevision;
     try {
-        const timers = activeJournalTimers(await storage.get<AssistantJournalReminderData>());
+        const timers = activeJournalTimers(await storage.get<AssistantJournalTimerData>());
         const remaining = timers[0]?.deadline - Date.now();
         if (revision !== journalBadgeRevision) return;
         const minutes = Math.ceil(remaining / 60000);
@@ -92,58 +105,12 @@ chrome.storage?.local.onChanged?.addListener(changes => {
 });
 void updateJournalBadge();
 
-let checkingJournalReminder = false;
-async function checkJournalReminder() {
-    if (checkingJournalReminder) return;
-    checkingJournalReminder = true;
-    try {
-        const storage = chrome.storage.local;
-        const data = await storage.get<AssistantJournalReminderData>();
-        const config = data.assistantJournalReminderConfig;
-        if (!config?.url || !config?.token) return;
-        await Promise.all(activeJournalTimers(data).map(timer => sendJournalReminder(timer, config)));
-    } catch { /* The minute alarm keeps timer checks independent of workspace updates. */ }
-    finally { checkingJournalReminder = false; }
-}
-
-async function sendJournalReminder(timer: AssistantJournalTimer, config: {url: string; token: string}) {
-    try {
-        const storage = chrome.storage.local;
-        const remaining = timer.deadline - Date.now();
-        // Give the portal time to confirm an existing submission at 30:00.
-        if (remaining > (30 * 60 - 45) * 1000 || remaining <= 0) return;
-        const stateKey = `assistantJournalReminder:${timer.path}`;
-        const confirmationKey = `assistantJournalConfirmed:${timer.path}`;
-        const previous = await storage.get([stateKey, confirmationKey]);
-        if (previous[stateKey] || previous[confirmationKey]) return;
-        // Reserve the one attempt before the network call. A timed-out webhook
-        // can still have sent a message, so replay would risk a duplicate.
-        await storage.set({[stateKey]: 'sending'});
-        const latest = await storage.get<AssistantJournalReminderData>();
-        const current = activeJournalTimers(latest).find(candidate => candidate.path === timer.path);
-        if (!current || Math.abs(current.deadline - timer.deadline) > 2000 ||
-            latest.assistantJournalReminderConfig?.url !== config.url || latest.assistantJournalReminderConfig.token !== config.token) {
-            await storage.remove(stateKey);
-            return;
-        }
-        let result = 'failed';
-        try {
-            const response = await fetch(config.url, {
-                method: 'POST', credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(15000),
-                headers: {'Content-Type': 'application/json', 'X-Journal-Reminder-Token': config.token},
-                body: JSON.stringify({event: 'journal_submission_unconfirmed'}),
-            });
-            if (response.ok) result = 'sent';
-        } finally { await storage.set({[stateKey]: result}); }
-    } catch { /* One failed request does not interrupt the other journals. */ }
-}
-
 chrome.runtime.onMessage.addListener((request: AssistantMessage, sender, sendResponse) => {
     if (!request || typeof request.action !== 'string') {
         sendResponse({error:'Invalid extension message'}); return false;
     }
     if (request.action === 'journalCountdowns' && sender.id === chrome.runtime.id) {
-        chrome.storage.local.get<AssistantJournalReminderData>().then(data => sendResponse(activeJournalTimers(data)))
+        chrome.storage.local.get<AssistantJournalTimerData>().then(data => sendResponse(activeJournalTimers(data)))
             .catch(() => sendResponse([]));
         return true;
     }

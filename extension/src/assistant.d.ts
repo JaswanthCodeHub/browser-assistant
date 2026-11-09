@@ -3,9 +3,8 @@ interface AssistantJournalTimer {
     deadline: number;
 }
 
-interface AssistantJournalReminderData {
+interface AssistantJournalTimerData {
     assistantJournalTimer?: AssistantJournalTimer;
-    assistantJournalReminderConfig?: {url: string; token: string};
     [key: string]: unknown;
 }
 

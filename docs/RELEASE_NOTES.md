@@ -1,4 +1,6 @@
-# Browser Assistant 2.8.25
+# Browser Assistant 2.8.26
+
+- Remove the n8n WhatsApp journal reminder and its setup form. The upgrade clears previously saved webhook settings.
 
 - Press **Alt+A** to start, pause or resume automation. The previous **Alt+Shift+A** remains supported, including when a code editor has focus.
 
@@ -20,7 +22,7 @@
 
 - The Guidelines page restores the last observed countdown for that journal after a reload. Elsewhere on Aurora, QA Control displays the last journal countdown.
 
-- View the last journal countdown in QA Control on Aurora's Assessments page. Enable the optional WhatsApp reminder through an n8n webhook in the Chrome toolbar popup.
+- View the last journal countdown in QA Control on Aurora's Assessments page.
 
 - Keep the journal countdown available after a reload. Open the Browser Assistant toolbar popup from any tab to see the last journal's estimated time remaining.
 

@@ -1,3 +1,7 @@
+# 2.8.26
+
+- Remove the n8n WhatsApp journal reminder, workflow template, and popup settings. Upgrading clears saved webhook credentials and reminder records.
+
 # 2.8.25
 
 - Start, pause and resume automation with Alt+A. Keep Alt+Shift+A as a compatible alternative and update the popup and button hints.

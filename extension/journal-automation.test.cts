@@ -125,47 +125,43 @@ test('a newly rendered clock survives an immediate same-tab reload while extensi
     assert.match(draft.countdown.textContent, /^Estimated time left 42:50\./);
 });
 
-test('WhatsApp reminder waits for the grace period, skips confirmation, and sends once without portal data', async () => {
+test('an extension update clears retired reminder settings while retaining journal timers', async () => {
     const path = '/modules/reflective-journal/example';
     const deadline = 3600000;
-    const config = {url: 'https://n8n.example/webhook/journal', token: 'example-test-token-123'};
-    const data = {assistantJournalTimer: {path, deadline}, assistantJournalReminderConfig: config};
+    const timerKey = `assistantJournalTimer:${path}`;
+    const previousPath = '/modules/reflective-journal/previous';
+    const confirmationKey = `assistantJournalConfirmed:${previousPath}`;
+    const data = {
+        assistantJournalReminderConfig: {url: 'https://example.test/webhook/journal', token: 'test-secret'},
+        [`assistantJournalReminder:${previousPath}`]: 'failed',
+        [timerKey]: deadline,
+        [confirmationKey]: true,
+    };
     const requests = [];
-    let now = deadline - 1800000;
+    let onInstalled, onAlarm;
     const chrome = {
-        alarms: {create() {}, onAlarm: {addListener() {}}},
-        runtime: {onInstalled: {addListener() {}}, onMessage: {addListener() {}}},
+        alarms: {create() {}, onAlarm: {addListener(listener) { onAlarm = listener; }}},
+        runtime: {
+            onInstalled: {addListener(listener) { onInstalled = listener; }},
+            onMessage: {addListener() {}},
+            getManifest: () => ({version: '2.8.26'}),
+        },
+        tabs: {query: async () => []},
         storage: {local: {
-            get: async keys => keys === undefined ? {...data} : Object.fromEntries([keys].flat().map(key => [key, data[key]])),
-            set: async next => Object.assign(data, next),
+            get: async () => ({...data}),
+            set: async values => Object.assign(data, values),
+            remove: async keys => { for (const key of keys) delete data[key]; },
         }},
     };
-    const ctx = vm.createContext({chrome, Date: {now: () => now}, AbortSignal, importScripts() {},
-        fetch: async (...args) => { requests.push(args); return {ok: true}; }});
+    const ctx = vm.createContext({chrome, Date: {now: () => deadline - 1700000}, AbortSignal, importScripts() {},
+        fetch: async url => { requests.push(url); return {ok: false}; }});
     vm.runInContext(fs.readFileSync(`${__dirname}/background.js`, 'utf8'), ctx);
-    await ctx.checkJournalReminder();
-    assert.equal(requests.length, 0);
-    now += 45000;
-    const confirmation = `assistantJournalConfirmed:${path}`;
-    data[confirmation] = true;
-    await ctx.checkJournalReminder();
-    assert.equal(requests.length, 0);
-    delete data[confirmation];
-    await Promise.all([ctx.checkJournalReminder(), ctx.checkJournalReminder()]);
-    await ctx.checkJournalReminder();
-    assert.equal(requests.length, 1);
-    assert.equal(requests[0][0], config.url);
-    assert.equal(requests[0][1].headers['X-Journal-Reminder-Token'], config.token);
-    assert.deepEqual(JSON.parse(requests[0][1].body), {event: 'journal_submission_unconfirmed'});
-
-    const second = '/modules/reflective-journal/second';
-    data[`assistantJournalTimer:${path}`] = deadline;
-    data[`assistantJournalTimer:${second}`] = deadline + 1000;
-    data.assistantJournalTimer = {path: second, deadline: deadline + 1000};
-    now += 1000;
-    await ctx.checkJournalReminder();
-    await ctx.checkJournalReminder();
-    assert.equal(requests.length, 2);
+    onAlarm({name: 'assistant-workspace-update'});
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(requests, ['http://127.0.0.1:8000/extension-release']);
+    onInstalled({reason: 'update'});
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(data, {[timerKey]: deadline, [confirmationKey]: true});
 });
 
 test('the toolbar shows a global countdown from storage and clears after confirmation or expiry', async () => {
