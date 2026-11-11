@@ -184,6 +184,14 @@ function mountJournalCountdown(signal: AbortSignal) {
 
     initDrag();
     restorePanelPosition();
+    const panelResizeObserver = new ResizeObserver(() => {
+        if (!root.style.left || !root.offsetWidth || dragState.dragging) return;
+        const { left, top } = root.getBoundingClientRect();
+        const { x, y } = clampPanelPosition(left, top);
+        if (left !== x || top !== y) setPanelPosition(left, top);
+    });
+    panelResizeObserver.observe(root);
+    lifecycle.signal.addEventListener('abort', () => panelResizeObserver.disconnect(), { once: true });
 
     let isCollapsed = true;
     // Scan type and visible tab are intentionally separate. Switching away
@@ -2200,7 +2208,7 @@ function mountJournalCountdown(signal: AbortSignal) {
 
     function scanPanelMarkup() {
         return `
-            <section class="assistant-scan-panel" id="assistant-scan-panel" role="tabpanel" aria-labelledby="mode-${selectedTab}">
+            <section class="assistant-scan-panel" id="assistant-scan-panel" role="tabpanel" aria-labelledby="mode-${selectedTab === 'aptitude' ? 'apt' : selectedTab}">
                 <div class="assistant-btn-row">
                     <button class="assistant-btn" id="assistant-scan-btn">⚡ Scan (Text)</button>
                     <button class="assistant-btn secondary" id="assistant-vision-btn">⌁ Scan (Vision)</button>
@@ -2284,6 +2292,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             const safeContent = content.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
             root.innerHTML = `
                 <button class="assistant-tab collapsed ${content ? 'has-answer' : ''}" id="assistant-trigger" type="button" aria-label="Open Browser Assistant" data-content="${safeContent}">
+                    <span class="assistant-mark" aria-hidden="true">BA</span>
                     ${isMinimalMode ? '<div class="assistant-mode-indicator">MIN</div>' : ''}
                 </button>
             `;
@@ -2302,8 +2311,9 @@ function mountJournalCountdown(signal: AbortSignal) {
                 <div class="assistant-tab" id="assistant-panel">
                     <div class="assistant-header">
                         <div class="assistant-title-row">
-                            ${statusDot}
+                            <span class="assistant-mark" aria-hidden="true">BA</span>
                             <h3 class="assistant-title">Browser Assistant</h3>
+                            ${statusDot}
                         </div>
                         <div class="assistant-header-actions">
                             <button class="assistant-icon-btn" id="assistant-history-btn" type="button" aria-label="Open Scan History" title="Scan History">

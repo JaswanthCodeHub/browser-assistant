@@ -4,59 +4,28 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Browser Assistant</title>
-    <style>
-        body {
-            width: 220px;
-            padding: 12px 14px;
-            font-family: 'Inter', system-ui, sans-serif;
-            background: #0f0f0f;
-            color: #eee;
-            margin: 0;
-        }
-        .logo {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-bottom: 10px;
-        }
-        .logo-dot {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            background: #6e8efb;
-            box-shadow: 0 0 6px #6e8efb;
-        }
-        h3 { margin: 0; font-size: 14px; color: #fff; }
-        p  { font-size: 11px; color: #888; margin: 0 0 10px; line-height: 1.5; }
-        .status { font-size: 11px; color: #555; }
-        .status span { color: #10b981; font-weight: 600; }
-        .shortcuts { margin-top: 10px; border-top: 1px solid #222; padding-top: 8px; }
-        .shortcut-row { display: flex; justify-content: space-between; font-size: 10px; color: #666; margin-bottom: 4px; }
-        kbd {
-            background: #222; border: 1px solid #444; border-radius: 3px;
-            padding: 1px 5px; font-size: 10px; color: #bbb;
-        }
-        #server-status { color: #f59e0b; }
-        #server-status.online { color: #10b981; }
-        #server-status.offline { color: #ef4444; }
-    </style>
+    <link rel="stylesheet" href="styles.css">
 </head>
-<body>
-    <div class="logo">
-        <div class="logo-dot"></div>
-        <h3>Browser Assistant</h3>
-    </div>
-    <p>Extension active. The floating panel appears on every page.</p>
-    <div class="status">Server: <span id="server-status">checking...</span></div>
-    <p id="journal-countdown" hidden></p>
-    <div class="shortcuts">
-        <div class="shortcut-row"><span>Open panel</span> <kbd>`</kbd></div>
-        <div class="shortcut-row"><span>Close panel</span> <kbd>]</kbd></div>
-        <div class="shortcut-row"><span>Vision scan</span> <kbd>\</kbd></div>
-        <div class="shortcut-row"><span>Minimal mode</span> <kbd>[</kbd></div>
-        <div class="shortcut-row"><span>Journal fill &amp; submit</span> <kbd>Alt+Shift+J</kbd></div>
-        <div class="shortcut-row"><span>Automation start / pause / resume</span> <kbd>Alt+A</kbd></div>
-    </div>
+<body class="assistant-popup">
+    <main class="popup-shell">
+        <header class="popup-title">
+            <span class="popup-mark" aria-hidden="true">BA</span>
+            <h1>Browser Assistant</h1>
+        </header>
+        <section class="popup-card" aria-label="Server status">
+            <div>Server <span id="server-status" role="status">Checking…</span></div>
+            <p id="journal-countdown" hidden></p>
+        </section>
+        <section class="popup-card" aria-labelledby="popup-shortcuts">
+            <h2 id="popup-shortcuts">Keyboard shortcuts</h2>
+            <div class="shortcut-row"><span>Open panel</span> <kbd>`</kbd></div>
+            <div class="shortcut-row"><span>Close panel</span> <kbd>]</kbd></div>
+            <div class="shortcut-row"><span>Vision scan</span> <kbd>\</kbd></div>
+            <div class="shortcut-row"><span>Minimal mode</span> <kbd>[</kbd></div>
+            <div class="shortcut-row"><span>Fill and submit journal</span> <kbd>Alt+Shift+J</kbd></div>
+            <div class="shortcut-row"><span>Start, pause or resume</span> <kbd>Alt+A</kbd></div>
+        </section>
+    </main>
     <script src="popup.js"></script>
 </body>
 </html>

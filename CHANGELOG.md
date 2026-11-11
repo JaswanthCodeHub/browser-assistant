@@ -1,3 +1,8 @@
+# 2.9.3
+
+- Restyle the floating panel, popup, journal controls, countdown, and practice quiz with frosted surfaces and opaque, high-contrast text.
+- Add visible keyboard focus, readable disabled states, and compact layouts for narrow viewports.
+
 # 2.9.2
 
 - Reconnect Text Scan after the backend starts without requiring a page reload.
