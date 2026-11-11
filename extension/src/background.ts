@@ -255,7 +255,7 @@ chrome.runtime.onMessage.addListener((request: AssistantMessage, sender, sendRes
 
     if (request.action === "apiRequest") {
         const allowedMethods = {'/health':['GET'],'/solve':['POST'],'/solve-vision':['POST'],
-            '/history':['GET','POST','DELETE'],'/journal':['POST']};
+            '/history':['GET','POST','DELETE'],'/automation-history':['GET','PUT'],'/journal':['POST']};
         const method = request.method || 'POST';
         if (sender.id !== chrome.runtime.id || !allowedMethods[request.path]?.includes(method)) {
             sendResponse({ error: "Blocked API sender, path or method" });

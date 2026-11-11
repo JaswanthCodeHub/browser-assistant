@@ -440,6 +440,13 @@ function browserAssistantJournal(global) {
     }
 }
 if (typeof window !== 'undefined' && location.origin === 'https://admissions.aurora.edu.in') {
+    const ongoingJournalStartLink = (): HTMLAnchorElement | null => {
+        const links = [...document.querySelectorAll<HTMLAnchorElement>('a[href*="/modules/reflective-journal/"]')].filter(link =>
+            [...(link.closest('tr,[role="row"]')?.querySelectorAll('*') || [])].some(node => /^Ongoing$/i.test(node.textContent.trim())) && link.getClientRects().length
+            && new URL(link.href, location.origin).origin === location.origin
+            && /^\/modules\/reflective-journal\//.test(new URL(link.href, location.origin).pathname));
+        return links.length === 1 ? links[0] : null;
+    };
     window.BrowserAssistantJournal = window.BrowserAssistantJournal || {
         current: null,
         opening: false,
@@ -450,6 +457,7 @@ if (typeof window !== 'undefined' && location.origin === 'https://admissions.aur
         detach() {this.current?.detach();},
         stop() {this.active()?.stop();this.opening=false;try {sessionStorage.removeItem('assistantPendingJournal');} catch {}},
         pause() {this.active()?.pause();},
+        getStartLink() {return ongoingJournalStartLink();},
         start() {
             if (this.active()) return this.active().start();
             if (/^\/modules\/reflective-journal\//.test(location.pathname)) {
@@ -457,14 +465,11 @@ if (typeof window !== 'undefined' && location.origin === 'https://admissions.aur
                 return this.active()?.start();
             }
             if (this.opening) return;
-            const links = [...document.querySelectorAll<HTMLAnchorElement>('a[href*="/modules/reflective-journal/"]')].filter(link =>
-                [...(link.closest('tr,[role="row"]')?.querySelectorAll('*') || [])].some(node => /^Ongoing$/i.test(node.textContent.trim())) && link.getClientRects().length
-                && new URL(link.href, location.origin).origin === location.origin
-                && /^\/modules\/reflective-journal\//.test(new URL(link.href, location.origin).pathname));
-            if (links.length === 1) {
+            const link = ongoingJournalStartLink();
+            if (link) {
                 this.opening=true;
-                try {sessionStorage.setItem('assistantPendingJournal', JSON.stringify({path:new URL(links[0].href, location.origin).pathname,createdAt:Date.now()}));} catch {}
-                links[0].click();
+                try {sessionStorage.setItem('assistantPendingJournal', JSON.stringify({path:new URL(link.href, location.origin).pathname,createdAt:Date.now()}));} catch {}
+                link.click();
             }
         },
     };

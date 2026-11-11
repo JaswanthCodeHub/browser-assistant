@@ -7,7 +7,10 @@ import math
 import re
 import time
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
+from typing import Literal
+from uuid import UUID
+from urllib.parse import urlsplit
 from dotenv import load_dotenv
 from groq import Groq
 import ollama
@@ -167,6 +170,15 @@ def initialize_history_database() -> None:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_scan_history_created_at ON scan_history(created_at DESC)"
         )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS automation_history (
+                id TEXT PRIMARY KEY,
+                started_at TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                record TEXT NOT NULL
+            )"""
+        )
 
 
 @asynccontextmanager
@@ -179,7 +191,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.9.3", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.9.4", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)
@@ -265,6 +277,27 @@ class HistoryEntry(BaseModel):
     def validate_history_results(cls, value):
         if len(value) > 50_000 or not has_usable_results(value):
             raise ValueError("results must contain a valid, usable answer")
+        return value
+
+
+class AutomationHistoryEntry(BaseModel):
+    id: UUID
+    type: Literal["MCQ", "Quiz", "Coding", "Batch Coding", "Journal"]
+    url: str = Field(max_length=2048)
+    started_at: datetime
+    ended_at: datetime | None = None
+    total: int | None = Field(default=None, ge=0)
+    completed: int = Field(ge=0)
+    failed: int = Field(ge=0)
+    status: Literal["Running", "Completed", "Failed", "Stopped"]
+    revision: int = Field(ge=1)
+
+    @field_validator("url")
+    @classmethod
+    def validate_page_url(cls, value):
+        parsed = urlsplit(value)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError("Provide a webpage URL without credentials, a query or a fragment")
         return value
 
 
@@ -358,6 +391,33 @@ def save_history(entry: HistoryEntry):
 def clear_history():
     with get_history_connection() as connection:
         connection.execute("DELETE FROM scan_history")
+
+
+@app.get("/automation-history")
+def list_automation_history(limit: int = Query(default=20, ge=1, le=HISTORY_MAX_ITEMS)):
+    with get_history_connection() as connection:
+        rows = connection.execute(
+            "SELECT record FROM automation_history ORDER BY started_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+    return {"items": [json.loads(row["record"]) for row in rows]}
+
+
+@app.put("/automation-history")
+def save_automation_history(entry: AutomationHistoryEntry):
+    if (entry.status == "Running") != (entry.ended_at is None):
+        raise HTTPException(422, "Only a finished run has an end time.")
+    with get_history_connection() as connection:
+        connection.execute(
+            """INSERT INTO automation_history (id, started_at, revision, status, record)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   revision=excluded.revision, status=excluded.status, record=excluded.record
+               WHERE automation_history.status='Running'
+                   AND excluded.revision > automation_history.revision
+                   AND excluded.started_at=automation_history.started_at""",
+            (str(entry.id), entry.started_at.isoformat(), entry.revision, entry.status, entry.model_dump_json()),
+        )
+    return {"id": str(entry.id)}
 
 
 # ── AI providers ──────────────────────────────────────────────────────────────

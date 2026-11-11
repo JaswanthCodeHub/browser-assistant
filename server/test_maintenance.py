@@ -243,6 +243,50 @@ class LocalApiTests(unittest.TestCase):
         self.assertEqual(self.client.get('/history?limit=101').status_code,422)
         self.assertEqual(self.client.post('/history',json={**entry,'scan_type':'bad'}).status_code,422)
 
+    def test_automation_history_shares_the_scan_database_but_not_its_table(self):
+        run={'id':'123e4567-e89b-12d3-a456-426614174000','type':'MCQ','url':'https://example.test/practice',
+             'started_at':'2026-11-11T06:00:00+00:00','ended_at':None,'total':10,'completed':0,'failed':0,
+             'status':'Running','revision':1}
+        self.assertEqual(self.client.put('/automation-history',json=run).status_code,200)
+        self.assertEqual([item['status'] for item in self.client.get('/automation-history').json()['items']],['Running'])
+        self.assertEqual(self.client.get('/history').json()['items'],[])
+        finished={**run,'revision':2,'status':'Completed','completed':10,'ended_at':'2026-11-11T06:05:00+00:00'}
+        self.assertEqual(self.client.put('/automation-history',json=finished).status_code,200)
+        items=self.client.get('/automation-history').json()['items']
+        self.assertEqual([(item['status'],item['revision'],item['completed']) for item in items],[('Completed',2,10)])
+        self.assertEqual(self.client.get('/history').json()['items'],[])
+        with main.get_history_connection() as connection:
+            tables={row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        self.assertTrue({'scan_history','automation_history'}.issubset(tables))
+        self.assertTrue(self.path.exists())
+        main.initialize_history_database()
+        self.assertEqual([item['status'] for item in self.client.get('/automation-history').json()['items']],['Completed'])
+
+    def test_automation_history_ignores_stale_or_overwritten_revisions(self):
+        run={'id':'123e4567-e89b-12d3-a456-426614174001','type':'Coding','url':'https://example.test/code',
+             'started_at':'2026-11-11T07:00:00+00:00','ended_at':None,'total':1,'completed':0,'failed':0,
+             'status':'Running','revision':2}
+        self.client.put('/automation-history',json=run)
+        stale={**run,'revision':1,'status':'Stopped','ended_at':'2026-11-11T07:01:00+00:00'}
+        self.client.put('/automation-history',json=stale)
+        self.assertEqual(self.client.get('/automation-history').json()['items'][0]['status'],'Running')
+        duplicate={**run,'revision':3,'status':'Failed','failed':1,'ended_at':'2026-11-11T07:02:00+00:00'}
+        self.client.put('/automation-history',json=duplicate)
+        self.assertEqual(self.client.get('/automation-history').json()['items'][0]['status'],'Failed')
+        overwritten={**run,'revision':4,'status':'Completed','completed':1,'ended_at':'2026-11-11T07:03:00+00:00'}
+        self.client.put('/automation-history',json=overwritten)
+        self.assertEqual(self.client.get('/automation-history').json()['items'][0]['status'],'Failed')
+
+    def test_automation_history_validates_dates_and_page_urls(self):
+        run={'id':'123e4567-e89b-12d3-a456-426614174002','type':'Quiz','url':'https://example.test/quiz',
+             'started_at':'2026-11-11T08:00:00+00:00','ended_at':None,'completed':0,'failed':0,
+             'status':'Running','revision':1}
+        self.assertEqual(self.client.put('/automation-history',json={**run,'ended_at':'2026-11-11T08:01:00+00:00'}).status_code,422)
+        self.assertEqual(self.client.put('/automation-history',json={**run,'status':'Completed'}).status_code,422)
+        self.assertEqual(self.client.put('/automation-history',json={**run,'url':'https://example.test/quiz?answer=1'}).status_code,422)
+        self.assertEqual(self.client.put('/automation-history',json={**run,'type':'Unknown'}).status_code,422)
+        self.assertEqual(self.client.get('/automation-history?limit=101').status_code,422)
+
     def test_math_route_contract_and_history_retention_are_preserved(self):
         with patch.object(main,'try_groq',AsyncMock(return_value=ANSWER)):
             response=self.client.post('/solve',json={'text':'Compute 6 + 7','url':'https://example.test','practice_type':'aptitude'})

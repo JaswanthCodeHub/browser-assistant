@@ -1,3 +1,9 @@
+# 2.9.4
+
+- Run Alt+A automation directly without opening, expanding, or moving either assistant panel; ignore the shortcut while a text or code editor has focus.
+- Record direct automation runs independently from scan history in the existing local SQLite database.
+- Detect linked multi-blank questions with one shared Submit action, verify each blank separately, and select every answer before submission.
+
 # 2.9.3
 
 - Restyle the floating panel, popup, journal controls, countdown, and practice quiz with frosted surfaces and opaque, high-contrast text.

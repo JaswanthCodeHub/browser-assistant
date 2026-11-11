@@ -1,4 +1,10 @@
-# Browser Assistant 2.9.3
+# Browser Assistant 2.9.4
+
+- **Alt+A direct automation:** starts, pauses, and resumes the supported run without changing the visibility, position, size, or selected tab of the floating or separate panel. The shortcut is ignored while typing in inputs, textareas, and supported code editors.
+- **Automation history:** records direct run type, page, timestamps, totals, completed count, failed count, and final status in a dedicated SQLite table. Scan history remains separate.
+- **Linked blanks:** a reading passage or form containing multiple answer groups and one Submit button is handled as individual verified answers, then submitted only after every group has been selected.
+
+## Browser Assistant 2.9.3
 
 - The floating panel, popup, journal controls, countdown, and practice quiz use a layered glass theme with blue and teal lighting.
 - Solid primary buttons, recessed fields, and visible keyboard focus make controls easier to distinguish.

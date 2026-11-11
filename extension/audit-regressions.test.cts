@@ -148,6 +148,21 @@ test('semantic adapter reads short answers and rejects ambiguous fields', () => 
     assert.equal(adapter.getQuestion(document), null);
 });
 
+test('semantic adapter preserves every linked blank before a shared Submit', () => {
+    const { parseHTML } = require('linkedom');
+    const { document, window } = parseHTML(`<html><body><main><p>The football match started late because the other team did not (1) ____ on time. Arjun tried hard to (2) ____ a goal. Everyone felt very (3) ____.</p><form>
+        <section><p>Which word best fits blank (1)?</p><label><input type="radio" name="one">stay</label><label><input type="radio" name="one">come</label><label><input type="radio" name="one">go</label><label><input type="radio" name="one">leave</label></section>
+        <section><p>Which word best fits blank (2)?</p><label><input type="radio" name="two">score</label><label><input type="radio" name="two">take</label><label><input type="radio" name="two">win</label><label><input type="radio" name="two">make</label></section>
+        <section><p>Which word best fits blank (3)?</p><label><input type="radio" name="three">quiet</label><label><input type="radio" name="three">cloudy</label><label><input type="radio" name="three">hungry</label><label><input type="radio" name="three">happy</label></section><button>Submit</button></form></main></body></html>`);
+    window.HTMLElement.prototype.getClientRects = () => [{}];
+    vm.runInContext(fs.readFileSync(`${__dirname}/automation-policy.js`, 'utf8'), vm.createContext({ window, URL }));
+    const question = window.BrowserAssistantAutomationPolicy.getAdapter('semantic-mcq').getQuestion(document);
+    assert.equal(question.type, 'compound-mcq');
+    assert.equal(question.compoundQuestions.length, 3);
+    assert.match(question.compoundContext, /football match/);
+    assert.equal(question.compoundQuestions[1].options[0].text, 'score');
+});
+
 test('short-answer prompt outside the answer/actions wrapper is detected', () => {
     const { parseHTML } = require('linkedom');
     const { document, window } = parseHTML('<html><body><main><div><p>Given [5, -3, 5], find the maximum subarray sum.</p><p>Write a single integer.</p></div><div><textarea placeholder="Enter your answer"></textarea><div><div role="button">SHOW ANSWER</div><div role="button">SUBMIT</div></div></div></main></body></html>');
