@@ -1,5 +1,5 @@
 // Background script for Browser Assistant
-importScripts('editor-bridge.js');
+importScripts('editor-bridge.js', 'detached-panel-background.js');
 // Local unpacked development updates: only reload when the files in Chrome's
 // own extension folder match the workspace release, and every running task is idle.
 let updateCheckRunning = false;
@@ -108,6 +108,9 @@ void updateJournalBadge();
 chrome.runtime.onMessage.addListener((request: AssistantMessage, sender, sendResponse) => {
     if (!request || typeof request.action !== 'string') {
         sendResponse({error:'Invalid extension message'}); return false;
+    }
+    if (['panel:open', 'panel:snapshot', 'panel:action', 'panel:return', 'panel:target-status'].includes(request.action)) {
+        return browserAssistantDetachedMessage(request, sender, sendResponse);
     }
     if (request.action === 'journalCountdowns' && sender.id === chrome.runtime.id) {
         chrome.storage.local.get<AssistantJournalTimerData>().then(data => sendResponse(activeJournalTimers(data)))
@@ -229,8 +232,11 @@ chrome.runtime.onMessage.addListener((request: AssistantMessage, sender, sendRes
         }
         // A tab can lose focus while capture is queued. Never capture another
         // tab/window and send that screenshot with the requesting page's URL.
-        chrome.tabs.query({active:true,windowId:sender.tab.windowId}).then(active => {
-            if (active.length !== 1 || active[0].id !== sender.tab.id) {
+        const activeTab = () => chrome.tabs.query({active:true,windowId:sender.tab.windowId});
+        const isTarget = active => active.length === 1 && active[0].id === sender.tab.id
+            && (!request.url || active[0].url === request.url);
+        activeTab().then(active => {
+            if (!isTarget(active)) {
                 sendResponse({error:'The requesting tab is no longer active. Focus it and try Vision Scan again.'}); return;
             }
             chrome.tabs.captureVisibleTab(sender.tab.windowId, { format: "png" }, (dataUrl) => {
@@ -238,7 +244,9 @@ chrome.runtime.onMessage.addListener((request: AssistantMessage, sender, sendRes
                 console.error("Capture failed:", chrome.runtime.lastError.message);
                 sendResponse({ error: chrome.runtime.lastError.message });
             } else {
-                sendResponse({ dataUrl: dataUrl });
+                void activeTab().then(current => sendResponse(isTarget(current) ? {dataUrl}
+                    : {error:'The selected tab changed during capture. Try Vision Scan again.'}))
+                    .catch(() => sendResponse({error:'Could not verify the active screenshot tab.'}));
             }
             });
         }).catch(()=>sendResponse({error:'Could not verify the active screenshot tab.'}));

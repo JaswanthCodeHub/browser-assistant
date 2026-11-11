@@ -10,6 +10,8 @@ interface AssistantJournalTimerData {
 
 interface AssistantMessage {
     action: string;
+    targetTabId?: number;
+    panelControl?: string;
     url?: string;
     path?: string;
     method?: string;

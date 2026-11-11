@@ -48,6 +48,8 @@ test('a stationary collapsed-badge pointer press opens the panel despite root po
     assert.equal(opens,1);
     event('pointerdown',badge,20);event('pointermove',root,35);event('pointerup',root,35);
     assert.equal(opens,1);assert.equal(ctx.suppressNextClick,true);
+    event('pointerdown',badge,20);event('pointercancel',root,20);
+    assert.equal(opens,1);
 });
 test('answer rendering escapes untrusted markup and code copy preserves the exact source',async()=>{
     const {document}=parseHTML('<html><body><div id="results"></div></body></html>');

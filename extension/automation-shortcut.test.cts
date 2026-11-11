@@ -6,7 +6,7 @@ const source=fs.readFileSync(`${__dirname}/content.js`,'utf8');
 function harness(activeElement={}){
     let listener,starts=0,updates=0;
     const automation={running:false,paused:false};
-    const ctx=vm.createContext({automation,selectedTab:'auto',isHidden:true,isCollapsed:true,root:{style:{display:'none'}},
+    const ctx=vm.createContext({automation,selectedTab:'auto',isHidden:true,isCollapsed:true,panelToken:'',root:{style:{display:'none'}},
         window:{},lifecycle:{signal:{}},document:{activeElement,addEventListener:(_event,fn)=>{listener=fn;}},
         HTMLInputElement:class{},HTMLTextAreaElement:class{},HTMLSelectElement:class{},
         render(){},updateAutomationUI(){updates++;},

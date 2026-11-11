@@ -39,6 +39,10 @@
         #server-status { color: #f59e0b; }
         #server-status.online { color: #10b981; }
         #server-status.offline { color: #ef4444; }
+        #open-separate-panel { width: 100%; margin-top: 8px; padding: 7px 8px; border: 1px solid #687abc;
+            border-radius: 6px; background: #242c4b; color: #fff; font: inherit; font-size: 11px; cursor: pointer; }
+        #open-separate-panel:focus-visible { outline: 2px solid #b9c7ff; outline-offset: 2px; }
+        #separate-panel-status { margin: 5px 0 0; color: #fca5a5; }
     </style>
 </head>
 <body>
@@ -49,6 +53,8 @@
     <p>Extension active. The floating panel appears on every page.</p>
     <div class="status">Server: <span id="server-status">checking...</span></div>
     <p id="journal-countdown" hidden></p>
+    <button type="button" id="open-separate-panel">Open separate panel for this tab</button>
+    <p id="separate-panel-status" role="status" hidden></p>
     <div class="shortcuts">
         <div class="shortcut-row"><span>Open panel</span> <kbd>`</kbd></div>
         <div class="shortcut-row"><span>Close panel</span> <kbd>]</kbd></div>

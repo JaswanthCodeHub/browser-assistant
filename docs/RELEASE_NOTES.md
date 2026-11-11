@@ -1,5 +1,9 @@
 # Browser Assistant 2.9.1
 
+## Separate panel edition
+
+This local edition adds an optional browser window for the assistant controls, explicit tab binding, and viewport clamping when the floating panel changes size. See [Separate Panel Window](SEPARATE_PANEL.md) for setup and recording preview steps.
+
 This rollback restores the Browser Assistant v2.8.26 implementation after the v2.9.0 release. Update the extension and backend together.
 
 # Browser Assistant 2.8.26

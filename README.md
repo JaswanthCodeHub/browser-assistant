@@ -16,6 +16,8 @@ AI answers can be wrong. Automation can change or submit page content: use it on
 
 ## First run
 
+For a separate assistant window and supported recording setup, see the [Separate Panel Window guide](docs/SEPARATE_PANEL.md).
+
 ### Continuous coding batch
 
 On CCBP `/problems-set`, start on page 1 and keep both **Not Attempted** and

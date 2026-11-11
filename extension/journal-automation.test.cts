@@ -234,11 +234,12 @@ test('the website overlay shows the saved countdown with the panel closed and re
         return element;
     };
     const controller = new AbortController();
-    const badge = context.mountJournalCountdown(controller.signal);
+    const {badge, getCountdownLabel} = context.mountJournalCountdown(controller.signal);
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(badge.isConnected, true);
     assert.equal(badge.textContent, '');
     assert.match(shadow.querySelector('[role="timer"]').textContent, /42:51 · 50:00$/);
+    assert.equal(getCountdownLabel(), shadow.querySelector('[role="timer"]').textContent);
     location.origin = 'https://admissions.aurora.edu.in';
     location.pathname = secondPath;
     now += 1000;

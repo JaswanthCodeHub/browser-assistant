@@ -11,24 +11,30 @@ function mountJournalCountdown(signal: AbortSignal) {
     let tick: number | undefined;
     let revision = 0;
 
+    function getCountdownLabel() {
+        const now = Date.now();
+        const path = location.pathname.replace(/\/$/, '');
+        const aurora = location.origin === 'https://admissions.aurora.edu.in';
+        const visible = timers.filter(timer => timer.deadline > now
+            && (!aurora || (path.startsWith('/modules/reflective-journal/') && timer.path !== path)));
+        if (!visible.length) return '';
+        const times = visible.map(timer => {
+            const seconds = Math.ceil((timer.deadline - now) / 1000);
+            return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+        });
+        return `${times.length === 1 ? 'Journal time left' : 'Journal times left'} ≈ ${times.join(' · ')}`;
+    }
+
     function renderCountdown() {
         window.clearTimeout(tick);
         if (signal.aborted) return;
-        const now = Date.now();
-        const active = timers.filter(timer => timer.deadline > now);
-        const path = location.pathname.replace(/\/$/, '');
-        const aurora = location.origin === 'https://admissions.aurora.edu.in';
-        const visible = active.filter(timer => !aurora || (path.startsWith('/modules/reflective-journal/') && timer.path !== path));
-        if (!visible.length) badge.remove();
+        const label = getCountdownLabel();
+        if (!label) badge.remove();
         else {
-            const times = visible.map(timer => {
-                const seconds = Math.ceil((timer.deadline - now) / 1000);
-                return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
-            });
-            clock.textContent = `${times.length === 1 ? 'Journal time left' : 'Journal times left'} ≈ ${times.join(' · ')}`;
+            clock.textContent = label;
             if (!badge.isConnected) document.body.appendChild(badge);
         }
-        if (active.length && !document.hidden) tick = window.setTimeout(renderCountdown, 1000);
+        if (label && !document.hidden) tick = window.setTimeout(renderCountdown, 1000);
     }
 
     async function refreshCountdown() {
@@ -54,12 +60,12 @@ function mountJournalCountdown(signal: AbortSignal) {
         badge.remove();
     }, {once: true});
     void refreshCountdown();
-    return badge;
+    return {badge, getCountdownLabel};
 }
 
 (function () {
     // Abort on pages without a body (about:blank, PDFs, XML docs, etc.)
-    if (!document.body) return;
+    if (!document.body || document.getElementById('assistant-root')) return;
     const extensionVersion = chrome.runtime.getManifest().version;
 
     const lifecycle = new AbortController();
@@ -80,9 +86,12 @@ function mountJournalCountdown(signal: AbortSignal) {
 
     const root = document.createElement('div');
     root.id = 'assistant-root';
+    root.classList.add('assistant-panel-initializing');
     document.body.appendChild(root);
-    const journalCountdownBadge = ['http:', 'https:'].includes(location.protocol)
+    const journalCountdown = ['http:', 'https:'].includes(location.protocol)
         ? mountJournalCountdown(lifecycle.signal) : null;
+    const journalCountdownBadge = journalCountdown?.badge;
+    journalCountdownBadge?.classList.add('assistant-panel-initializing');
 
     // ── Move panel ───────────────────────────────────────────────────────────
     // Drag the header to put the panel anywhere on the current page. The saved
@@ -93,8 +102,8 @@ function mountJournalCountdown(signal: AbortSignal) {
 
     function clampPanelPosition(x, y) {
         return {
-            x: Math.max(0, Math.min(window.innerWidth - root.offsetWidth, x)),
-            y: Math.max(0, Math.min(window.innerHeight - root.offsetHeight, y)),
+            x: Math.max(4, Math.min(window.innerWidth - root.offsetWidth - 4, x)),
+            y: Math.max(4, Math.min(window.innerHeight - root.offsetHeight - 4, y)),
         };
     }
 
@@ -149,7 +158,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             );
         });
 
-        const stopDragging = () => {
+        const stopDragging = (event: PointerEvent) => {
             if (!dragState.dragging) return;
             suppressNextClick = dragState.moved;
             dragState.dragging = false;
@@ -166,7 +175,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             }
             // Pointer capture retargets the eventual click to the root, so a
             // stationary badge press must open here rather than lose its click.
-            if (!dragState.moved && dragState.collapsedBadge) openPanel();
+            if (event.type === 'pointerup' && !dragState.moved && dragState.collapsedBadge) openPanel();
         };
         root.addEventListener('pointerup', stopDragging);
         root.addEventListener('pointercancel', stopDragging);
@@ -178,12 +187,20 @@ function mountJournalCountdown(signal: AbortSignal) {
         }, true);
         window.addEventListener('resize', () => {
             const rect = root.getBoundingClientRect();
-            if (root.style.left) setPanelPosition(rect.left, rect.top);
+            if (root.style.left && root.offsetWidth) setPanelPosition(rect.left, rect.top);
         }, {signal:lifecycle.signal});
     }
 
     initDrag();
     restorePanelPosition();
+    const panelResize = new ResizeObserver(() => {
+        if (!root.style.left || !root.offsetWidth || dragState.dragging) return;
+        const {left, top} = root.getBoundingClientRect();
+        const {x, y} = clampPanelPosition(left, top);
+        if (x !== left || y !== top) setPanelPosition(left, top);
+    });
+    panelResize.observe(root);
+    lifecycle.signal.addEventListener('abort', () => panelResize.disconnect(), {once: true});
 
     let isCollapsed = true;
     // Scan type and visible tab are intentionally separate. Switching away
@@ -204,7 +221,108 @@ function mountJournalCountdown(signal: AbortSignal) {
         processed: new Set(), completed: 0, error: '', currentSignature: '',
     };
 
-    const updateListener = (request, _sender, sendResponse) => {
+    let panelToken = '';
+    let floatingMinimal = false;
+    const panelControlSelector = 'button,select,textarea,summary';
+    const panelControls = new WeakMap<Element, string>();
+    const panelDocumentId = crypto.randomUUID();
+    let panelControlId = 0;
+
+    function setDetachedPanel(token: string) {
+        if (token && !panelToken) {
+            floatingMinimal = isMinimalMode;
+            isMinimalMode = false;
+            openPanel();
+        } else if (!token && panelToken) {
+            isMinimalMode = floatingMinimal;
+        }
+        panelToken = token;
+        root.classList.toggle('assistant-detached', Boolean(token));
+        journalCountdownBadge?.classList.toggle('assistant-detached', Boolean(token));
+    }
+
+    function panelSnapshot() {
+        const copy = root.cloneNode(true) as HTMLElement;
+        const copies = copy.querySelectorAll(panelControlSelector);
+        root.querySelectorAll<HTMLElement>(panelControlSelector).forEach((control, index) => {
+            let id = panelControls.get(control);
+            if (!id) {
+                id = panelDocumentId + ':' + ++panelControlId;
+                panelControls.set(control, id);
+            }
+            const clone = copies[index];
+            clone.setAttribute('data-panel-control', id);
+            if (control instanceof HTMLTextAreaElement) clone.textContent = control.value;
+            if (control instanceof HTMLSelectElement) {
+                clone.querySelectorAll('option').forEach((option, optionIndex) => {
+                    option.toggleAttribute('selected', control.options[optionIndex].selected);
+                });
+            }
+        });
+        return {ok: true, html: copy.innerHTML, countdown: journalCountdown?.getCountdownLabel() || ''};
+    }
+
+    function panelAction(request: AssistantMessage) {
+        if (request.operation === 'vision') {void visionScan(); return {ok: true};}
+        if (request.operation === 'automation') {
+            handleAutomationShortcut(new KeyboardEvent('keydown', {key: 'a', code: 'KeyA', altKey: true, cancelable: true}));
+            return {ok: true};
+        }
+        if (request.operation === 'journal') {
+            if (window.BrowserAssistantJournal?.matches()) void window.BrowserAssistantJournal.start();
+            return {ok: true};
+        }
+        const control = [...root.querySelectorAll<HTMLElement>(panelControlSelector)]
+            .find(element => panelControls.get(element) === request.panelControl);
+        if (!control || control.closest('[hidden]') || control.matches(':disabled')) {
+            return {error: 'The panel changed. Try the control again.'};
+        }
+        if (request.operation === 'click' && control.matches('button,summary')) {
+            control.click();
+        } else if (request.operation === 'value' && typeof request.value === 'string' && request.value.length <= 20000
+            && (control instanceof HTMLSelectElement || control instanceof HTMLTextAreaElement)) {
+            if (control instanceof HTMLSelectElement && ![...control.options].some(option => option.value === request.value)) {
+                return {error: 'That choice is no longer available.'};
+            }
+            control.value = request.value;
+            control.dispatchEvent(new Event(control instanceof HTMLSelectElement ? 'change' : 'input', {bubbles: true}));
+        } else {
+            return {error: 'Unsupported panel control.'};
+        }
+        return {ok: true};
+    }
+
+    async function syncDetachedPanel() {
+        const previous = panelToken;
+        try {
+            const result = await chrome.runtime.sendMessage({action: 'panel:target-status'});
+            if (typeof result?.token === 'string' && panelToken === previous && result.token !== previous) {
+                setDetachedPanel(result.token);
+            }
+        } catch { /* The toolbar can reconnect after a reload. */ }
+        finally {
+            root.classList.remove('assistant-panel-initializing');
+            journalCountdownBadge?.classList.remove('assistant-panel-initializing');
+        }
+    }
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) void syncDetachedPanel();
+    }, {signal: lifecycle.signal});
+
+    const updateListener = (request, sender, sendResponse) => {
+        if (request.action?.startsWith('assistantPanel')) {
+            if (sender.id !== chrome.runtime.id || sender.tab) return false;
+            if (request.action === 'assistantPanelPing') sendResponse({ok: true});
+            if (request.action === 'assistantPanelSnapshot' && typeof request.token === 'string' && request.token) {
+                if (panelToken !== request.token) setDetachedPanel(request.token);
+                sendResponse(panelSnapshot());
+            }
+            if (panelToken && request.token === panelToken) {
+                if (request.action === 'assistantPanelDetach') {setDetachedPanel(''); sendResponse({ok: true});}
+                if (request.action === 'assistantPanelAction') sendResponse(panelAction(request));
+            }
+            return false;
+        }
         const busy = automation.running || isScanning || Boolean(window.BrowserAssistantJournalBusy);
         if (request.action === 'assistantUpdateStatus') {sendResponse({busy});return false;}
         if (request.action !== 'assistantPrepareUpdate') return false;
@@ -1745,6 +1863,7 @@ function mountJournalCountdown(signal: AbortSignal) {
     document.addEventListener('keydown', (e) => {
         // Block held-key auto-repeat to prevent rapid-fire race conditions
         if (e.repeat || e.isComposing) return;
+        if (panelToken && (e.key === '`' || e.key === ']' || e.key === '[')) return;
         // Explicit automation chord also works while the code editor has focus.
         if (handleAutomationShortcut(e)) return;
 
@@ -1792,7 +1911,7 @@ function mountJournalCountdown(signal: AbortSignal) {
     }, {capture:true,signal:lifecycle.signal});
 
     // ── Vision scan ───────────────────────────────────────────────────────────
-    async function visionScan(continueExistingScan: boolean | Event = false, requestedLanguage = null, practiceType = selectedMode) {
+    async function visionScan(continueExistingScan = false, requestedLanguage = null, practiceType = selectedMode) {
         if (isScanning && !continueExistingScan) return;
         const scanWasAlreadyRunning = isScanning;
         isScanning = true;
@@ -1817,8 +1936,8 @@ function mountJournalCountdown(signal: AbortSignal) {
                 images = snapshot.images;
                 context.visualSnapshot = snapshot.fingerprint;
             } else {
-                await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-                const response = await safeSendMessage({ action: "captureVisibleTab" });
+                if (!panelToken) await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                const response = await safeSendMessage({ action: "captureVisibleTab", url: context.url });
                 if (!response?.dataUrl || response.error) throw new Error(response?.error || 'Screenshot capture failed');
                 images = [response.dataUrl];
             }
@@ -2336,7 +2455,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             bindTabKeyboardNavigation();
             document.getElementById('assistant-history-btn').onclick = openHistory;
             document.getElementById('assistant-scan-btn')?.addEventListener('click', scanPage);
-            document.getElementById('assistant-vision-btn')?.addEventListener('click', visionScan);
+            document.getElementById('assistant-vision-btn')?.addEventListener('click', () => {void visionScan();});
             document.getElementById('assistant-auto-start-btn')?.addEventListener('click', startPracticeAutomation);
             document.getElementById('assistant-export-question-btn')?.addEventListener('click', exportQuestionDiagnostic);
             document.getElementById('assistant-auto-pause-btn')?.addEventListener('click', pauseOrResumeAutomation);
@@ -2544,5 +2663,6 @@ function mountJournalCountdown(signal: AbortSignal) {
         if (reopen === 'true') {isCollapsed=false;selectedTab='qa';automation.state='UPDATED';}
     } catch {}
     render();
+    void syncDetachedPanel();
     if (!reopenedAfterUpdate) void resumeCodingBatch().then(resumed => { if (!resumed) void resumeAuthorizedQaAfterNavigation(); });
 })();

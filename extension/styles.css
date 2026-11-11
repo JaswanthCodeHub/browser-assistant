@@ -516,6 +516,10 @@
     border-color: rgba(182, 195, 255, 0.16);
     box-shadow: 0 18px 52px rgba(0, 0, 0, 0.58), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
 }
+#assistant-root .assistant-tab:not(.collapsed) {
+    min-height: min(180px, calc(100dvh - 40px));
+    max-height: min(85vh, calc(100dvh - 40px));
+}
 .assistant-header { margin-bottom: 10px; }
 .assistant-title { font-size: 13px; font-weight: 700; letter-spacing: -0.1px; }
 .assistant-header-actions { display: flex; align-items: center; gap: 5px; }
@@ -628,7 +632,73 @@
 .assistant-auto-btn.stop:hover:not(:disabled) { background: rgba(248,113,113,.18); }
 
 @media (max-width: 390px) {
-    .assistant-tab { width: min(332px, calc(100vw - 20px)); }
+    #assistant-root .assistant-tab:not(.collapsed) {
+        box-sizing: border-box;
+        width: min(356px, calc(100vw - 24px));
+    }
     .mode-btn { font-size: 8px; }
     .mode-btn.qa-tab { font-size: 7.5px; }
 }
+
+/* The original controller stays attached to its tab while its window is open. */
+#assistant-root.assistant-detached,
+#assistant-journal-countdown-badge.assistant-detached,
+#assistant-root.assistant-panel-initializing,
+#assistant-journal-countdown-badge.assistant-panel-initializing { display: none !important; }
+
+body.detached-panel {
+    margin: 0;
+    padding: 10px;
+    background: #11121a;
+    color: #e6eaff;
+    font: 13px/1.5 Inter, system-ui, sans-serif;
+}
+.detached-panel .detached-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+.detached-panel #detached-status { overflow-wrap: anywhere; }
+.detached-panel #detached-countdown { margin: 0 0 10px; color: #ddd0ff; font-variant-numeric: tabular-nums; }
+.detached-panel #detached-return {
+    flex: 0 0 auto;
+    padding: 5px 8px;
+    border: 1px solid #57668d;
+    border-radius: 6px;
+    background: #242c4b;
+    color: #fff;
+    font: inherit;
+    font-size: 11px;
+    cursor: pointer;
+}
+.detached-panel #detached-return:focus-visible { outline: 2px solid #b9c7ff; outline-offset: 2px; }
+.detached-panel #assistant-root { position: static; }
+.detached-panel #assistant-root[hidden],
+.detached-panel #assistant-root [hidden] { display: none !important; }
+.detached-panel #assistant-root .assistant-tab:not(.collapsed) {
+    box-sizing: border-box;
+    width: 100%;
+    max-height: none;
+    resize: none;
+}
+.detached-panel .assistant-header { cursor: default; }
+.detached-panel #assistant-journal {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px;
+    border: 1px solid #6c58aa;
+    border-radius: 8px;
+    background: #fff;
+    color: #17233d;
+    font: 13px Arial, sans-serif;
+    margin: 10px 0;
+}
+.detached-panel #assistant-journal label { display: block; margin: 8px 0; }
+.detached-panel #assistant-journal select,
+.detached-panel #assistant-journal textarea { display: block; width: 100%; box-sizing: border-box; }
+.detached-panel #assistant-journal select { padding: 5px; color: #17233d; background: #fff; border: 1px solid #abb3c3; }
+.detached-panel #assistant-journal button { margin-top: 8px; padding: 10px; }
+.detached-panel #assistant-journal [data-countdown] { margin: 8px 0; font-weight: 600; }
