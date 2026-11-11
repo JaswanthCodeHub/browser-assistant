@@ -180,3 +180,18 @@ class MatrixVerificationTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(check=check), self.assertRaises(VisionUnconfirmedError):
                 await cross_check_text_answers([], primary, AsyncMock(side_effect=[check, '{}']),
                                                question_text=question, require_agreement=True)
+
+    async def test_sentence_transformation_verifies_the_phrase_and_required_word(self):
+        text = ('Tom is not old enough to drive a car.\nTOO\nTom is ____ a car.\n'
+                'Question format: 2 to 5 words including the given word TOO.')
+        for answer, valid in [('too young to drive', True), ('young to drive', False),
+                              ('too', False), ('much too young to be driving', False), ('too young to drive.', False)]:
+            primary = json.dumps([{'type': 'mcq', 'answer': answer}])
+            verify = AsyncMock(return_value=self.response(answer.upper()))
+            with self.subTest(answer=answer):
+                if valid:
+                    self.assertEqual(await cross_check_text_answers([], primary, verify, question_text=text,
+                                                                    require_agreement=True), primary)
+                else:
+                    with self.assertRaises(VisionUnconfirmedError):
+                        await cross_check_text_answers([], primary, verify, question_text=text, require_agreement=True)

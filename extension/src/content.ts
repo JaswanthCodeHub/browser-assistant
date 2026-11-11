@@ -1288,7 +1288,8 @@ function mountJournalCountdown(signal: AbortSignal) {
             const question = findCurrent(position);
             if (!question) throw new Error('A linked question changed or is already locked. Review it on the page.');
             automation.state = 'SOLVING'; updateAutomationUI();
-            const format = freeResponse ? 'Question format: one word.'
+            const keyword = question.requiredWord;
+            const format = freeResponse ? (keyword ? `Question format: 2 to 5 words including the given word ${keyword}.` : 'Question format: one word.')
                 : `Question format: select one answer.\n${question.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option.text}`).join('\n')}`;
             const prompt = `Reading context:\n${compound.compoundContext || ''}\n\nAnswer only this question: ${question.text}\n${format}`;
             const response = await window.BrowserAssistantAnswerRequests.run({
@@ -1313,11 +1314,14 @@ function mountJournalCountdown(signal: AbortSignal) {
                 throw new Error('Expected one verified answer for each linked question.');
             }
             if (freeResponse) {
-                const word = results[0].answer;
-                if (typeof word !== 'string' || !/^\p{L}+(?:['’\-]\p{L}+)*$/u.test(word)) {
-                    throw new Error(`Blank ${position + 1} requires one word. Review the answer before submitting.`);
+                const value = results[0].answer;
+                const words = typeof value === 'string' ? value.trim().split(/\s+/) : [];
+                if (!words.every(word => /^\p{L}+(?:['’\-]\p{L}+)*$/u.test(word))
+                    || (keyword ? words.length < 2 || words.length > 5 || !words.some(word => word.toLowerCase() === keyword.toLowerCase())
+                        : words.length !== 1)) {
+                    throw new Error(`Blank ${position + 1} requires ${keyword ? `two to five words including ${keyword}` : 'one word'}. Review the answer before submitting.`);
                 }
-                answers.push(word);
+                answers.push(words.join(' '));
             } else {
                 const indexes = answerIndexesFromResult(results, question);
                 if (indexes.length !== 1) throw new Error('The verified answer did not match this linked question’s displayed options.');

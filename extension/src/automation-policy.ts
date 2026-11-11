@@ -142,28 +142,65 @@
                 .split(/\s+/).filter(Boolean).map((id) => doc.getElementById(id)).filter(Boolean).map(textOf).join(' ');
             const radioSelector = 'input[type="radio"],[role="radio"]';
             const readingFieldSelector = 'textarea,input[type="text"],input:not([type])';
-            const blankPrompt = /^which word best fits (?:the )?blank\s*\(\s*(\d+)\s*\)\s*\?$/i;
+            const blankPrompt = /^(?:\d+[.)]\s*)?which (?:word|sentence) (?:best )?fits (?:the )?(?:blank|gap)\s*\(\s*(\d+)\s*\)\s*\?$/i;
+            const phrasePrompt = /^(?:\d+[.)]\s*)?which phrase best completes (?:the )?sentence\s*\(\s*(\d+)\s*\)\s*\?$/i;
+            const numberedPrompt = /^(\d+)[.)]\s+.{3,1000}\?$/;
             const blankNumbers = (text: string) => [...text.matchAll(/\(\s*(\d+)\s*\)\s*(?:_{2,}|\.{3,}|…)/g)]
                 .map(match => Number(match[1]));
-            const pageText = doc.body.textContent || '';
-            if (blankNumbers(pageText).length >= 2 && /which word best fits/i.test(pageText)) {
+            const pageText = doc.body.innerText || doc.body.textContent || '';
+            const readingRange = /questions\s+(\d+)\s*[-–—]\s*(\d+)/i.exec(pageText);
+            const phraseSet = /which phrase best completes/i.test(pageText) && /between two and five words/i.test(pageText);
+            const gapSet = blankNumbers(pageText).length >= 2 && /which (?:word|sentence) (?:best )?fits/i.test(pageText);
+            if (gapSet || phraseSet || readingRange) {
+                const promptPattern = gapSet ? blankPrompt : phraseSet ? phrasePrompt : numberedPrompt;
                 const blocks = [...doc.querySelectorAll('div,p,h1,h2,h3,h4,span,legend,[role="heading"]')]
                     .filter(node => visible(node) && !node.closest('#assistant-root,nav,aside'));
-                const headings = blocks.filter(node => blankPrompt.test((node.textContent || '').trim())
-                    && ![...node.children].some(child => blankPrompt.test((child.textContent || '').trim())));
-                const passage = blocks.find(node => {
+                const headings = blocks.filter(node => promptPattern.test((node.textContent || '').trim())
+                    && ![...node.children].some(child => promptPattern.test((child.textContent || '').trim())));
+                let passage = gapSet && blocks.find(node => {
                     const text = node.textContent || '';
                     return text.length <= 12000 && blankNumbers(text).length >= 2
-                        && !/which word best fits/i.test(text) && !node.querySelector(radioSelector)
+                        && !/which (?:word|sentence) (?:best )?fits/i.test(text) && !node.querySelector(radioSelector)
                         && ![...node.children].some(child => blankNumbers(child.textContent || '').length >= 2);
                 });
+                if (!gapSet && headings.length) {
+                    // The passage occupies a separate column preceding the
+                    // shared answer column. Never use the timer or palette.
+                    const instruction = phraseSet ? /complete the second sentence/i : /read the (?:text|comments|passage)/i;
+                    for (let column = headings[0].parentElement; column && column !== doc.body && !passage; column = column.parentElement) {
+                        if (!headings.every(heading => column.contains(heading))) continue;
+                        for (let node = column.previousElementSibling; node; node = node.previousElementSibling) {
+                            const content = textOf(node);
+                            if (visible(node) && content.length <= 12000 && instruction.test(content)
+                                && !node.querySelector(`${radioSelector},${readingFieldSelector}`)) {
+                                passage = node;
+                                break;
+                            }
+                        }
+                    }
+                }
                 if (passage && headings.length) {
-                    const context = textOf(passage);
-                    const numbers = blankNumbers(context).sort((a, b) => a - b);
-                    const headingNumbers = headings.map(node => Number(textOf(node).match(blankPrompt)?.[1]));
+                    const copy = passage.cloneNode(true);
+                    copy.querySelectorAll('br,p,div,li').forEach(node => { node.before('\n'); node.after('\n'); });
+                    const context = (copy.textContent || '').trim();
+                    const headingNumbers = headings.map(node => Number(textOf(node).match(promptPattern)?.[1]));
+                    const phrases = new Map<number, string>();
+                    if (phraseSet) {
+                        const items = [...context.matchAll(/(?:^|\s)(\d+)\s*[.)]\s+/g)];
+                        for (const [index, item] of items.entries()) {
+                            const pair = context.slice(item.index + item[0].length, items[index + 1]?.index);
+                            const keywords = pair.match(/\b[A-Z]{2,}\b/g) || [];
+                            if (!/_{2,}/.test(pair) || keywords.length !== 1 || phrases.has(Number(item[1]))) return null;
+                            phrases.set(Number(item[1]), keywords[0]);
+                        }
+                    }
+                    const count = readingRange ? Number(readingRange[2]) - Number(readingRange[1]) + 1 : 0;
+                    const numbers = (gapSet ? blankNumbers(context) : phraseSet ? [...phrases.keys()]
+                        : count >= 2 && count <= 30 ? Array.from({length: count}, (_, index) => Number(readingRange[1]) + index) : [])
+                        .sort((a, b) => a - b);
                     // A partially rendered or unrecognized reading set must
                     // never fall through to the ordinary single-answer solver.
-                    if (new Set(numbers).size !== numbers.length
+                    if (numbers.length < 2 || new Set(numbers).size !== numbers.length
                         || [...headingNumbers].sort((a, b) => a - b).join() !== numbers.join()) return null;
                     const submitSelector = 'button,input[type="submit"],[role="button"]';
                     let scope = headings[0].parentElement;
@@ -185,17 +222,18 @@
                         && !node.closest('#assistant-root,.monaco-editor,.ace_editor,.CodeMirror'));
                     const positions = new Map([...scope.querySelectorAll('*')].map((node, index) => [node, index]));
                     const follows = (before: Element, after: Element) => positions.get(before) < positions.get(after);
-                    if (!controls.length && fields.length) {
+                    if (!controls.length && fields.length && (phraseSet || (gapSet && headings.every(heading => /which word/i.test(textOf(heading)))))) {
                         const questions = headings.map((heading, position) => {
                             const next = headings[position + 1] || submit;
                             const group = fields.filter(node => follows(heading, node) && follows(node, next));
-                            return { text: textOf(heading), options: [], input: group.length === 1 ? group[0] : null, container: scope };
+                            return { text: textOf(heading), options: [], input: group.length === 1 ? group[0] : null,
+                                requiredWord: phrases.get(headingNumbers[position]), container: scope };
                         });
                         if (questions.some(question => !question.input) || fields.length !== questions.length) return null;
                         return { ...questions[0], type: 'compound-short-answer', compoundQuestions: questions,
                             compoundContext: context, compoundSubmit: submit };
                     }
-                    if (fields.length) return null;
+                    if (fields.length || phraseSet) return null;
                     const questions = headings.map((heading, position) => {
                         const next = headings[position + 1] || submit;
                         const group = controls.filter(node => follows(heading, node) && follows(node, next));
@@ -222,6 +260,7 @@
                     return { ...questions[0], type: 'compound-mcq', compoundQuestions: questions,
                         compoundContext: context, compoundSubmit: submit };
                 }
+                if (gapSet || phraseSet || (headings.length && /read the (?:text|comments|passage)/i.test(pageText))) return null;
             }
             const nativeRegion = doc.querySelector('#generic-question-container');
             const nativeLabels = [...(nativeRegion?.querySelectorAll('.drag-and-drop-option-label') || [])].filter(visible);

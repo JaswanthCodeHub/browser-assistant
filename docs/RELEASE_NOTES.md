@@ -1,4 +1,10 @@
-# Browser Assistant 2.9.7
+# Browser Assistant 2.9.8
+
+- Continue through numbered reading comprehension, person matching, and sentence gaps with one Submit per passage.
+- Fill sentence transformations after verifying the answer uses two to five words and includes the given word.
+- Restart the matching backend after updating the extension to enable phrase verification.
+
+## Browser Assistant 2.9.7
 
 - Reading sets with one-word text boxes now continue in the same run as multiple-choice reading sets.
 - The extension verifies each word using the shared passage and checks every field before clicking Submit.

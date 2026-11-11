@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "Browser Assistant",
-    "version": "2.9.7",
+    "version": "2.9.8",
     "description": "Scans webpages for MCQs and coding problems. Powered by Groq (cloud) and Ollama (local fallback).",
     "permissions": [
         "activeTab",

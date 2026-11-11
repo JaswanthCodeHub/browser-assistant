@@ -10,6 +10,34 @@ const extension = path.resolve(process.env.ASSISTANT_TEST_EXTENSION || path.join
 const practice = 'http://127.0.0.1:8000/practice';
 const secondUrl = 'http://127.0.0.1:8000/panel-test';
 const readingUrl = 'https://learning.ccbp.in/test-reading';
+const readingFormats = [
+    {
+        passage: 'Complete the second sentence using the given word so it means the same.\n1. Tom is not old enough to drive a car.\nTOO\nTom is ____ a car.\n2. I have never visited Mumbai before.\nFIRST\nThis is ____ visited Mumbai.\n3. The red dress is more expensive than the blue dress.\nCHEAPER\nThe blue dress ____ the red dress.',
+        instruction: 'Do not change the word given. Use between two and five words.',
+        prompts: ['Which phrase best completes the sentence(1)?', 'Which phrase best completes the sentence(2)?', 'Which phrase best completes the sentence(3)?'],
+        answers: ['too young to drive', 'the first time I have', 'is cheaper than'],
+        keywords: ['TOO', 'FIRST', 'CHEAPER'],
+    },
+    {
+        passage: 'Read the text and choose the correct answer for questions 1–3. The school garden took hard work. More students joined after they saw the plants. The vegetables are used in the school kitchen.',
+        prompts: ['1. Why did few students join at first?', '2. Why did more students join?', '3. Where do the vegetables go?'],
+        options: [['Gardening seemed hard.', 'It was far away.'], ['They had less homework.', 'They saw the plants.'], ['The school kitchen.', 'The market.']],
+        indexes: [0, 1, 0],
+    },
+    {
+        passage: 'Read the comments from four people about favourite places. Maya likes the beach. Rohan plays badminton. Nina likes learning about the past at the museum. Farah draws birds in the park.',
+        instruction: 'Choose the correct person for questions 1–3.',
+        prompts: ['1. Who likes learning about history?', '2. Who enjoys being near the sea?', '3. Who likes drawing things from nature?'],
+        options: Array.from({length: 3}, () => ['Maya', 'Rohan', 'Nina', 'Farah']),
+        indexes: [2, 0, 3],
+    },
+    {
+        passage: 'An art class. We painted our favourite places. (1) ____ Some painted beaches and others painted gardens. I painted my grandmother’s village. (2) ____ I used green for the fields. Then we put the paintings on the wall. (3) ____',
+        prompts: ['1. Which sentence fits blank (1)?', '2. Which sentence fits blank (2)?', '3. Which sentence fits blank (3)?'],
+        options: [['Everyone had a different idea.', 'It has small houses.'], ['The classroom looked colourful.', 'It has small houses.'], ['It has small houses.', 'The classroom looked colourful.']],
+        indexes: [0, 1, 1],
+    },
+];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function eventually(check, label) {
@@ -44,7 +72,7 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
         context.setDefaultTimeout(10_000);
         const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
         const base = worker.url().replace(/\/[^/]+$/, '');
-        await worker.evaluate(() => {
+        await worker.evaluate(formats => {
             globalThis.testRequests = [];
             const fetchReal = globalThis.fetch;
             globalThis.fetch = async (input, init) => {
@@ -58,6 +86,19 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
                 if (url.pathname === '/history') return Response.json([]);
                 if (url.pathname === '/extension-release') return Response.json({version: '2.9.1'});
                 if (url.pathname === '/solve' && /^https:\/\/learning\.ccbp\.in\/test-reading(?:\?written)?$/.test(body.url || '')) {
+                    const format = formats.find(item => body.text.includes(item.passage));
+                    if (format) {
+                        const position = format.prompts.findIndex(prompt => body.text.includes('Answer only this question: ' + prompt));
+                        const keyword = format.keywords?.[position];
+                        const option = format.indexes?.[position];
+                        if (position < 0 || !body.require_answer_agreement || body.text.includes('PRIVATE HEADER')
+                            || (keyword && !body.text.endsWith('2 to 5 words including the given word ' + keyword + '.'))) {
+                            return Response.json({detail: 'Incorrect reading format'}, {status: 422});
+                        }
+                        const answer = keyword ? format.answers[position]
+                            : 'Option ' + String.fromCharCode(65 + option) + ': ' + format.options[position][option];
+                        return Response.json({answer_agreement: true, results: JSON.stringify([{type: 'mcq', answer}])});
+                    }
                     const blank = Number(body.text.match(/Answer only this question: Which word best fits blank \((\d+)\)/)?.[1]);
                     const written = body.text.endsWith('Question format: one word.');
                     const answers = written ? ['from', 'during', 'if'] : ['Option C: stand', 'Option A: answer', 'Option C: shop'];
@@ -80,7 +121,7 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
                     results: JSON.stringify([{type: 'mcq', question: 'What is 6 + 7?', answer: 'Option C: 13'}]),
                 });
             };
-        });
+        }, readingFormats);
         await context.route(practice, route => route.fulfill({
             path: path.join(root, 'server', 'practice_quiz.html'),
             contentType: 'text/html',
@@ -89,6 +130,7 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
             '<!doctype html><title>Second test tab</title><main>Panel test fixture</main>',
         }));
         await context.route(url => url.origin + url.pathname === readingUrl, route => route.fulfill({contentType: 'text/html', body: `<!doctype html>
+            <meta charset="utf-8">
             <header>PRIVATE HEADER</header>
             <main style="display:flex;gap:24px">
                 <section><p id="passage">At the museum, we had to (1) ____ in line. The robots could (2) ____ questions.
@@ -98,14 +140,24 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
             <script>
                 const questions = document.getElementById('questions');
                 const groups = [['sit','wait','stand','walk'],['answer','speak','tell','ask'],['office','station','shop','classroom']];
+                const formats = ${JSON.stringify(readingFormats)};
                 window.submissions = [];
                 function render() {
                     questions.replaceChildren();
-                    const written = window.submissions.length === 1 && location.search === '?written';
+                    const mixed = location.search === '?written';
+                    const format = mixed ? formats[window.submissions.length - 2] : null;
+                    const written = mixed && (window.submissions.length === 1 || Boolean(format?.keywords));
+                    if (format?.instruction) {
+                        const instruction = document.createElement('p');
+                        instruction.textContent = format.instruction;
+                        questions.append(instruction);
+                    }
                     const enableSubmit = () => { setTimeout(() => { submit.disabled = false; }, 175); };
-                    groups.forEach((options, index) => {
+                    (format?.options || groups).forEach((options, index) => {
                         const group = document.createElement('div');
-                        group.innerHTML = '<div><span>Which word best fits blank (' + (index + 1) + ')?</span></div>';
+                        const heading = document.createElement('p');
+                        heading.textContent = format?.prompts[index] || 'Which word best fits blank (' + (index + 1) + ')?';
+                        group.append(heading);
                         if (written) {
                             const field = document.createElement('textarea');
                             field.placeholder = 'Enter your answer';
@@ -139,9 +191,11 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
                         window.submissions.push(written
                             ? [...questions.querySelectorAll('textarea')].map(field => field.value)
                             : [...questions.querySelectorAll('input:checked')].map(input => input.parentElement.nextElementSibling.textContent));
-                        if (window.submissions.length === 1) {
+                        if (window.submissions.length < (mixed ? formats.length + 2 : 2)) {
                             const passage = document.getElementById('passage');
-                            if (location.search === '?written') {
+                            if (mixed && window.submissions.length > 1) {
+                                passage.textContent = formats[window.submissions.length - 2].passage;
+                            } else if (mixed) {
                                 passage.textContent = 'Leo comes (1) ____ Canada. He sat next to me (2) ____ our English lesson. After class, I asked him (3) ____ he liked our school.';
                             } else passage.prepend('On the second trip, ');
                             render();
@@ -162,7 +216,7 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
 
         for (const {name, query, secondAnswers} of [
             {name: 'continues to the next multiple-choice passage', query: '', secondAnswers: ['stand', 'answer', 'shop']},
-            {name: 'continues from multiple-choice to one-word text boxes', query: '?written', secondAnswers: ['from', 'during', 'if']},
+            {name: 'continues through one-word, phrase, comprehension, person matching, and sentence gaps', query: '?written', secondAnswers: ['from', 'during', 'if']},
         ]) {
             await t.test(name, async () => {
                 const reading = await context.newPage();
@@ -172,10 +226,22 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
                     await reading.keyboard.press('Backquote');
                     await reading.locator('#mode-qa').click();
                     await reading.locator('#assistant-auto-start-btn').click();
-                    await eventually(() => reading.locator('#assistant-automation-state').textContent()
-                        .then(state => state === 'COMPLETED'), 'Both reading sets should complete');
-                    assert.deepEqual(await reading.evaluate(() => window.submissions), [['stand', 'answer', 'shop'], secondAnswers]);
-                    assert.equal(await reading.locator('#assistant-automation-completed').textContent(), '2');
+                    await eventually(async () => {
+                        const state = await reading.locator('#assistant-automation-state').textContent();
+                        if (state === 'PAUSED' || state === 'ERROR') {
+                            assert.fail(await reading.locator('#assistant-automation-latest').textContent());
+                        }
+                        return state === 'COMPLETED';
+                    }, 'All reading sets should complete');
+                    const expected = [['stand', 'answer', 'shop'], secondAnswers];
+                    if (query) expected.push(...readingFormats.map(format => format.answers || format.indexes.map((index, position) => format.options[position][index])));
+                    assert.deepEqual(await reading.evaluate(() => window.submissions), expected);
+                    assert.equal(await reading.locator('#assistant-automation-completed').textContent(), String(expected.length));
+                } catch (error) {
+                    const state = await reading.locator('#assistant-automation-state').textContent();
+                    const passage = await reading.locator('#passage').textContent();
+                    const submissions = await reading.evaluate(() => window.submissions);
+                    throw new Error(`${error.message}; state=${state}; passage=${passage}; submitted=${JSON.stringify(submissions)}`);
                 } finally { await reading.close(); }
             });
         }

@@ -1,3 +1,8 @@
+# 2.9.8
+
+- Recognize grouped passage comprehension, person matching, and sentence gaps with a shared Submit.
+- Verify two-to-five-word sentence transformations, including the unchanged given word, before filling the set.
+
 # 2.9.7
 
 - Continue from reading passages with multiple-choice options to passages with one text box per blank.

@@ -376,6 +376,14 @@ def parse_answer_check(raw, count):
 SINGLE_WORD_FORMAT = '\nQuestion format: one word.'
 
 
+def reading_response_constraints(text):
+    text = text.rstrip()
+    if text.endswith(SINGLE_WORD_FORMAT):
+        return 1, 1, None
+    phrase = re.search(r'\nQuestion format: 2 to 5 words including the given word ([A-Z]{2,})\.$', text)
+    return (2, 5, phrase[1]) if phrase else None
+
+
 def displayed_single_choices(text):
     question, separator, option_text = text.strip().rpartition('\nA.')
     if not separator or not re.search(r'\n(?:Question format: )?Select one answer\.$', question, re.I):
@@ -441,22 +449,28 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
     check_messages = [{'role': 'system', 'content': instruction}, *messages[1:]]
     matrix_math = matrix_question(messages)
     choices = displayed_single_choices(question_text) if len(items) == 1 else {}
-    single_word = require_agreement and len(items) == 1 and question_text.rstrip().endswith(SINGLE_WORD_FORMAT)
-    if require_agreement and not (choices or single_word):
-        raise VisionUnconfirmedError('Expected one linked answer with displayed options or a one-word response.')
-    if single_word:
-        instruction += ' This is one reading blank. Fill the numbered gap using the entire passage. Return exactly one word, without an option label or punctuation around it.'
+    constraints = reading_response_constraints(question_text) if require_agreement and len(items) == 1 else None
+    if require_agreement and not (choices or constraints):
+        raise VisionUnconfirmedError('Expected one linked answer with displayed options or a reading response format.')
+    if constraints:
+        _, _, keyword = constraints
+        rule = (f'Use two to five words, including the unchanged word {keyword}. Preserve the meaning of the original sentence.'
+                if keyword else 'Return exactly one word.')
+        instruction += f' Fill the numbered gap using the entire passage. {rule} Use no option label or surrounding punctuation.'
         check_messages[0]['content'] = instruction
 
     def answer_key(entries):
         if choices:
             return bind_displayed_choice(entries[0].get('answer'), choices, matrix_math=matrix_math)
-        if single_word:
+        if constraints:
+            minimum, maximum, keyword = constraints
             value = entries[0].get('answer')
             if isinstance(value, str):
-                word = value.strip()
-                if all(part.isalpha() for part in re.split(r"['’\-]", word)):
-                    return word.lower()
+                words = value.lower().split()
+                if (minimum <= len(words) <= maximum
+                        and all(part.isalpha() for word in words for part in re.split(r"['’\-]", word))
+                        and (not keyword or keyword.lower() in words)):
+                    return ' '.join(words)
             return None
         keys = tuple(normalize_checked_answer(item.get('answer'), matrix_math=matrix_math) for item in entries)
         return keys if all(keys) else None
@@ -476,13 +490,13 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
                     items[0].pop('reasoning', None)
                 items[0]['answer'] = f'Option {current}: {choices[current]}'
                 return json.dumps(items, ensure_ascii=False)
-            if single_word:
+            if constraints:
                 if current != first:
                     items[0].pop('reasoning', None)
-                items[0]['answer'] = (items[0] if current == first else verified[0])['answer'].strip()
+                items[0]['answer'] = ' '.join((items[0] if current == first else verified[0])['answer'].split())
                 return json.dumps(items, ensure_ascii=False)
             return results
-        if not (choices or single_word) and current is not None:
+        if not (choices or constraints) and current is not None:
             break
         if not attempt:
             previous = current
@@ -504,7 +518,7 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
             agreed = sum(a == b for a, b in zip(first, best))
             if agreed > len(first) // 2:
                 return results
-    raise VisionUnconfirmedError('The independent solves could not agree on the answer for this blank.' if single_word
+    raise VisionUnconfirmedError('The independent solves could not agree on the answer for this blank.' if constraints
                                  else 'The independent solves could not agree on the displayed answer.')
 
 
