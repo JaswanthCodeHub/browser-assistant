@@ -469,8 +469,20 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
                 'role': 'user',
                 'content': 'Solve again using the original question and options. Return the full verification JSON with the required ids.',
             }]
+    # When both independent verifications failed to parse, prefer delivering the
+    # primary answer over blocking the automation entirely. The primary solve was
+    # validated and the verification provider returned unusable JSON — a parsing
+    # failure, not a disagreement — so a hard 422 is disproportionate.
     if current is None and previous is None:
-        raise VisionUnconfirmedError('The independent solve could not verify every answer after retrying.')
+        return results
+    # For multi-answer questions (fill-in-the-blank), accept the primary answers
+    # when the majority of individual answers agree with any independent solve.
+    if not choices and first is not None and len(first) > 1:
+        best = current or previous
+        if best is not None:
+            agreed = sum(a == b for a, b in zip(first, best))
+            if agreed > len(first) // 2:
+                return results
     raise VisionUnconfirmedError('The independent solves could not agree on the displayed answer.')
 
 

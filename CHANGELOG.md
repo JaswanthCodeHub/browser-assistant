@@ -1,3 +1,8 @@
+# 2.9.5
+
+- Accept the primary answer when the independent verification solver returns unparseable responses instead of blocking automation with a 422 error.
+- Accept multi-answer questions (fill-in-the-blank) when the majority of individual answers agree with the independent solve.
+
 # 2.9.4
 
 - Run Alt+A automation directly without opening, expanding, or moving either assistant panel; ignore the shortcut while a text or code editor has focus.
