@@ -1,4 +1,13 @@
-# Browser Assistant 2.9.1
+# Browser Assistant 2.9.2
+
+- Text Scan reconnects when the backend starts after the page loads.
+- The local practice quiz sends each option letter once so valid answers match their displayed options.
+- Vision Scan includes illustrations inside recognized answer buttons.
+- Concurrent Groq requests preserve their backup-key order.
+- Missing journal files affect journal generation while other backend routes stay available.
+- The Windows setup instructions use one Python environment for dependency installation and backend startup.
+
+## Browser Assistant 2.9.1
 
 This rollback restores the Browser Assistant v2.8.26 implementation after the v2.9.0 release. Update the extension and backend together.
 

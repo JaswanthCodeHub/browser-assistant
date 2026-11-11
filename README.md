@@ -51,12 +51,15 @@ Download the backend ZIP or clone this repository, then open a terminal in the e
 ### Windows PowerShell
 
 ```powershell
-py -3.11 -m venv .venv
+if (-not (Test-Path '.\.venv\Scripts\python.exe')) {
+    py -3 -m venv .venv
+}
 .\.venv\Scripts\python.exe -m pip install --require-hashes -r server\requirements.lock.txt
-Copy-Item server\.env.example server\.env
+if (-not (Test-Path 'server\.env')) {
+    Copy-Item server\.env.example server\.env
+}
 # Edit server\.env as described below, then:
-Set-Location server
-..\.venv\Scripts\python.exe main.py
+.\.venv\Scripts\python.exe server\main.py
 ```
 
 ### macOS / Linux
@@ -70,7 +73,7 @@ cd server
 ../.venv/bin/python main.py
 ```
 
-Python 3.12 or 3.14 can replace 3.11. Pillow 13 security fixes require Python 3.11+, so Python 3.10 is no longer in the secure installation matrix. Existing users on 3.11+ keep their runtime. These commands avoid shell activation requirements. Do not overwrite an existing `.env` or environment when updating a local installation.
+Use Python 3.11 or later. If the Windows launcher cannot find your installed Python, use its full executable path in the environment creation command. For example, in PowerShell run `& 'C:\path\to\python.exe' -m venv .venv`. Install and run the backend through the same virtual environment.
 
 ### Configure a provider
 

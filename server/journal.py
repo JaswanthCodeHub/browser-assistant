@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 SYLLABUS_PATH = Path(__file__).with_name('journal_syllabus.json')
+PROMPT_PATH = Path(__file__).with_name('journal_prompt.md')
 
 
 def load_syllabus():
@@ -19,9 +20,7 @@ def load_syllabus():
     return value
 
 
-SYLLABUS = load_syllabus()  # Compatibility snapshot; requests use a fresh catalog.
 SECTIONS = ('experience', 'feelings', 'learning', 'application', 'conclusion')
-MASTER_PROMPT = Path(__file__).with_name('journal_prompt.md').read_text(encoding='utf-8-sig')
 
 
 class JournalRequest(BaseModel):
@@ -74,8 +73,12 @@ def register_journal(app, cloud, local):
         module = syllabus.get('modules', {}).get(str(request.number))
         if not isinstance(module, str) or not module.strip():
             raise HTTPException(422, 'The selected module is missing from the supplied syllabus. Nothing was generated.')
+        try:
+            master_prompt = PROMPT_PATH.read_text(encoding='utf-8-sig')
+        except (OSError, UnicodeError) as exc:
+            raise HTTPException(503, 'The journal prompt could not be loaded. Nothing was generated.') from exc
         messages = [
-            {'role': 'system', 'content': MASTER_PROMPT + '\n\nPORTAL OUTPUT ADAPTER:\n'
+            {'role': 'system', 'content': master_prompt + '\n\nPORTAL OUTPUT ADAPTER:\n'
                 'Apply the master prompt above to the complete supplied syllabus. This request '
                 'is for one portal journal: output ONLY the requested module_number, not every '
                 'module in one response. Return one JSON object with exactly these string keys '
