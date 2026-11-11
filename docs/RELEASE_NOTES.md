@@ -1,4 +1,19 @@
-# Browser Assistant 2.9.1
+# Browser Assistant 2.9.3
+
+- The floating panel, popup, journal controls, countdown, and practice quiz use a layered glass theme with blue and teal lighting.
+- Solid primary buttons, recessed fields, and visible keyboard focus make controls easier to distinguish.
+- Text stays opaque across scan results, history, status messages, and disabled controls.
+
+## Browser Assistant 2.9.2
+
+- Text Scan reconnects when the backend starts after the page loads.
+- The local practice quiz sends each option letter once so valid answers match their displayed options.
+- Vision Scan includes illustrations inside recognized answer buttons.
+- Concurrent Groq requests preserve their backup-key order.
+- Missing journal files affect journal generation while other backend routes stay available.
+- The Windows setup instructions use one Python environment for dependency installation and backend startup.
+
+## Browser Assistant 2.9.1
 
 ## Separate panel edition
 

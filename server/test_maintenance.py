@@ -163,6 +163,24 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(main,'_groq_clients',clients),patch.object(main,'_groq_key_index',0),patch.object(main,'_groq_disabled_until',0):
             self.assertEqual(await main.try_groq([],model='test'),ANSWER)
 
+    async def test_concurrent_rotation_does_not_skip_a_backup_key(self):
+        def rate_limit_first_key(**_):
+            # Another request rotated the preferred key while this call was in flight.
+            main._groq_key_index = 1
+            raise RuntimeError('HTTP 429 rate_limit')
+
+        first = Mock(side_effect=rate_limit_first_key)
+        second = Mock(return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=ANSWER))]))
+        third = Mock(side_effect=RuntimeError('HTTP 429 rate_limit'))
+        clients = [SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+                   for create in (first, second, third)]
+        with patch.object(main, '_groq_clients', clients), patch.object(main, '_groq_key_index', 0), \
+             patch.object(main, '_groq_disabled_until', 0):
+            self.assertEqual(await main.try_groq([], model='test'), ANSWER)
+        first.assert_called_once()
+        second.assert_called_once()
+        third.assert_not_called()
+
     async def test_ollama_uses_a_bounded_transport_and_closes_it(self):
         local=MagicMock();local.__enter__.return_value=local;local.chat.return_value={'message':{'content':ANSWER}}
         with patch.object(main.ollama,'Client',return_value=local) as factory:
@@ -204,6 +222,16 @@ class LocalApiTests(unittest.TestCase):
         self.assertEqual(self.client.get('/history',headers={'Origin':'https://evil.example'}).status_code,403)
         self.assertEqual(self.client.get('/history',headers={'Host':'evil.example'}).status_code,400)
         self.assertEqual(self.client.get('/history',headers={'Origin':'null'}).status_code,403)
+
+    def test_unreadable_journal_syllabus_does_not_disable_other_routes(self):
+        missing = self.path.with_name('missing-syllabus.json')
+        with patch('journal.SYLLABUS_PATH', missing):
+            health = self.client.get('/health')
+            self.assertEqual(health.status_code, 200)
+            self.assertEqual(health.json()['journal_syllabus_subjects'], [])
+            self.assertEqual(self.client.get('/practice').status_code, 200)
+            response = self.client.post('/journal', json={'subject': 'AI201', 'number': 1})
+            self.assertEqual(response.status_code, 503)
 
     def test_database_persistence_and_sql_injection_like_text_remain_data(self):
         entry={'scan_type':'text','url':"https://example.test/'; DROP TABLE scan_history; --",'provider':'mock', 'results':ANSWER}

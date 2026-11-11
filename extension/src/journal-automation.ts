@@ -107,13 +107,10 @@ function browserAssistantJournal(global) {
     const panel = document.createElement('section');
     panel.id = 'assistant-journal';
     panel.dataset.build = journalBuild;
-    panel.style.cssText = 'position:fixed;right:16px;top:160px;width:290px;z-index:2147483646;background:white;color:#17233d;padding:16px;border:2px solid #7638ff;border-radius:12px;box-shadow:0 4px 20px #0003;font:14px Arial';
-    panel.innerHTML = '<strong>Reflective Journal</strong><p data-info></p><p data-countdown style="font-weight:600;margin:8px 0"></p><textarea aria-label="Your class experience and feelings" placeholder="Your actual class experience / feelings (optional)" rows="3" style="width:100%;box-sizing:border-box"></textarea><button type="button" style="margin-top:8px;padding:10px">Fill &amp; Submit Journal</button><p role="status" aria-live="polite"></p>';
+    panel.innerHTML = '<strong>Reflective Journal</strong><p data-info></p><p data-countdown></p><textarea aria-label="Your class experience and feelings" placeholder="Your actual class experience / feelings (optional)" rows="3"></textarea><button type="button">Fill &amp; Submit Journal</button><p role="status" aria-live="polite"></p>';
     document.body.appendChild(panel);
     const controls = document.createElement('div');
     controls.innerHTML = '<label>Subject <select data-subject aria-label="Journal subject"><option value="">Detect from page</option><option>Backend Development Fundamentals</option><option>Computer Organization and Architecture</option><option>Advanced Data Structures</option><option>Linear Algebra Essentials</option><option>Fundamentals of Artificial Intelligence</option></select></label><label>Module / Journal <select data-number aria-label="Journal number"><option value="">Detect from page</option>' + Array.from({length:10},(_,i)=>`<option value="${i+1}">${i+1}</option>`).join('') + '</select></label>';
-    for (const label of controls.querySelectorAll('label')) label.style.cssText = 'display:block;margin:8px 0';
-    for (const select of controls.querySelectorAll('select')) select.style.cssText = 'display:block;width:100%;padding:5px;color:#17233d;background:white;border:1px solid #abb3c3';
     panel.insertBefore(controls, panel.querySelector('textarea'));
     const status = panel.querySelector('[role=status]'), button = panel.querySelector('button');
     const countdown = panel.querySelector<HTMLElement>('[data-countdown]');
@@ -201,7 +198,6 @@ function browserAssistantJournal(global) {
     button.setAttribute('aria-keyshortcuts', 'Alt+Shift+J');
     const shortcutHint = document.createElement('p');
     shortcutHint.textContent = 'Shortcut: Alt + Shift + J';
-    shortcutHint.style.cssText = 'font-size:12px;margin:6px 0;color:#516078';
     panel.insertBefore(shortcutHint, status);
     const shortcutListener = event => {
         if (!event.altKey || !event.shiftKey || event.ctrlKey || event.metaKey || event.repeat || event.isComposing) return;
@@ -230,7 +226,7 @@ function browserAssistantJournal(global) {
             if (!document.getElementById('assistant-root')) return;
             if (slot) {
                 if (panel.parentElement !== slot) slot.appendChild(panel);
-                panel.style.cssText = 'display:block;position:static;width:100%;box-sizing:border-box;padding:10px;border:1px solid #6c58aa;border-radius:8px;background:#fff;color:#17233d;font:13px Arial;margin:10px 0;';
+                panel.style.display = '';
                 button.hidden = true;
             } else controller.detach();
         },

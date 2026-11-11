@@ -73,10 +73,14 @@
             const question = doc.querySelector('[data-practice-question-text]');
             const optionNodes = [...doc.querySelectorAll('[data-practice-option]')];
             if (!question || optionNodes.length < 2) return null;
-            const options = optionNodes.map((node, index) => ({
-                index, text: (node.textContent || '').replace(/\s+/g, ' ').trim(), node,
-                input: node.querySelector('input:not(:disabled)'),
-            }));
+            const options = optionNodes.map((node, index) => {
+                const text = (node.textContent || '').replace(/\s+/g, ' ').trim();
+                const label = String.fromCharCode(65 + index) + '. ';
+                return {
+                    index, text: text.startsWith(label) ? text.slice(label.length) : text, node,
+                    input: node.querySelector('input:not(:disabled)'),
+                };
+            });
             if (options.some((option) => !option.input) || !question.textContent.trim()) return null;
             return { text: question.textContent.replace(/\s+/g, ' ').trim(), options, form: question.closest('form') || doc.querySelector('form') };
         },

@@ -282,7 +282,7 @@ chrome.runtime.onMessage.addListener((request: AssistantMessage, sender, sendRes
                 catch { data = { detail: text || "Unexpected server response" }; }
                 sendResponse({ ok: response.ok, status: response.status, data });
             })
-            .catch(error => sendResponse({ error: error.name === 'TimeoutError' ? 'Local server request timed out.' : 'Local server is offline. Start it with: python main.py' }))
+            .catch(error => sendResponse({ error: error.name === 'TimeoutError' ? 'Local server request timed out.' : 'Local server is offline. Start it with the project virtual environment.' }))
             .finally(()=>{if(keepAlive !== null)clearInterval(keepAlive);});
         return true;
     }
