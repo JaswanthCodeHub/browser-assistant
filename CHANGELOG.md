@@ -1,3 +1,8 @@
+# 2.9.7
+
+- Continue from reading passages with multiple-choice options to passages with one text box per blank.
+- Verify one word for each blank against its passage, fill every field, and check the complete set before the shared Submit.
+
 # 2.9.6
 
 - Recognize linked reading blanks from their numbered prompts, including layouts without named radio groups or associated labels.

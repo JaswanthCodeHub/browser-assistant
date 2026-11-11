@@ -373,6 +373,9 @@ def parse_answer_check(raw, count):
     return answers
 
 
+SINGLE_WORD_FORMAT = '\nQuestion format: one word.'
+
+
 def displayed_single_choices(text):
     question, separator, option_text = text.strip().rpartition('\nA.')
     if not separator or not re.search(r'\n(?:Question format: )?Select one answer\.$', question, re.I):
@@ -438,12 +441,23 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
     check_messages = [{'role': 'system', 'content': instruction}, *messages[1:]]
     matrix_math = matrix_question(messages)
     choices = displayed_single_choices(question_text) if len(items) == 1 else {}
-    if require_agreement and not choices:
-        raise VisionUnconfirmedError('Expected one linked answer with its displayed options.')
+    single_word = require_agreement and len(items) == 1 and question_text.rstrip().endswith(SINGLE_WORD_FORMAT)
+    if require_agreement and not (choices or single_word):
+        raise VisionUnconfirmedError('Expected one linked answer with displayed options or a one-word response.')
+    if single_word:
+        instruction += ' This is one reading blank. Fill the numbered gap using the entire passage. Return exactly one word, without an option label or punctuation around it.'
+        check_messages[0]['content'] = instruction
 
     def answer_key(entries):
         if choices:
             return bind_displayed_choice(entries[0].get('answer'), choices, matrix_math=matrix_math)
+        if single_word:
+            value = entries[0].get('answer')
+            if isinstance(value, str):
+                word = value.strip()
+                if all(part.isalpha() for part in re.split(r"['’\-]", word)):
+                    return word.lower()
+            return None
         keys = tuple(normalize_checked_answer(item.get('answer'), matrix_math=matrix_math) for item in entries)
         return keys if all(keys) else None
 
@@ -462,14 +476,19 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
                     items[0].pop('reasoning', None)
                 items[0]['answer'] = f'Option {current}: {choices[current]}'
                 return json.dumps(items, ensure_ascii=False)
+            if single_word:
+                if current != first:
+                    items[0].pop('reasoning', None)
+                items[0]['answer'] = (items[0] if current == first else verified[0])['answer'].strip()
+                return json.dumps(items, ensure_ascii=False)
             return results
-        if not choices and current is not None:
+        if not (choices or single_word) and current is not None:
             break
         if not attempt:
             previous = current
             check_messages = [*check_messages, {
                 'role': 'user',
-                'content': 'Solve again using the original question and options. Return the full verification JSON with the required ids.',
+                'content': 'Solve again using the original question and its context. Return the full verification JSON with the required ids.',
             }]
     # When both independent verifications failed to parse, prefer delivering the
     # primary answer over blocking the automation entirely. The primary solve was
@@ -485,7 +504,8 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
             agreed = sum(a == b for a, b in zip(first, best))
             if agreed > len(first) // 2:
                 return results
-    raise VisionUnconfirmedError('The independent solves could not agree on the displayed answer.')
+    raise VisionUnconfirmedError('The independent solves could not agree on the answer for this blank.' if single_word
+                                 else 'The independent solves could not agree on the displayed answer.')
 
 
 async def cross_check_visual_answers(messages, results, model, complete, comparison=None, *, require_agreement=False):

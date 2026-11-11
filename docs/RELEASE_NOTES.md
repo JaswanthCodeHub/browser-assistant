@@ -1,4 +1,10 @@
-# Browser Assistant 2.9.6
+# Browser Assistant 2.9.7
+
+- Reading sets with one-word text boxes now continue in the same run as multiple-choice reading sets.
+- The extension verifies each word using the shared passage and checks every field before clicking Submit.
+- Update and restart the backend along with the extension to enable one-word verification.
+
+## Browser Assistant 2.9.6
 
 - Reading sets with a shared passage and Submit button now match each numbered blank to its own options.
 - The extension verifies the complete set before selecting answers. It checks the selections together before submitting and waits for the next passage.

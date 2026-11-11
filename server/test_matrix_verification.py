@@ -164,3 +164,19 @@ class MatrixVerificationTests(unittest.IsolatedAsyncioTestCase):
         complete = AsyncMock(side_effect=[self.response('Option A'), self.response('Option B: current == head after the first visit')])
         with self.assertRaises(VisionUnconfirmedError):
             await cross_check_text_answers([], json.dumps([initial]), complete, question_text=text)
+
+    async def test_solve_route_requires_agreement_for_one_word_blanks(self):
+        question = 'Leo comes (1) ____ Canada.\n\nWhich word best fits blank (1)?\nQuestion format: one word.'
+        request = main.PageContent(text=question, url='https://example.test', practice_type='mcq', require_answer_agreement=True)
+        primary = json.dumps([{'type': 'mcq', 'question': 'Which word best fits blank (1)?', 'answer': 'from'}])
+        with patch.object(main, 'try_groq', AsyncMock(side_effect=[primary, self.response('From')])) as groq, \
+             patch.object(main, '_groq_disabled_until', 0):
+            result = await main.solve_questions(request)
+            self.assertTrue(result['answer_agreement'])
+            self.assertEqual(json.loads(result['results'])[0]['answer'], 'from')
+            self.assertIn('exactly one word', groq.await_args_list[0].args[0][0]['content'])
+
+        for check in [self.response('away from'), self.response('in'), '{}']:
+            with self.subTest(check=check), self.assertRaises(VisionUnconfirmedError):
+                await cross_check_text_answers([], primary, AsyncMock(side_effect=[check, '{}']),
+                                               question_text=question, require_agreement=True)

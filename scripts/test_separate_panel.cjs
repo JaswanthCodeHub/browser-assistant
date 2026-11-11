@@ -57,11 +57,13 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
                 if (url.pathname === '/health') return Response.json({status: 'ok'});
                 if (url.pathname === '/history') return Response.json([]);
                 if (url.pathname === '/extension-release') return Response.json({version: '2.9.1'});
-                if (url.pathname === '/solve' && body.url === 'https://learning.ccbp.in/test-reading') {
+                if (url.pathname === '/solve' && /^https:\/\/learning\.ccbp\.in\/test-reading(?:\?written)?$/.test(body.url || '')) {
                     const blank = Number(body.text.match(/Answer only this question: Which word best fits blank \((\d+)\)/)?.[1]);
-                    const answers = ['Option C: stand', 'Option A: answer', 'Option C: shop'];
+                    const written = body.text.endsWith('Question format: one word.');
+                    const answers = written ? ['from', 'during', 'if'] : ['Option C: stand', 'Option A: answer', 'Option C: shop'];
+                    const expectedContext = written ? 'asked him (3) ____ he liked our school' : 'museum (3) ____';
                     if (!body.require_answer_agreement || !answers[blank - 1]
-                        || !body.text.includes('museum (3) ____') || body.text.includes('PRIVATE HEADER')) {
+                        || !body.text.includes(expectedContext) || body.text.includes('PRIVATE HEADER')) {
                         return Response.json({detail: 'Incorrect reading request'}, {status: 422});
                     }
                     if (globalThis.failReadingBlank === blank) return Response.json({
@@ -86,7 +88,7 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
         await context.route(secondUrl, route => route.fulfill({contentType: 'text/html', body:
             '<!doctype html><title>Second test tab</title><main>Panel test fixture</main>',
         }));
-        await context.route(readingUrl, route => route.fulfill({contentType: 'text/html', body: `<!doctype html>
+        await context.route(url => url.origin + url.pathname === readingUrl, route => route.fulfill({contentType: 'text/html', body: `<!doctype html>
             <header>PRIVATE HEADER</header>
             <main style="display:flex;gap:24px">
                 <section><p id="passage">At the museum, we had to (1) ____ in line. The robots could (2) ____ questions.
@@ -99,9 +101,21 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
                 window.submissions = [];
                 function render() {
                     questions.replaceChildren();
+                    const written = window.submissions.length === 1 && location.search === '?written';
+                    const enableSubmit = () => { setTimeout(() => { submit.disabled = false; }, 175); };
                     groups.forEach((options, index) => {
                         const group = document.createElement('div');
                         group.innerHTML = '<div><span>Which word best fits blank (' + (index + 1) + ')?</span></div>';
+                        if (written) {
+                            const field = document.createElement('textarea');
+                            field.placeholder = 'Enter your answer';
+                            field.addEventListener('input', () => {
+                                if ([...questions.querySelectorAll('textarea')].every(item => item.value)) enableSubmit();
+                            });
+                            group.append(field);
+                            questions.append(group);
+                            return;
+                        }
                         for (const text of options) {
                             const row = document.createElement('div');
                             // No radio group names or associated labels, like an
@@ -111,7 +125,7 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
                             row.querySelector('input').addEventListener('click', event => {
                                 for (const other of group.querySelectorAll('input')) other.checked = other === event.target;
                                 if (questions.querySelectorAll('input:checked').length === groups.length) {
-                                    setTimeout(() => { submit.disabled = false; }, 175);
+                                    enableSubmit();
                                 }
                             });
                             group.append(row);
@@ -122,10 +136,14 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
                     submit.textContent = 'Submit';
                     submit.disabled = true;
                     submit.onclick = () => {
-                        window.submissions.push([...questions.querySelectorAll('input:checked')]
-                            .map(input => input.parentElement.nextElementSibling.textContent));
+                        window.submissions.push(written
+                            ? [...questions.querySelectorAll('textarea')].map(field => field.value)
+                            : [...questions.querySelectorAll('input:checked')].map(input => input.parentElement.nextElementSibling.textContent));
                         if (window.submissions.length === 1) {
-                            document.getElementById('passage').prepend('On the second trip, ');
+                            const passage = document.getElementById('passage');
+                            if (location.search === '?written') {
+                                passage.textContent = 'Leo comes (1) ____ Canada. He sat next to me (2) ____ our English lesson. After class, I asked him (3) ____ he liked our school.';
+                            } else passage.prepend('On the second trip, ');
                             render();
                         } else questions.innerHTML = '<p>Assessment submitted successfully</p>';
                     };
@@ -142,21 +160,25 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
         const windows = () => worker.evaluate(() => chrome.windows.getAll({windowTypes: ['popup']}));
         let detached;
 
-        await t.test('solves every reading blank before the shared Submit and continues to the next passage', async () => {
-            const reading = await context.newPage();
-            try {
-                await reading.goto(readingUrl);
-                await reading.locator('#assistant-trigger').waitFor();
-                await reading.keyboard.press('Backquote');
-                await reading.locator('#mode-qa').click();
-                await reading.locator('#assistant-auto-start-btn').click();
-                await eventually(() => reading.locator('#assistant-automation-state').textContent()
-                    .then(state => state === 'COMPLETED'), 'Both reading sets should complete');
-                assert.deepEqual(await reading.evaluate(() => window.submissions),
-                    [['stand', 'answer', 'shop'], ['stand', 'answer', 'shop']]);
-                assert.equal(await reading.locator('#assistant-automation-completed').textContent(), '2');
-            } finally { await reading.close(); }
-        });
+        for (const {name, query, secondAnswers} of [
+            {name: 'continues to the next multiple-choice passage', query: '', secondAnswers: ['stand', 'answer', 'shop']},
+            {name: 'continues from multiple-choice to one-word text boxes', query: '?written', secondAnswers: ['from', 'during', 'if']},
+        ]) {
+            await t.test(name, async () => {
+                const reading = await context.newPage();
+                try {
+                    await reading.goto(readingUrl + query);
+                    await reading.locator('#assistant-trigger').waitFor();
+                    await reading.keyboard.press('Backquote');
+                    await reading.locator('#mode-qa').click();
+                    await reading.locator('#assistant-auto-start-btn').click();
+                    await eventually(() => reading.locator('#assistant-automation-state').textContent()
+                        .then(state => state === 'COMPLETED'), 'Both reading sets should complete');
+                    assert.deepEqual(await reading.evaluate(() => window.submissions), [['stand', 'answer', 'shop'], secondAnswers]);
+                    assert.equal(await reading.locator('#assistant-automation-completed').textContent(), '2');
+                } finally { await reading.close(); }
+            });
+        }
 
         await t.test('leaves the reading set unsubmitted when one blank is unverified', async () => {
             const reading = await context.newPage();

@@ -411,13 +411,14 @@ function mountJournalCountdown(signal: AbortSignal) {
             return { ...coding, signature: `code:${window.location.pathname}:${coding.language}:${identity}` };
         }
         const question = adapter.getQuestion(document);
-        if (!question || !normalizeAutomationText(question.text) || (question.type !== 'short-answer' && question.options.length < 2)) return null;
-        if (question.type === 'compound-mcq') {
-            return { ...question, signature: JSON.stringify(['compound-mcq',
+        if (!question || !normalizeAutomationText(question.text)) return null;
+        if (question.compoundQuestions) {
+            return { ...question, signature: JSON.stringify([question.type,
                 question.compoundSubmit ? question.compoundContext : '',
                 question.compoundQuestions.map(group => [group.identityText || group.text, group.options.map(option => option.identityText || option.text)]),
             ]) };
         }
+        if (question.type !== 'short-answer' && question.options.length < 2) return null;
         return { ...question, text: normalizeAutomationText(question.text), options: question.options.map((option, index) => ({
             ...option, index, text: normalizeAutomationText(option.text),
         })), signature: questionSignature(question.identityText || question.text, question.options)
@@ -662,7 +663,7 @@ function mountJournalCountdown(signal: AbortSignal) {
         return null;
     }
 
-    async function waitForQuestionSubmit(question, runId, adapter, answerIndexes, answerText) {
+    async function waitForQuestionSubmit(question, runId, adapter, answerIndexes, answerText, linkedAnswers = null) {
         let deadline = Date.now() + 15000;
         while (Date.now() < deadline && automation.running && automation.runId === runId) {
             const pausedAt = Date.now();
@@ -680,14 +681,12 @@ function mountJournalCountdown(signal: AbortSignal) {
             }
             if (adapter.isSaving?.(document)) {
                 automation.state = 'WAITING_FOR_SAVE'; updateAutomationUI();
-            } else if (question.type !== 'compound-mcq' && adapter.getSubmittedAdvance?.(document)) {
+            } else if (!linkedAnswers && adapter.getSubmittedAdvance?.(document)) {
                 return { submitted: true };
             } else if (fresh) {
                 if ((question.type === 'short-answer' && fresh.input?.value !== answerText)
-                    || (question.type === 'compound-mcq'
-                        && !fresh.compoundQuestions.every((group, index) =>
-                            !group.options.some(option => option.disabled) && selectionMatches(group, [answerIndexes[index]])))
-                    || (answerIndexes && !['short-answer', 'ordering', 'compound-mcq'].includes(question.type)
+                    || (linkedAnswers && !fresh.compoundQuestions.every((group, index) => linkedAnswerMatches(group, linkedAnswers[index])))
+                    || (answerIndexes && !['short-answer', 'ordering'].includes(question.type)
                         && !selectionMatches(fresh, answerIndexes))) {
                     throw new Error('The selected answer changed while waiting. No Submit was clicked.');
                 }
@@ -707,6 +706,18 @@ function mountJournalCountdown(signal: AbortSignal) {
     function selectionMatches(question, answerIndexes) {
         return question.options.every((option, index) =>
             Boolean(option.isSelected?.() || option.input?.checked) === answerIndexes.includes(index));
+    }
+
+    function linkedAnswerMatches(group, answer) {
+        if (group.input) return !group.input.disabled && !group.input.readOnly && group.input.value === answer;
+        return !group.options.some(option => option.disabled) && selectionMatches(group, [answer]);
+    }
+
+    function fillPracticeField(field, value) {
+        const prototype = field.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(prototype, 'value').set.call(field, value);
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+        field.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
     async function waitForPracticeTransition(previousSignature, runId) {
@@ -1256,24 +1267,30 @@ function mountJournalCountdown(signal: AbortSignal) {
         return false;
     }
 
-    async function solveCompoundMcq(compound, runId, adapter) {
+    async function solveCompoundQuestion(compound, runId, adapter) {
         const url = location.href;
+        const freeResponse = compound.type === 'compound-short-answer';
         const findCurrent = (position) => {
             const context = getAutomationContext();
             if (location.href !== url || context.target.id !== automation.targetId
-                || !automationPolicy.canExecute('select', context) || !automationPolicy.canExecute('validate', context)) return null;
+                || !automationPolicy.canExecute(freeResponse ? 'fill' : 'select', context)
+                || !automationPolicy.canExecute('validate', context)) return null;
             const fresh = getAuthorizedQuestion(context);
             if (fresh?.signature !== compound.signature) return null;
             const group = fresh.compoundQuestions[position];
-            return group?.options.some(option => option.disabled) ? null : group;
+            if (!group || group.input?.disabled || group.input?.readOnly
+                || group.options.some(option => option.disabled)) return null;
+            return group;
         };
-        const answerIndexes = [];
+        const answers: (string | number)[] = [];
         for (let position = 0; position < compound.compoundQuestions.length; position++) {
             if (!(await waitWhilePaused(runId))) return null;
             const question = findCurrent(position);
             if (!question) throw new Error('A linked question changed or is already locked. Review it on the page.');
             automation.state = 'SOLVING'; updateAutomationUI();
-            const prompt = `Reading context:\n${compound.compoundContext || ''}\n\nAnswer only this question: ${question.text}\nQuestion format: select one answer.\n${question.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option.text}`).join('\n')}`;
+            const format = freeResponse ? 'Question format: one word.'
+                : `Question format: select one answer.\n${question.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option.text}`).join('\n')}`;
+            const prompt = `Reading context:\n${compound.compoundContext || ''}\n\nAnswer only this question: ${question.text}\n${format}`;
             const response = await window.BrowserAssistantAnswerRequests.run({
                 request: () => apiRequest('/solve', 'POST', {
                     text: prompt, url, practice_type: 'mcq', verify_answer: true, require_answer_agreement: true,
@@ -1292,27 +1309,42 @@ function mountJournalCountdown(signal: AbortSignal) {
             if (response.data?.answer_agreement !== true) throw new Error('Update and restart the Browser Assistant backend to verify linked answers.');
             let results;
             try { results = JSON.parse(response.data.results); } catch { throw new Error('The answer service returned invalid linked-question data.'); }
-            const indexes = answerIndexesFromResult(results, question);
-            if (results[0]?.type !== 'mcq' || indexes.length !== 1) throw new Error('The verified answer did not match this linked question’s displayed options.');
-            answerIndexes.push(indexes[0]);
+            if (!Array.isArray(results) || results.length !== 1 || results[0]?.type !== 'mcq') {
+                throw new Error('Expected one verified answer for each linked question.');
+            }
+            if (freeResponse) {
+                const word = results[0].answer;
+                if (typeof word !== 'string' || !/^\p{L}+(?:['’\-]\p{L}+)*$/u.test(word)) {
+                    throw new Error(`Blank ${position + 1} requires one word. Review the answer before submitting.`);
+                }
+                answers.push(word);
+            } else {
+                const indexes = answerIndexesFromResult(results, question);
+                if (indexes.length !== 1) throw new Error('The verified answer did not match this linked question’s displayed options.');
+                answers.push(indexes[0]);
+            }
         }
-        automation.error = ''; automation.state = 'SELECTING'; updateAutomationUI();
-        for (const [position, index] of answerIndexes.entries()) {
+        automation.error = ''; automation.state = freeResponse ? 'FILLING' : 'SELECTING'; updateAutomationUI();
+        for (const [position, answer] of answers.entries()) {
             if (!(await waitWhilePaused(runId))) return null;
             const question = findCurrent(position);
-            const option = question?.options[index];
-            if (!option) throw new Error('A linked question option disappeared before selection.');
-            if (!(option.isSelected?.() || option.input?.checked)) (option.input || option.control)?.click();
+            if (!question) throw new Error('A linked answer field or option disappeared.');
+            if (freeResponse) {
+                if (question.input.value !== answer) fillPracticeField(question.input, answer);
+            } else {
+                const option = question.options[answer];
+                if (!(option.isSelected?.() || option.input?.checked)) (option.input || option.control)?.click();
+            }
             let selected = false;
             for (let attempt = 0; attempt < 50; attempt++) {
                 if (!(await waitWhilePaused(runId))) return null;
                 const current = findCurrent(position);
-                if (current && selectionMatches(current, [index])) { selected = true; break; }
+                if (current && linkedAnswerMatches(current, answer)) { selected = true; break; }
                 await new Promise(resolve => setTimeout(resolve, 50));
             }
-            if (!selected) throw new Error(`Selection could not be confirmed for linked question ${position + 1}. Review the group before submitting.`);
+            if (!selected) throw new Error(`The answer could not be entered for linked question ${position + 1}. Review the group before submitting.`);
         }
-        return waitForQuestionSubmit(compound, runId, adapter, answerIndexes, '');
+        return waitForQuestionSubmit(compound, runId, adapter, null, '', answers);
     }
 
     async function submitPracticeAnswer(question, button, runId, adapter) {
@@ -1493,9 +1525,9 @@ function mountJournalCountdown(signal: AbortSignal) {
             }
             if (automation.processed.has(question.signature)) { automation.error = 'Repeated question detected.'; stopAutomation('PAUSED'); break; }
             automation.currentSignature = question.signature;
-            if (question.type === 'compound-mcq') {
+            if (question.compoundQuestions) {
                 try {
-                    const ready = await solveCompoundMcq(question, runId, currentAdapter);
+                    const ready = await solveCompoundQuestion(question, runId, currentAdapter);
                     if (ready?.button && automation.running && automation.runId === runId
                         && await submitPracticeAnswer(question, ready.button, runId, currentAdapter)) continue;
                 } catch (error) {
@@ -1624,10 +1656,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             if (shortAnswer) {
                 if (current.type !== 'short-answer' || !automationPolicy.canExecute('fill', currentContext)) { automation.error = 'Answer field changed or filling is disabled.'; stopAutomation('PAUSED'); break; }
                 const field = current.input;
-                const prototype = field.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-                Object.getOwnPropertyDescriptor(prototype, 'value').set.call(field, answerText);
-                field.dispatchEvent(new Event('input', { bubbles: true }));
-                field.dispatchEvent(new Event('change', { bubbles: true }));
+                fillPracticeField(field, answerText);
                 if (field.value !== answerText) { automation.error = 'Answer entry could not be verified.'; stopAutomation('PAUSED'); break; }
             }
             if (!shortAnswer && !ordering && current.selectionType === 'multiple') {

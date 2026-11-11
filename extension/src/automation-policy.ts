@@ -141,6 +141,7 @@
             const labelledText = (element) => (element?.getAttribute('aria-labelledby') || '')
                 .split(/\s+/).filter(Boolean).map((id) => doc.getElementById(id)).filter(Boolean).map(textOf).join(' ');
             const radioSelector = 'input[type="radio"],[role="radio"]';
+            const readingFieldSelector = 'textarea,input[type="text"],input:not([type])';
             const blankPrompt = /^which word best fits (?:the )?blank\s*\(\s*(\d+)\s*\)\s*\?$/i;
             const blankNumbers = (text: string) => [...text.matchAll(/\(\s*(\d+)\s*\)\s*(?:_{2,}|\.{3,}|…)/g)]
                 .map(match => Number(match[1]));
@@ -180,8 +181,21 @@
                         !node.parentElement?.closest('[role="radio"]') && (visible(node)
                             || (node.matches('input') && ([...(node.labels || [])].some(visible)
                                 || (node.parentElement !== scope && visible(node.parentElement))))));
+                    const fields = [...scope.querySelectorAll(readingFieldSelector)].filter(node => visible(node)
+                        && !node.closest('#assistant-root,.monaco-editor,.ace_editor,.CodeMirror'));
                     const positions = new Map([...scope.querySelectorAll('*')].map((node, index) => [node, index]));
                     const follows = (before: Element, after: Element) => positions.get(before) < positions.get(after);
+                    if (!controls.length && fields.length) {
+                        const questions = headings.map((heading, position) => {
+                            const next = headings[position + 1] || submit;
+                            const group = fields.filter(node => follows(heading, node) && follows(node, next));
+                            return { text: textOf(heading), options: [], input: group.length === 1 ? group[0] : null, container: scope };
+                        });
+                        if (questions.some(question => !question.input) || fields.length !== questions.length) return null;
+                        return { ...questions[0], type: 'compound-short-answer', compoundQuestions: questions,
+                            compoundContext: context, compoundSubmit: submit };
+                    }
+                    if (fields.length) return null;
                     const questions = headings.map((heading, position) => {
                         const next = headings[position + 1] || submit;
                         const group = controls.filter(node => follows(heading, node) && follows(node, next));
@@ -443,7 +457,7 @@
             const scope = question.form || question.container?.closest('fieldset,[role="group"],article,section,main') || question.container?.parentElement;
             const enabled = button => button.isConnected && button.getClientRects().length > 0
                 && !button.disabled && button.getAttribute('aria-disabled') !== 'true' && !button.closest('#assistant-root');
-            if (question.type === 'compound-mcq') {
+            if (question.compoundQuestions) {
                 if (question.compoundSubmit) return enabled(question.compoundSubmit) ? question.compoundSubmit : null;
                 const buttons = question.compoundQuestions.map(group => this.getSubmit(_doc, group));
                 return buttons[0] && buttons.every(button => button === buttons[0]) ? buttons[0] : null;
