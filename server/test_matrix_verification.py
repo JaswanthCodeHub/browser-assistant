@@ -124,10 +124,12 @@ class MatrixVerificationTests(unittest.IsolatedAsyncioTestCase):
                 self.messages, self.results, 'test',
                 AsyncMock(return_value=self.response('B. [[3,-5],[-1,2]]')), require_agreement=True)
 
-    async def test_text_stops_when_both_checks_are_incomplete(self):
+    async def test_text_falls_back_when_both_checks_are_incomplete(self):
         complete = AsyncMock(return_value='{}')
-        with self.assertRaises(VisionUnconfirmedError):
-            await cross_check_text_answers(self.messages, self.results, complete)
+        # When both independent verifications return unparseable JSON, the
+        # primary answer is delivered instead of blocking with a 422 error.
+        result = await cross_check_text_answers(self.messages, self.results, complete)
+        self.assertEqual(result, self.results)
         self.assertEqual(complete.await_count, 2)
 
     async def test_displayed_choice_agreement_uses_original_option_text(self):
