@@ -55,21 +55,9 @@ _groq_key_index = 0  # current active key index
 
 def get_groq_client():
     """Get the current Groq client. Returns None if no keys configured."""
-    global _groq_key_index
     if not _groq_clients:
         return None
     return _groq_clients[_groq_key_index % len(_groq_clients)]
-
-def rotate_groq_key(reason="rate limit"):
-    """Rotate to the next API key."""
-    global _groq_key_index
-    if len(_groq_clients) <= 1:
-        return False
-    old_idx = _groq_key_index % len(_groq_clients)
-    _groq_key_index += 1
-    new_idx = _groq_key_index % len(_groq_clients)
-    logger.warning(f"Rotating API key ({reason}): key #{old_idx+1} → key #{new_idx+1} (of {len(_groq_clients)})")
-    return True
 
 logger.info(f"Loaded {len(_groq_clients)} Groq API key(s)")
 
@@ -191,7 +179,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.9.1", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.9.2", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)
@@ -284,10 +272,16 @@ class HistoryEntry(BaseModel):
 
 @app.get("/health")
 async def health():
+    try:
+        journal_subjects = list(load_syllabus())
+    except HTTPException:
+        # The journal route reports its own configuration error. Other
+        # backend capabilities remain available while the file is repaired.
+        journal_subjects = []
     return {
         "status": "ok",
         "version": app.version,
-        "journal_syllabus_subjects": list(load_syllabus()),
+        "journal_syllabus_subjects": journal_subjects,
         "journal_syllabus_live_reload": True,
         "code_review_before_submit": True,
         "compact_code_review": True,
@@ -370,12 +364,12 @@ def clear_history():
 
 async def try_groq(messages: list, model: str = None, temperature: float = 0.0, _token_limit: int = GROQ_COMPLETION_TOKEN_LIMIT, _review: bool = False) -> str:
     """Call Groq with automatic API key rotation on rate limit (429)."""
-    global _groq_disabled_until
+    global _groq_disabled_until, _groq_key_index
     if time.monotonic() < _groq_disabled_until:
         remaining = max(1, round(_groq_disabled_until - time.monotonic()))
         raise RuntimeError(f"Groq temporarily disabled after an access failure ({remaining}s remaining)")
-    client = get_groq_client()
-    if not client:
+    clients = tuple(_groq_clients)
+    if not clients:
         raise Exception("Groq client not configured — set GROQ_API_KEY in .env")
     use_model = model or GROQ_TEXT_MODEL
     loop = asyncio.get_running_loop()
@@ -387,9 +381,13 @@ async def try_groq(messages: list, model: str = None, temperature: float = 0.0, 
         if use_model in {'openai/gpt-oss-20b', 'openai/gpt-oss-120b'}:
             review_options['reasoning_effort'] = 'low'
 
-    # Try up to len(_groq_clients) keys on rate limit
-    attempts = len(_groq_clients)
+    # Use a request-local order so another request cannot skip a backup key
+    # by advancing the preferred index while this call is in flight.
+    first_key = _groq_key_index % len(clients)
+    attempts = len(clients)
     for attempt in range(attempts):
+        key_index = (first_key + attempt) % attempts
+        client = clients[key_index]
         try:
             response = await asyncio.wait_for(
                 loop.run_in_executor(
@@ -424,9 +422,11 @@ async def try_groq(messages: list, model: str = None, temperature: float = 0.0, 
                 raise
             # Check for rate limit (429) error
             if "429" in err_str or "rate_limit" in err_str.lower() or "401" in err_str or "invalid_api_key" in err_str.lower():
-                if attempt + 1 < attempts and rotate_groq_key(reason=f"provider rejection on {use_model}"):
-                    client = get_groq_client()
-                    logger.info(f"Retrying {use_model} with new API key (attempt {attempt+2}/{attempts})...")
+                if attempt + 1 < attempts:
+                    if _groq_key_index % attempts == key_index:
+                        _groq_key_index += 1
+                    next_key = (key_index + 1) % attempts
+                    logger.info("Retrying %s with API key #%s (attempt %s/%s)", use_model, next_key + 1, attempt + 2, attempts)
                     continue
             # Not a rate limit error or no more keys — re-raise
             raise

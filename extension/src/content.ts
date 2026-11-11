@@ -74,7 +74,7 @@ function mountJournalCountdown(signal: AbortSignal) {
     };
     const navigationCleanup = [];
 
-    console.log("Browser Assistant v3.0 loaded.");
+    console.log("Browser Assistant v" + extensionVersion + " loaded.");
 
     const SERVER = 'http://localhost:8000';
 
@@ -1522,7 +1522,11 @@ function mountJournalCountdown(signal: AbortSignal) {
             370000,
         );
         if (!response) throw new Error('Local server did not respond');
-        if (response.error) throw new Error(response.error);
+        if (response.error) {
+            if (response.error.startsWith('Local server is offline')) setServerStatus(false);
+            throw new Error(response.error);
+        }
+        if (path !== '/health' && response.status) setServerStatus(true);
         return response;
     }
 
@@ -1570,15 +1574,22 @@ function mountJournalCountdown(signal: AbortSignal) {
     }
 
     // ── Server health check ───────────────────────────────────────────────────
+    function setServerStatus(online: boolean) {
+        serverOnline = online;
+        const dot = root.querySelector('.status-dot');
+        if (!dot) return;
+        dot.classList.remove('unknown', 'online', 'offline');
+        dot.classList.add(online ? 'online' : 'offline');
+        dot.setAttribute('title', online ? 'Server online' : 'Server offline');
+    }
+
     async function checkServer() {
+        let online = false;
         try {
             const res = await apiRequest('/health', 'GET');
-            serverOnline = res.ok;
-        } catch {
-            serverOnline = false;
-        }
-        // Re-render if panel is open to show status
-        if (!isCollapsed) render();
+            online = res.ok;
+        } catch { /* The next request can reconnect when the backend starts. */ }
+        if (serverOnline === null) setServerStatus(online);
     }
 
     // Check once on load
@@ -1792,7 +1803,7 @@ function mountJournalCountdown(signal: AbortSignal) {
     }, {capture:true,signal:lifecycle.signal});
 
     // ── Vision scan ───────────────────────────────────────────────────────────
-    async function visionScan(continueExistingScan: boolean | Event = false, requestedLanguage = null, practiceType = selectedMode) {
+    async function visionScan(continueExistingScan = false, requestedLanguage = null, practiceType = selectedMode) {
         if (isScanning && !continueExistingScan) return;
         const scanWasAlreadyRunning = isScanning;
         isScanning = true;
@@ -1943,13 +1954,6 @@ function mountJournalCountdown(signal: AbortSignal) {
         if (isScanning) return;
         isScanning = true;
 
-        // Show server-offline warning early
-        if (serverOnline === false) {
-            showError("Server offline. Start the backend with: python main.py");
-            isScanning = false;
-            return;
-        }
-
         isCollapsed = false;
         render();
         setLoading("Solving…");
@@ -1995,7 +1999,6 @@ function mountJournalCountdown(signal: AbortSignal) {
 
             const data = res.data;
             await assertVisionQuestionCurrent(context);
-            serverOnline = true;
             let parsed;
             try {
                 parsed = JSON.parse(data.results);
@@ -2016,9 +2019,6 @@ function mountJournalCountdown(signal: AbortSignal) {
             console.error("Scan error:", error);
             if (error.name === 'AbortError') {
                 showError("Request timed out — server may be busy, please try again");
-            } else if (error instanceof TypeError && error.message.includes('fetch')) {
-                serverOnline = false;
-                showError(`Error: ${error.message}`);
             } else {
                 showError(`Error: ${error.message}`);
             }
@@ -2336,7 +2336,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             bindTabKeyboardNavigation();
             document.getElementById('assistant-history-btn').onclick = openHistory;
             document.getElementById('assistant-scan-btn')?.addEventListener('click', scanPage);
-            document.getElementById('assistant-vision-btn')?.addEventListener('click', visionScan);
+            document.getElementById('assistant-vision-btn')?.addEventListener('click', () => { void visionScan(); });
             document.getElementById('assistant-auto-start-btn')?.addEventListener('click', startPracticeAutomation);
             document.getElementById('assistant-export-question-btn')?.addEventListener('click', exportQuestionDiagnostic);
             document.getElementById('assistant-auto-pause-btn')?.addEventListener('click', pauseOrResumeAutomation);
