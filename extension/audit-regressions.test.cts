@@ -156,11 +156,15 @@ test('semantic adapter preserves every linked blank before a shared Submit', () 
         <section><p>Which word best fits blank (3)?</p><label><input type="radio" name="three">quiet</label><label><input type="radio" name="three">cloudy</label><label><input type="radio" name="three">hungry</label><label><input type="radio" name="three">happy</label></section><button>Submit</button></form></main></body></html>`);
     window.HTMLElement.prototype.getClientRects = () => [{}];
     vm.runInContext(fs.readFileSync(`${__dirname}/automation-policy.js`, 'utf8'), vm.createContext({ window, URL }));
-    const question = window.BrowserAssistantAutomationPolicy.getAdapter('semantic-mcq').getQuestion(document);
+    const adapter = window.BrowserAssistantAutomationPolicy.getAdapter('semantic-mcq');
+    const question = adapter.getQuestion(document);
     assert.equal(question.type, 'compound-mcq');
     assert.equal(question.compoundQuestions.length, 3);
     assert.match(question.compoundContext, /football match/);
     assert.equal(question.compoundQuestions[1].options[0].text, 'score');
+    assert.equal(adapter.getSubmit(document, question), document.querySelector('button'));
+    document.querySelectorAll('section')[1].remove();
+    assert.equal(adapter.getQuestion(document), null);
 });
 
 test('short-answer prompt outside the answer/actions wrapper is detected', () => {

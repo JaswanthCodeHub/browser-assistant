@@ -191,7 +191,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.9.5", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.9.6", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)
@@ -209,6 +209,7 @@ class PageContent(BaseModel):
     repair_attempt: int = 0
     review_before_submit: bool = False
     verify_answer: bool = False
+    require_answer_agreement: bool = False
     starter_code: str | None = None
 
     @field_validator('starter_code')
@@ -1303,8 +1304,8 @@ REPAIR MODE:
         detect_requested_language(content.text) is not None or content.language is not None,
     )
     strict_code_review = require_code and (content.review_before_submit or not FAST_CODE_MODE or STRICT_REPAIR_REVIEW)
-    verify_answers = not require_code and (content.verify_answer or not FAST_SCAN_MODE)
-    if not require_code and content.practice_type in {'auto', 'mcq', 'math', 'aptitude'}:
+    verify_answers = not require_code and (content.verify_answer or content.require_answer_agreement or not FAST_SCAN_MODE)
+    if not require_code and not content.require_answer_agreement and content.practice_type in {'auto', 'mcq', 'math', 'aptitude'}:
         local_result = local_choice_result(trimmed_text, language)
         if local_result is not None:
             return local_result
@@ -1325,7 +1326,10 @@ REPAIR MODE:
             return await try_groq(prompt_messages, model=source_model, temperature=0.0)
 
         try:
-            checked = await cross_check_text_answers(messages, cleaned, independent_solve, question_text=trimmed_text)
+            checked = await cross_check_text_answers(
+                messages, cleaned, independent_solve, question_text=trimmed_text,
+                require_agreement=content.require_answer_agreement,
+            )
         except Exception as exc:
             if isinstance(exc, VisionUnconfirmedError):
                 message = str(exc)
@@ -1361,6 +1365,7 @@ REPAIR MODE:
                 cleaned, verified = await confirm_answers(cleaned, model_id)
                 return {"results": cleaned, "provider": f"groq ({model_id})" + (' [cross-checked]' if verified else ''),
                         "language": language, "answer_verified": verified,
+                        "answer_agreement": verified and content.require_answer_agreement,
                         "code_reviewed": strict_code_review and language != 'web'}
             else:
                 errors.append(f"{model_id}: returned empty/unparseable results")
@@ -1399,6 +1404,7 @@ REPAIR MODE:
                 "results": cleaned,
                 "provider": f"ollama ({OLLAMA_MODEL})" + (' [cross-checked]' if verified else ''),
                 "answer_verified": verified,
+                "answer_agreement": verified and content.require_answer_agreement,
                 "language": language,
                 "code_reviewed": strict_code_review and language != 'web',
             }

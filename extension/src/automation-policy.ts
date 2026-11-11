@@ -140,6 +140,75 @@
             };
             const labelledText = (element) => (element?.getAttribute('aria-labelledby') || '')
                 .split(/\s+/).filter(Boolean).map((id) => doc.getElementById(id)).filter(Boolean).map(textOf).join(' ');
+            const radioSelector = 'input[type="radio"],[role="radio"]';
+            const blankPrompt = /^which word best fits (?:the )?blank\s*\(\s*(\d+)\s*\)\s*\?$/i;
+            const blankNumbers = (text: string) => [...text.matchAll(/\(\s*(\d+)\s*\)\s*(?:_{2,}|\.{3,}|…)/g)]
+                .map(match => Number(match[1]));
+            const pageText = doc.body.textContent || '';
+            if (blankNumbers(pageText).length >= 2 && /which word best fits/i.test(pageText)) {
+                const blocks = [...doc.querySelectorAll('div,p,h1,h2,h3,h4,span,legend,[role="heading"]')]
+                    .filter(node => visible(node) && !node.closest('#assistant-root,nav,aside'));
+                const headings = blocks.filter(node => blankPrompt.test((node.textContent || '').trim())
+                    && ![...node.children].some(child => blankPrompt.test((child.textContent || '').trim())));
+                const passage = blocks.find(node => {
+                    const text = node.textContent || '';
+                    return text.length <= 12000 && blankNumbers(text).length >= 2
+                        && !/which word best fits/i.test(text) && !node.querySelector(radioSelector)
+                        && ![...node.children].some(child => blankNumbers(child.textContent || '').length >= 2);
+                });
+                if (passage && headings.length) {
+                    const context = textOf(passage);
+                    const numbers = blankNumbers(context).sort((a, b) => a - b);
+                    const headingNumbers = headings.map(node => Number(textOf(node).match(blankPrompt)?.[1]));
+                    // A partially rendered or unrecognized reading set must
+                    // never fall through to the ordinary single-answer solver.
+                    if (new Set(numbers).size !== numbers.length
+                        || [...headingNumbers].sort((a, b) => a - b).join() !== numbers.join()) return null;
+                    const submitSelector = 'button,input[type="submit"],[role="button"]';
+                    let scope = headings[0].parentElement;
+                    let submit: Element | undefined;
+                    for (; scope && scope !== doc.body; scope = scope.parentElement) {
+                        if (!headings.every(node => scope.contains(node))) continue;
+                        const submits = [...scope.querySelectorAll(submitSelector)].filter(node => visible(node)
+                            && !node.closest('#assistant-root')
+                            && /^submit(?: answer)?$/i.test(textOf(node) || node.getAttribute('value') || node.getAttribute('aria-label') || ''));
+                        if (submits.length > 1) return null;
+                        if (submits.length === 1) { [submit] = submits; break; }
+                    }
+                    if (!submit) return null;
+                    const controls = [...scope.querySelectorAll(radioSelector)].filter(node =>
+                        !node.parentElement?.closest('[role="radio"]') && (visible(node)
+                            || (node.matches('input') && ([...(node.labels || [])].some(visible)
+                                || (node.parentElement !== scope && visible(node.parentElement))))));
+                    const positions = new Map([...scope.querySelectorAll('*')].map((node, index) => [node, index]));
+                    const follows = (before: Element, after: Element) => positions.get(before) < positions.get(after);
+                    const questions = headings.map((heading, position) => {
+                        const next = headings[position + 1] || submit;
+                        const group = controls.filter(node => follows(heading, node) && follows(node, next));
+                        const options = group.map((control, index) => {
+                            const input = control.matches('input') ? control : control.querySelector('input[type="radio"]');
+                            let label: Element = input?.labels?.[0] || control.closest('label') || control;
+                            // Some reading options have an unlabelled radio
+                            // alongside a text span in the clickable row.
+                            while (!textOf(label) && label.parentElement && label.parentElement !== scope
+                                && !label.parentElement.contains(heading)
+                                && label.parentElement.querySelectorAll(radioSelector).length === 1) {
+                                label = label.parentElement;
+                            }
+                            const text = textOf(label) || control.getAttribute('aria-label') || labelledText(control);
+                            return { index, text, input, control, node: label,
+                                isSelected: () => Boolean(input?.checked || control.getAttribute('aria-checked') === 'true'),
+                                disabled: control.matches(':disabled,[aria-disabled="true"]') || Boolean(input?.disabled) };
+                        });
+                        return { text: textOf(heading), options, selectionType: 'single', container: scope };
+                    });
+                    if (questions.some(question => question.options.length < 2
+                        || question.options.some(option => !option.text)
+                        || new Set(question.options.map(option => option.text)).size !== question.options.length)) return null;
+                    return { ...questions[0], type: 'compound-mcq', compoundQuestions: questions,
+                        compoundContext: context, compoundSubmit: submit };
+                }
+            }
             const nativeRegion = doc.querySelector('#generic-question-container');
             const nativeLabels = [...(nativeRegion?.querySelectorAll('.drag-and-drop-option-label') || [])].filter(visible);
             const nativePrompt = nativeRegion?.querySelector('#generic-question-wrapper-id');
@@ -179,7 +248,7 @@
                     ? `checkbox:${control.form?.id || '__page__'}`
                     : control.matches('input[type="radio"]')
                     ? `native:${control.form?.id || ''}:${control.name || control.closest('form')?.id || ''}`
-                    : `aria:${control.closest('[role="radiogroup"]') || control.parentElement}`;
+                    : control.closest('[role="radiogroup"]') || control.parentElement;
                 if (!groups.has(key)) groups.set(key, []);
                 groups.get(key).push(control);
             }
@@ -374,6 +443,11 @@
             const scope = question.form || question.container?.closest('fieldset,[role="group"],article,section,main') || question.container?.parentElement;
             const enabled = button => button.isConnected && button.getClientRects().length > 0
                 && !button.disabled && button.getAttribute('aria-disabled') !== 'true' && !button.closest('#assistant-root');
+            if (question.type === 'compound-mcq') {
+                if (question.compoundSubmit) return enabled(question.compoundSubmit) ? question.compoundSubmit : null;
+                const buttons = question.compoundQuestions.map(group => this.getSubmit(_doc, group));
+                return buttons[0] && buttons.every(button => button === buttons[0]) ? buttons[0] : null;
+            }
             const explicitSubmits = [...(scope?.querySelectorAll('button[type="submit"],input[type="submit"],[role="button"][type="submit"]') || [])].filter(enabled);
             if (explicitSubmits.length) return explicitSubmits.length === 1 ? explicitSubmits[0] : null;
             const namedSubmit = [...(_doc.querySelectorAll('button:not(:disabled),[role="button"]:not([aria-disabled="true"])'))]

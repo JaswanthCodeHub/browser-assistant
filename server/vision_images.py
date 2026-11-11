@@ -422,7 +422,7 @@ def bind_displayed_choice(value, choices, *, matrix_math):
     return unique.pop() if len(unique) == 1 else None
 
 
-async def cross_check_text_answers(messages, results, complete, *, question_text=''):
+async def cross_check_text_answers(messages, results, complete, *, question_text='', require_agreement=False):
     items = json.loads(results)
     if not items or any(item.get('type') != 'mcq' for item in items):
         raise VisionUnconfirmedError('Verification requires a complete set of question answers.')
@@ -438,6 +438,8 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
     check_messages = [{'role': 'system', 'content': instruction}, *messages[1:]]
     matrix_math = matrix_question(messages)
     choices = displayed_single_choices(question_text) if len(items) == 1 else {}
+    if require_agreement and not choices:
+        raise VisionUnconfirmedError('Expected one linked answer with its displayed options.')
 
     def answer_key(entries):
         if choices:
@@ -473,11 +475,11 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
     # primary answer over blocking the automation entirely. The primary solve was
     # validated and the verification provider returned unusable JSON — a parsing
     # failure, not a disagreement — so a hard 422 is disproportionate.
-    if current is None and previous is None:
+    if not require_agreement and current is None and previous is None:
         return results
     # For multi-answer questions (fill-in-the-blank), accept the primary answers
     # when the majority of individual answers agree with any independent solve.
-    if not choices and first is not None and len(first) > 1:
+    if not require_agreement and not choices and first is not None and len(first) > 1:
         best = current or previous
         if best is not None:
             agreed = sum(a == b for a, b in zip(first, best))

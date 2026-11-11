@@ -52,6 +52,7 @@ interface AssistantMessageResponse {
         language?: string;
         code_reviewed?: boolean;
         answer_verified?: boolean;
+        answer_agreement?: boolean;
         items?: unknown[];
         groq_configured?: boolean;
         vision_question_context?: boolean;

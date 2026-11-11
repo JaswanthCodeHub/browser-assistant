@@ -132,6 +132,19 @@ class MatrixVerificationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, self.results)
         self.assertEqual(complete.await_count, 2)
 
+    async def test_linked_blank_requires_agreement_on_one_displayed_choice(self):
+        text = ('The phone began to (1) ____.\n\nWhich word best fits blank (1)?\n'
+                'Question format: select one answer.\nA. ring\nB. red\nC. chair')
+        results = json.dumps([{'type': 'mcq', 'answer': 'Option A: ring'}])
+        agree = AsyncMock(return_value=self.response('ring'))
+        checked = await cross_check_text_answers([], results, agree, question_text=text, require_agreement=True)
+        self.assertEqual(json.loads(checked)[0]['answer'], 'Option A: ring')
+
+        for checks in [['{}', '{}'], [self.response('Option B: red'), self.response('Option C: chair')]]:
+            with self.subTest(checks=checks), self.assertRaises(VisionUnconfirmedError):
+                await cross_check_text_answers([], results, AsyncMock(side_effect=checks),
+                                               question_text=text, require_agreement=True)
+
     async def test_displayed_choice_agreement_uses_original_option_text(self):
         text = ('Which condition identifies a full traversal of a circular linked list?\n'
                 'Question format: select one answer.\nA. current == head after the first visit\n'

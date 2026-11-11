@@ -1,4 +1,14 @@
-# Browser Assistant 2.9.4
+# Browser Assistant 2.9.6
+
+- Reading sets with a shared passage and Submit button now match each numbered blank to its own options.
+- The extension verifies the complete set before selecting answers. It checks the selections together before submitting and waits for the next passage.
+- Install the matching extension and backend versions together to enable linked-answer verification.
+
+## Browser Assistant 2.9.5
+
+- Text scans accept a primary answer when independent verification returns unparseable responses. Linked reading sets in 2.9.6 require agreement on each blank.
+
+## Browser Assistant 2.9.4
 
 - **Alt+A direct automation:** starts, pauses, and resumes the supported run without changing the visibility, position, size, or selected tab of the floating or separate panel. The shortcut is ignored while typing in inputs, textareas, and supported code editors.
 - **Automation history:** records direct run type, page, timestamps, totals, completed count, failed count, and final status in a dedicated SQLite table. Scan history remains separate.

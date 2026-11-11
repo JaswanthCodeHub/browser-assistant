@@ -1,3 +1,9 @@
+# 2.9.6
+
+- Recognize linked reading blanks from their numbered prompts, including layouts without named radio groups or associated labels.
+- Verify every blank against its own options, check that all selections are still present, and use the shared Submit once per set.
+- Wait for the next passage after submission, including when it reuses the same question and option text.
+
 # 2.9.5
 
 - Accept the primary answer when the independent verification solver returns unparseable responses instead of blocking automation with a 422 error.

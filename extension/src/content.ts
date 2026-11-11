@@ -412,6 +412,12 @@ function mountJournalCountdown(signal: AbortSignal) {
         }
         const question = adapter.getQuestion(document);
         if (!question || !normalizeAutomationText(question.text) || (question.type !== 'short-answer' && question.options.length < 2)) return null;
+        if (question.type === 'compound-mcq') {
+            return { ...question, signature: JSON.stringify(['compound-mcq',
+                question.compoundSubmit ? question.compoundContext : '',
+                question.compoundQuestions.map(group => [group.identityText || group.text, group.options.map(option => option.identityText || option.text)]),
+            ]) };
+        }
         return { ...question, text: normalizeAutomationText(question.text), options: question.options.map((option, index) => ({
             ...option, index, text: normalizeAutomationText(option.text),
         })), signature: questionSignature(question.identityText || question.text, question.options)
@@ -674,12 +680,15 @@ function mountJournalCountdown(signal: AbortSignal) {
             }
             if (adapter.isSaving?.(document)) {
                 automation.state = 'WAITING_FOR_SAVE'; updateAutomationUI();
-            } else if (adapter.getSubmittedAdvance?.(document)) {
+            } else if (question.type !== 'compound-mcq' && adapter.getSubmittedAdvance?.(document)) {
                 return { submitted: true };
             } else if (fresh) {
                 if ((question.type === 'short-answer' && fresh.input?.value !== answerText)
-                    || (answerIndexes && question.type !== 'short-answer' && question.type !== 'ordering'
-                        && fresh.options.some(option => Boolean(option.isSelected?.() || option.input?.checked) !== answerIndexes.includes(option.index)))) {
+                    || (question.type === 'compound-mcq'
+                        && !fresh.compoundQuestions.every((group, index) =>
+                            !group.options.some(option => option.disabled) && selectionMatches(group, [answerIndexes[index]])))
+                    || (answerIndexes && !['short-answer', 'ordering', 'compound-mcq'].includes(question.type)
+                        && !selectionMatches(fresh, answerIndexes))) {
                     throw new Error('The selected answer changed while waiting. No Submit was clicked.');
                 }
                 const button = adapter.getSubmit(document, fresh);
@@ -693,6 +702,11 @@ function mountJournalCountdown(signal: AbortSignal) {
             throw new Error('The portal did not enable a unique Submit button within 15 seconds. The selected answer was kept.');
         }
         return null;
+    }
+
+    function selectionMatches(question, answerIndexes) {
+        return question.options.every((option, index) =>
+            Boolean(option.isSelected?.() || option.input?.checked) === answerIndexes.includes(index));
     }
 
     async function waitForPracticeTransition(previousSignature, runId) {
@@ -1243,22 +1257,30 @@ function mountJournalCountdown(signal: AbortSignal) {
     }
 
     async function solveCompoundMcq(compound, runId, adapter) {
-        const findCurrent = (original) => {
-            const fresh = getAuthorizedQuestion();
-            return fresh?.compoundQuestions?.find(candidate => hasSameQuestionOptions(original, candidate)) || null;
+        const url = location.href;
+        const findCurrent = (position) => {
+            const context = getAutomationContext();
+            if (location.href !== url || context.target.id !== automation.targetId
+                || !automationPolicy.canExecute('select', context) || !automationPolicy.canExecute('validate', context)) return null;
+            const fresh = getAuthorizedQuestion(context);
+            if (fresh?.signature !== compound.signature) return null;
+            const group = fresh.compoundQuestions[position];
+            return group?.options.some(option => option.disabled) ? null : group;
         };
-        for (const original of compound.compoundQuestions || []) {
-            if (!(await waitWhilePaused(runId))) return false;
-            let question = findCurrent(original);
-            if (!question) throw new Error('A linked question changed before its answer was selected. Nothing else was submitted.');
-            if (question.options.some(option => option.isSelected?.() || option.input?.checked)) continue;
+        const answerIndexes = [];
+        for (let position = 0; position < compound.compoundQuestions.length; position++) {
+            if (!(await waitWhilePaused(runId))) return null;
+            const question = findCurrent(position);
+            if (!question) throw new Error('A linked question changed or is already locked. Review it on the page.');
             automation.state = 'SOLVING'; updateAutomationUI();
-            const prompt = `${compound.compoundContext || ''}\n\nAnswer only this linked question: ${question.text}\nQuestion format: select one answer.\n${question.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option.text}`).join('\n')}`;
+            const prompt = `Reading context:\n${compound.compoundContext || ''}\n\nAnswer only this question: ${question.text}\nQuestion format: select one answer.\n${question.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option.text}`).join('\n')}`;
             const response = await window.BrowserAssistantAnswerRequests.run({
-                request: () => apiRequest('/solve', 'POST', { text: prompt, url: window.location.href, practice_type: 'mcq', verify_answer: true }),
+                request: () => apiRequest('/solve', 'POST', {
+                    text: prompt, url, practice_type: 'mcq', verify_answer: true, require_answer_agreement: true,
+                }),
                 active: () => automation.running && automation.runId === runId,
                 ready: () => waitWhilePaused(runId),
-                current: () => Boolean(findCurrent(original)),
+                current: () => Boolean(findCurrent(position)),
                 onRetry: ({attempt, attempts, message}) => {
                     automation.state = 'RETRYING_REQUEST';
                     automation.error = `Temporary answer service issue. Retrying ${attempt}/${attempts}: ${message}`;
@@ -1266,38 +1288,66 @@ function mountJournalCountdown(signal: AbortSignal) {
                 },
                 sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
             });
-            if (!response?.data?.answer_verified) throw new Error('Answer verification is required for every linked question.');
+            if (!response) return null;
+            if (response.data?.answer_agreement !== true) throw new Error('Update and restart the Browser Assistant backend to verify linked answers.');
             let results;
             try { results = JSON.parse(response.data.results); } catch { throw new Error('The answer service returned invalid linked-question data.'); }
-            const answerIndexes = answerIndexesFromResult(results, question);
-            if (!answerIndexes.length) throw new Error('The verified answer did not match this linked question’s displayed options.');
-            automation.state = 'SELECTING'; updateAutomationUI();
-            for (const index of answerIndexes) {
-                question = findCurrent(original);
-                const option = question?.options[index];
-                if (!option) throw new Error('A linked question option disappeared before selection.');
-                if (!(option.isSelected?.() || option.input?.checked)) (option.input || option.control)?.click();
-                let selected = false;
-                for (let attempt = 0; attempt < 50 && await waitWhilePaused(runId); attempt++) {
-                    question = findCurrent(original);
-                    const current = question?.options[index];
-                    if (current?.isSelected?.() || current?.input?.checked) { selected = true; break; }
-                    await new Promise(resolve => setTimeout(resolve, 50));
-                }
-                if (!selected) throw new Error('A linked answer could not be verified after selection.');
+            const indexes = answerIndexesFromResult(results, question);
+            if (results[0]?.type !== 'mcq' || indexes.length !== 1) throw new Error('The verified answer did not match this linked question’s displayed options.');
+            answerIndexes.push(indexes[0]);
+        }
+        automation.error = ''; automation.state = 'SELECTING'; updateAutomationUI();
+        for (const [position, index] of answerIndexes.entries()) {
+            if (!(await waitWhilePaused(runId))) return null;
+            const question = findCurrent(position);
+            const option = question?.options[index];
+            if (!option) throw new Error('A linked question option disappeared before selection.');
+            if (!(option.isSelected?.() || option.input?.checked)) (option.input || option.control)?.click();
+            let selected = false;
+            for (let attempt = 0; attempt < 50; attempt++) {
+                if (!(await waitWhilePaused(runId))) return null;
+                const current = findCurrent(position);
+                if (current && selectionMatches(current, [index])) { selected = true; break; }
+                await new Promise(resolve => setTimeout(resolve, 50));
             }
+            if (!selected) throw new Error(`Selection could not be confirmed for linked question ${position + 1}. Review the group before submitting.`);
         }
-        const current = getAuthorizedQuestion();
-        const submitQuestion = current?.compoundQuestions?.[0] || compound.compoundQuestions?.[0];
-        const submit = submitQuestion && adapter.getSubmit(document, submitQuestion);
-        if (!submit?.isConnected || submit.disabled || submit.getAttribute('aria-disabled') === 'true') {
-            throw new Error('All linked answers were selected, but the portal did not enable a unique Submit button.');
-        }
+        return waitForQuestionSubmit(compound, runId, adapter, answerIndexes, '');
+    }
+
+    async function submitPracticeAnswer(question, button, runId, adapter) {
         automation.state = 'SUBMITTING'; updateAutomationUI();
-        automation.processed.add(compound.signature);
-        submit.click();
+        automation.processed.add(question.signature);
+        button.click();
         automation.state = 'WAITING_FOR_NEXT'; updateAutomationUI();
-        return true;
+        let transition = await waitForAdvanceOrTransition(question.signature, runId, adapter);
+        if (!automation.running || automation.runId !== runId) return false;
+        if ((transition as { proceed?: HTMLElement })?.proceed) {
+            automation.state = 'OPENING_COURSE';
+            automation.pendingNavigation = true;
+            updateAutomationUI();
+            saveCourseResume('course', (transition as { context: AssistantContext }).context, {
+                currentTitle: adapter.getCurrentPracticeTitle?.(document) || '',
+            });
+            (transition as { proceed: HTMLElement }).proceed.click();
+            return false;
+        }
+        if ((transition as { advance?: HTMLElement })?.advance) {
+            if (!automationPolicy.canExecute('click', (transition as { context: AssistantContext }).context)) {
+                automation.error = 'Target policy does not permit Next.'; stopAutomation('UNAUTHORIZED'); return false;
+            }
+            (transition as { advance: HTMLElement }).advance.click();
+            transition = await waitForPracticeTransition(question.signature, runId);
+            if (!automation.running || automation.runId !== runId) return false;
+        }
+        if (transition === 'next' || transition === 'complete') automation.completed += 1;
+        if (transition === 'complete') {
+            stopAutomation(automation.deferredQuestions.size ? 'REVIEW_NEEDED' : 'COMPLETED');
+        } else if (transition !== 'next') {
+            automation.error = (transition as { blocked?: string })?.blocked || 'Next question did not appear in time.';
+            stopAutomation('PAUSED');
+        }
+        return transition === 'next';
     }
 
     async function startPracticeAutomation() {
@@ -1369,7 +1419,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                 continue;
             }
             const finalSubmit = currentAdapter.getFinalQuizSubmit?.(document);
-            if (finalSubmit) {
+            if (finalSubmit && getAuthorizedQuestion(context)?.compoundSubmit !== finalSubmit) {
                 const submitted = await submitCompletedQuiz(finalSubmit, currentAdapter, runId);
                 if (!automation.running || automation.runId !== runId) break;
                 if (!submitted) automation.error = 'Final Submit was clicked; the portal did not show a submission confirmation. Check its status.';
@@ -1436,11 +1486,6 @@ function mountJournalCountdown(signal: AbortSignal) {
                 stopAutomation('PAUSED'); break;
             }
             if (question.type === 'code') { await runCodingAutomation(question, runId); break; }
-            if (question.type === 'compound-mcq') {
-                try { await solveCompoundMcq(question, runId, adapter); }
-                catch (error) { automation.error = error.message || 'Linked questions could not be completed.'; stopAutomation('PAUSED'); }
-                break;
-            }
             if (automation.deferredQuestions.has(question.signature)) {
                 automation.currentSignature = question.signature;
                 if (await continueAfterUnverifiedQuestion(question, runId, 'This question was deferred earlier.', false)) continue;
@@ -1448,6 +1493,19 @@ function mountJournalCountdown(signal: AbortSignal) {
             }
             if (automation.processed.has(question.signature)) { automation.error = 'Repeated question detected.'; stopAutomation('PAUSED'); break; }
             automation.currentSignature = question.signature;
+            if (question.type === 'compound-mcq') {
+                try {
+                    const ready = await solveCompoundMcq(question, runId, currentAdapter);
+                    if (ready?.button && automation.running && automation.runId === runId
+                        && await submitPracticeAnswer(question, ready.button, runId, currentAdapter)) continue;
+                } catch (error) {
+                    if (automation.running && automation.runId === runId) {
+                        automation.error = error.message || 'Linked questions could not be completed.';
+                        stopAutomation('PAUSED');
+                    }
+                }
+                break;
+            }
             automation.state = 'SOLVING'; updateAutomationUI();
             let response;
             try {
@@ -1596,34 +1654,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             catch (error) { automation.error = error.message; stopAutomation('PAUSED'); break; }
             if (!ready || !automation.running || automation.runId !== runId) break;
             if (ready.submitted) continue;
-            const submit = ready.button;
-            automation.state = 'SUBMITTING'; updateAutomationUI();
-            automation.processed.add(question.signature);
-            submit.click();
-            automation.state = 'WAITING_FOR_NEXT'; updateAutomationUI();
-            let transition = await waitForAdvanceOrTransition(question.signature, runId, currentAdapter);
-            if ((transition as { proceed?: HTMLElement })?.proceed) {
-                automation.state = 'OPENING_COURSE';
-                automation.pendingNavigation = true;
-                updateAutomationUI();
-                saveCourseResume('course', (transition as { context: AssistantContext }).context, {
-                    currentTitle: currentAdapter.getCurrentPracticeTitle?.(document) || '',
-                });
-                (transition as { proceed: HTMLElement }).proceed.click();
-                return;
-            }
-            if ((transition as { advance?: HTMLElement })?.advance) {
-                if (!automationPolicy.canExecute('click', (transition as { context: AssistantContext }).context)) { automation.error = 'Target policy does not permit Next.'; stopAutomation('UNAUTHORIZED'); break; }
-                (transition as { advance: HTMLElement }).advance.click();
-                transition = await waitForPracticeTransition(question.signature, runId);
-            }
-            if (transition === 'complete') {
-                automation.completed += 1;
-                stopAutomation(automation.deferredQuestions.size ? 'REVIEW_NEEDED' : 'COMPLETED');
-                break;
-            }
-            if (transition !== 'next') { automation.error = (transition as { blocked?: string })?.blocked || 'Next question did not appear in time.'; stopAutomation('PAUSED'); break; }
-            automation.completed += 1;
+            if (!(await submitPracticeAnswer(question, ready.button, runId, currentAdapter))) break;
         }
     }
 

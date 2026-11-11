@@ -9,6 +9,7 @@ const root = path.resolve(__dirname, '..');
 const extension = path.resolve(process.env.ASSISTANT_TEST_EXTENSION || path.join(root, 'extension'));
 const practice = 'http://127.0.0.1:8000/practice';
 const secondUrl = 'http://127.0.0.1:8000/panel-test';
+const readingUrl = 'https://learning.ccbp.in/test-reading';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function eventually(check, label) {
@@ -56,6 +57,21 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
                 if (url.pathname === '/health') return Response.json({status: 'ok'});
                 if (url.pathname === '/history') return Response.json([]);
                 if (url.pathname === '/extension-release') return Response.json({version: '2.9.1'});
+                if (url.pathname === '/solve' && body.url === 'https://learning.ccbp.in/test-reading') {
+                    const blank = Number(body.text.match(/Answer only this question: Which word best fits blank \((\d+)\)/)?.[1]);
+                    const answers = ['Option C: stand', 'Option A: answer', 'Option C: shop'];
+                    if (!body.require_answer_agreement || !answers[blank - 1]
+                        || !body.text.includes('museum (3) ____') || body.text.includes('PRIVATE HEADER')) {
+                        return Response.json({detail: 'Incorrect reading request'}, {status: 422});
+                    }
+                    if (globalThis.failReadingBlank === blank) return Response.json({
+                        detail: {code: 'answer_unconfirmed', message: 'Blank could not be verified'},
+                    }, {status: 422});
+                    return Response.json({
+                        answer_verified: true, answer_agreement: true,
+                        results: JSON.stringify([{type: 'mcq', answer: answers[blank - 1]}]),
+                    });
+                }
                 return Response.json({
                     answer_verified: true,
                     provider: 'local test',
@@ -70,6 +86,53 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
         await context.route(secondUrl, route => route.fulfill({contentType: 'text/html', body:
             '<!doctype html><title>Second test tab</title><main>Panel test fixture</main>',
         }));
+        await context.route(readingUrl, route => route.fulfill({contentType: 'text/html', body: `<!doctype html>
+            <header>PRIVATE HEADER</header>
+            <main style="display:flex;gap:24px">
+                <section><p id="passage">At the museum, we had to (1) ____ in line. The robots could (2) ____ questions.
+                We bought gifts from the museum (3) ____.</p></section>
+                <section id="questions"></section>
+            </main>
+            <script>
+                const questions = document.getElementById('questions');
+                const groups = [['sit','wait','stand','walk'],['answer','speak','tell','ask'],['office','station','shop','classroom']];
+                window.submissions = [];
+                function render() {
+                    questions.replaceChildren();
+                    groups.forEach((options, index) => {
+                        const group = document.createElement('div');
+                        group.innerHTML = '<div><span>Which word best fits blank (' + (index + 1) + ')?</span></div>';
+                        for (const text of options) {
+                            const row = document.createElement('div');
+                            // No radio group names or associated labels, like an
+                            // option row managed by a web application's own state.
+                            row.innerHTML = '<div><input type="radio" ' + (text === 'station' ? 'checked' : '')
+                                + '></div><span>' + text + '</span>';
+                            row.querySelector('input').addEventListener('click', event => {
+                                for (const other of group.querySelectorAll('input')) other.checked = other === event.target;
+                                if (questions.querySelectorAll('input:checked').length === groups.length) {
+                                    setTimeout(() => { submit.disabled = false; }, 175);
+                                }
+                            });
+                            group.append(row);
+                        }
+                        questions.append(group);
+                    });
+                    const submit = document.createElement('button');
+                    submit.textContent = 'Submit';
+                    submit.disabled = true;
+                    submit.onclick = () => {
+                        window.submissions.push([...questions.querySelectorAll('input:checked')]
+                            .map(input => input.parentElement.nextElementSibling.textContent));
+                        if (window.submissions.length === 1) {
+                            document.getElementById('passage').prepend('On the second trip, ');
+                            render();
+                        } else questions.innerHTML = '<p>Assessment submitted successfully</p>';
+                    };
+                    questions.append(submit);
+                }
+                render();
+            </script>`}));
         const source = context.pages()[0] || await context.newPage();
         await source.goto(practice);
         let popup = await context.newPage();
@@ -78,6 +141,41 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
             chrome.runtime.sendMessage({action: 'panel:open', targetTabId}), id);
         const windows = () => worker.evaluate(() => chrome.windows.getAll({windowTypes: ['popup']}));
         let detached;
+
+        await t.test('solves every reading blank before the shared Submit and continues to the next passage', async () => {
+            const reading = await context.newPage();
+            try {
+                await reading.goto(readingUrl);
+                await reading.locator('#assistant-trigger').waitFor();
+                await reading.keyboard.press('Backquote');
+                await reading.locator('#mode-qa').click();
+                await reading.locator('#assistant-auto-start-btn').click();
+                await eventually(() => reading.locator('#assistant-automation-state').textContent()
+                    .then(state => state === 'COMPLETED'), 'Both reading sets should complete');
+                assert.deepEqual(await reading.evaluate(() => window.submissions),
+                    [['stand', 'answer', 'shop'], ['stand', 'answer', 'shop']]);
+                assert.equal(await reading.locator('#assistant-automation-completed').textContent(), '2');
+            } finally { await reading.close(); }
+        });
+
+        await t.test('leaves the reading set unsubmitted when one blank is unverified', async () => {
+            const reading = await context.newPage();
+            try {
+                await worker.evaluate(() => { globalThis.failReadingBlank = 2; });
+                await reading.goto(readingUrl);
+                await reading.locator('#assistant-trigger').waitFor();
+                await reading.keyboard.press('Backquote');
+                await reading.locator('#mode-qa').click();
+                await reading.locator('#assistant-auto-start-btn').click();
+                await reading.locator('#assistant-automation-latest').getByText(/Blank could not be verified/).waitFor();
+                assert.deepEqual(await reading.evaluate(() => window.submissions), []);
+                assert.deepEqual(await reading.locator('#questions input:checked').evaluateAll(inputs =>
+                    inputs.map(input => input.parentElement.nextElementSibling.textContent)), ['station']);
+            } finally {
+                await worker.evaluate(() => { globalThis.failReadingBlank = null; });
+                await reading.close();
+            }
+        });
 
         await t.test('drags, expands, collapses and clamps the panel after resize', async () => {
             await source.bringToFront();
