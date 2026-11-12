@@ -1,3 +1,10 @@
+# 2.9.11
+
+- Reload the locally built Chrome extension as soon as the current panel is idle and a complete new build is available.
+- Show the actual running build in the panel and identify older backends before starting drag-and-drop.
+- Keep the backend launcher running across workspace builds and drain active requests before loading the new version.
+- Read the full code on practice and review routes and check recognizable linked-list pseudocode against the displayed choices.
+
 # 2.9.10
 
 - Solve the six-step sorted linked-list merge exercise locally against the displayed order.

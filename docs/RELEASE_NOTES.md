@@ -1,4 +1,12 @@
-# Browser Assistant 2.9.10
+# Browser Assistant 2.9.11
+
+- A Chrome extension loaded from the local workspace automatically reloads after a completed build. Active runs finish first, and the webpage stays open.
+- The panel displays its loaded build in the header and identifies a different running backend version.
+- Drag-and-drop shows a backend restart message when the running server predates ordering verification.
+- Starting the local backend with the existing Python command now watches completed builds. It keeps the terminal open and drains active requests before restarting the server worker.
+- Pseudocode questions on review routes use the full snippet. Recognized linked-list constructor, merge-branch, and loop-count questions are checked against the code locally.
+
+## Browser Assistant 2.9.10
 
 - The six-step sorted linked-list merge exercise uses a local rule and maps each step to its displayed number.
 - Other ordering exercises retry a disagreement and verify that the result contains each displayed step once.

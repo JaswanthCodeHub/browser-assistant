@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const {mkdtemp, rm} = require('node:fs/promises');
+const {cp, mkdtemp, readFile, rm, writeFile} = require('node:fs/promises');
 const {tmpdir} = require('node:os');
 const path = require('node:path');
 const {test} = require('node:test');
@@ -83,7 +83,7 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
                 }
                 const body = init?.body ? JSON.parse(init.body) : {};
                 testRequests.push({path: url.pathname, url: body.url, image: body.image?.slice(0, 32)});
-                if (url.pathname === '/health') return Response.json({status: 'ok'});
+                if (url.pathname === '/health') return Response.json({status: 'ok', version: globalThis.testBackendVersion});
                 if (url.pathname === '/history') return Response.json([]);
                 if (url.pathname === '/extension-release') return Response.json({version: '2.9.1'});
                 if (url.pathname === '/solve' && body.url === 'https://learning.ccbp.in/primitive-coding/practice/ordering/test') {
@@ -270,14 +270,24 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
         await t.test('reorders all six linked-list steps through native drag before submitting', async () => {
             const ordering = await context.newPage();
             try {
+                await worker.evaluate(() => { globalThis.testBackendVersion = '2.9.8'; });
                 await ordering.goto(orderingUrl);
                 await ordering.locator('#assistant-trigger').waitFor();
                 await ordering.keyboard.press('Backquote');
                 await ordering.locator('#mode-qa').click();
                 await ordering.locator('#assistant-auto-start-btn').click();
+                await ordering.getByText(/Drag-and-drop needs backend 2\.9\.10 or newer/).first().waitFor();
+                assert.equal(await ordering.evaluate(() => window.submittedOrder), undefined);
+                assert.equal(await worker.evaluate(() => testRequests.filter(request =>
+                    request.path === '/solve' && request.url?.endsWith('/ordering/test')).length), 0);
+                await worker.evaluate(() => { globalThis.testBackendVersion = '2.9.11'; });
+                await ordering.locator('#assistant-auto-start-btn').click();
                 await ordering.getByText('Quiz completed', {exact: true}).waitFor();
                 assert.deepEqual(await ordering.evaluate(() => window.submittedOrder), [4, 1, 2, 3, 6, 5]);
-            } finally { await ordering.close(); }
+            } finally {
+                await worker.evaluate(() => { globalThis.testBackendVersion = undefined; });
+                await ordering.close();
+            }
         });
 
         for (const {name, query, secondAnswers} of [
@@ -458,5 +468,99 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
     } finally {
         await context.close();
         await rm(profile, {recursive: true, force: true, maxRetries: 5, retryDelay: 150});
+    }
+});
+
+test('a completed workspace build updates the open panel without refreshing its page', {timeout: 60_000}, async () => {
+    const fixture = await mkdtemp(path.join(tmpdir(), 'browser-assistant-update-'));
+    const localExtension = path.join(fixture, 'extension');
+    const profile = path.join(fixture, 'profile');
+    let browser;
+    try {
+        await cp(extension, localExtension, {recursive: true});
+        const manifestPath = path.join(localExtension, 'manifest.json');
+        const markerPath = path.join(localExtension, 'workspace-release.json');
+        const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+        const original = manifest.version;
+        const parts = original.split('.').map(Number);
+        parts[parts.length - 1]++;
+        const next = parts.join('.');
+        await writeFile(markerPath, JSON.stringify({version: original}));
+        browser = await chromium.launchPersistentContext(profile, {
+            channel: 'chromium', headless: true,
+            ignoreDefaultArgs: ['--disable-extensions'],
+            args: ['--enable-unsafe-extension-debugging'],
+        });
+        const page = browser.pages()[0] || await browser.newPage();
+        await page.goto('chrome://extensions');
+        const developerMode = await page.evaluate(async () => {
+            await chrome.developerPrivate.updateProfileConfiguration({inDeveloperMode: true});
+            return (await chrome.developerPrivate.getProfileConfiguration()).inDeveloperMode;
+        });
+        assert.equal(developerMode, true);
+        const session = await browser.browser().newBrowserCDPSession();
+        await session.send('Extensions.loadUnpacked', {path: localExtension});
+        await session.detach();
+        await browser.route(secondUrl, route => route.fulfill({contentType: 'text/html', body:
+            '<!doctype html><title>Workspace update test</title><main><input id="draft" value="initial"></main>',
+        }));
+        await page.goto(secondUrl);
+        await page.locator('#assistant-trigger').click({timeout: 8000});
+        await page.locator('#mode-qa').click();
+        await page.locator('#draft').fill('keep this draft');
+        let navigations = 0;
+        page.on('framenavigated', frame => { if (frame === page.mainFrame()) navigations++; });
+        assert.equal(await page.locator('.assistant-build').textContent(), 'v' + original);
+
+        await writeFile(manifestPath, JSON.stringify({...manifest, version: next}));
+        await sleep(3400);
+        assert.equal(await page.locator('.assistant-build').textContent(), 'v' + original);
+        await writeFile(markerPath, JSON.stringify({version: next}));
+        try {
+            await page.locator(`#assistant-root[data-build="${next}"] .assistant-build`).waitFor({timeout: 12_000});
+        } catch (error) {
+            const workers = await Promise.all(browser.serviceWorkers().map(worker => worker.evaluate(async () => ({
+                version: chrome.runtime.getManifest().version,
+                ready: await workspaceVersionFile('workspace-release.json').catch(error => error.message),
+                manifest: await workspaceVersionFile('manifest.json').catch(error => error.message),
+            })).catch(() => null)));
+            const panel = await page.locator('#assistant-root').evaluateAll(nodes => nodes.map(node => node.outerHTML.slice(0, 160)));
+            const debug = await browser.newPage();
+            await debug.goto('chrome://extensions');
+            const installed = await debug.evaluate(async () =>
+                (await chrome.developerPrivate.getExtensionsInfo({includeDisabled: true, includeTerminated: true}))
+                    .map(item => ({name: item.name, state: item.state, version: item.version,
+                        errors: item.runtimeErrors, reasons: item.disableReasons}))).catch(() => null);
+            throw new Error(`${error.message}\nWorkers: ${JSON.stringify(workers)}; panel: ${JSON.stringify(panel)}; extensions: ${JSON.stringify(installed)}`);
+        }
+        assert.equal(await page.locator('.assistant-build').textContent(), 'v' + next);
+        assert.equal(await page.locator('#mode-qa').getAttribute('aria-selected'), 'true');
+        assert.equal(await page.locator('#draft').inputValue(), 'keep this draft');
+        assert.equal(navigations, 0);
+
+        const worker = browser.serviceWorkers()[0] || await browser.waitForEvent('serviceworker');
+        const base = worker.url().replace(/\/[^/]+$/, '');
+        const popup = await browser.newPage();
+        await popup.goto(base + '/popup.html');
+        const tabId = await worker.evaluate(async url => (await chrome.tabs.query({url}))[0].id, secondUrl);
+        await page.bringToFront();
+        const created = browser.waitForEvent('page');
+        assert.deepEqual(await popup.evaluate(targetTabId => chrome.runtime.sendMessage({action: 'panel:open', targetTabId}), tabId), {ok: true});
+        const detached = await created;
+        await detached.locator('.assistant-build').waitFor();
+        const finalVersion = [...parts.slice(0, -1), parts.at(-1) + 1].join('.');
+        await writeFile(manifestPath, JSON.stringify({...manifest, version: finalVersion}));
+        await writeFile(markerPath, JSON.stringify({version: finalVersion}));
+        await eventually(async () => {
+            for (const panel of browser.pages().filter(item => item.url() === base + '/detached-panel.html')) {
+                if (await panel.locator('.assistant-build').textContent({timeout: 250}).catch(() => '') === 'v' + finalVersion) return true;
+            }
+            return false;
+        }, 'The detached window should reconnect to the same tab with the new build');
+        assert.equal(await page.locator('#assistant-root').getAttribute('data-build'), finalVersion);
+        assert.equal(navigations, 0);
+    } finally {
+        await browser?.close();
+        await rm(fixture, {recursive: true, force: true, maxRetries: 5, retryDelay: 150});
     }
 });

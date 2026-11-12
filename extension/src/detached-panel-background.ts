@@ -7,6 +7,7 @@ interface DetachedPanelSession {
 
 const DETACHED_PANEL_KEY = 'assistantDetachedPanel';
 const DETACHED_PANEL_MODE = 'assistantPanelMode';
+const DETACHED_UPDATE_KEY = 'assistantDetachedPanelUpdate';
 const detachedPage = () => chrome.runtime.getURL('detached-panel.html');
 let detachedPanelQueue: Promise<unknown> = Promise.resolve();
 
@@ -29,9 +30,9 @@ async function releasePanelTab(session: DetachedPanelSession) {
         .catch(() => undefined);
 }
 
-async function openDetachedPanel(tabId: number) {
+async function openDetachedPanel(tabId: number, restore?: chrome.windows.CreateData) {
     const tab = await chrome.tabs.get(tabId);
-    if (!tab.active || !/^https?:\/\//.test(tab.url || '')) {
+    if ((!restore && !tab.active) || !/^https?:\/\//.test(tab.url || '')) {
         throw Error('Open the toolbar on the web tab you want to control.');
     }
     const ready = await messagePanelTab(tabId, {action: 'assistantPanelPing'}).catch(() => null);
@@ -46,7 +47,7 @@ async function openDetachedPanel(tabId: number) {
     }
 
     const created = previous ? undefined : await chrome.windows.create({
-        url: detachedPage(), type: 'popup', width: 420, height: 690, focused: true,
+        url: detachedPage(), type: 'popup', width: 420, height: 690, focused: true, ...restore,
     });
     const windowId = previous?.windowId ?? created?.id;
     if (windowId === undefined) throw Error('Chrome could not open the separate panel.');
@@ -54,8 +55,29 @@ async function openDetachedPanel(tabId: number) {
     const session = previous?.targetTabId === tabId ? previous : {windowId, targetTabId: tabId, token: crypto.randomUUID()};
     await chrome.storage.session.set({[DETACHED_PANEL_KEY]: session});
     await chrome.storage.local.set({[DETACHED_PANEL_MODE]: 'separate'});
-    if (previous) await chrome.windows.update(windowId, {focused: true, state: 'normal'});
+    if (previous && !restore) await chrome.windows.update(windowId, {focused: true, state: 'normal'});
     return {ok: true};
+}
+
+async function rememberDetachedPanelForUpdate(version: string) {
+    const session = await detachedPanelSession();
+    if (!session) return;
+    const panel = await chrome.windows.get(session.windowId).catch(() => null);
+    if (!panel) return;
+    await chrome.storage.local.set({[DETACHED_UPDATE_KEY]: {
+        version, targetTabId: session.targetTabId,
+        bounds: {left: panel.left, top: panel.top, width: panel.width, height: panel.height},
+    }});
+}
+
+async function restoreDetachedPanelAfterUpdate() {
+    const stored = (await chrome.storage.local.get<{
+        [DETACHED_UPDATE_KEY]?: {version: string; targetTabId: number; bounds: chrome.windows.CreateData};
+    }>(DETACHED_UPDATE_KEY))[DETACHED_UPDATE_KEY];
+    if (!stored) return;
+    await chrome.storage.local.remove(DETACHED_UPDATE_KEY);
+    if (stored.version !== chrome.runtime.getManifest().version) return;
+    await serializeDetachedPanel(() => openDetachedPanel(stored.targetTabId, {...stored.bounds, focused: false}));
 }
 
 function browserAssistantDetachedMessage(request: AssistantMessage, sender: chrome.runtime.MessageSender, reply: (data: unknown) => void) {

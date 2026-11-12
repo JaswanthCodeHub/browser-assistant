@@ -86,6 +86,7 @@ function mountJournalCountdown(signal: AbortSignal) {
 
     const root = document.createElement('div');
     root.id = 'assistant-root';
+    root.dataset.build = extensionVersion;
     root.classList.add('assistant-panel-initializing');
     document.body.appendChild(root);
     const journalCountdown = ['http:', 'https:'].includes(location.protocol)
@@ -211,6 +212,7 @@ function mountJournalCountdown(signal: AbortSignal) {
     let lastResultSummary = "";
     let isHidden = false;
     let serverOnline = null; // null = unknown, true/false = checked
+    let backendVersion = '';
     let isScanning = false;
     let extensionAlive = true; // false after extension reload invalidates context
     let historyItems = [];
@@ -336,11 +338,16 @@ function mountJournalCountdown(signal: AbortSignal) {
             }
             return false;
         }
-        const busy = automation.running || isScanning || Boolean(window.BrowserAssistantJournalBusy);
+        const busy = automation.running || isScanning || dragState.dragging || Boolean(window.BrowserAssistantJournalBusy)
+            || Boolean(root.contains(document.activeElement) && document.activeElement?.matches('textarea,input,select,[contenteditable="true"]'));
         if (request.action === 'assistantUpdateStatus') {sendResponse({busy});return false;}
         if (request.action !== 'assistantPrepareUpdate') return false;
         if (busy) {sendResponse({ready:false});return false;}
-        try {sessionStorage.setItem('browserAssistantReopenAfterUpdate',isCollapsed?'false':'true');} catch {}
+        try {
+            sessionStorage.setItem('browserAssistantReopenAfterUpdate', JSON.stringify({
+                isCollapsed, isHidden, selectedTab, selectedMode,
+            }));
+        } catch {}
         disposed = true; extensionAlive = false; automation.runId++;
         lifecycle.abort();
         for (const cleanup of navigationCleanup) cleanup();
@@ -351,6 +358,13 @@ function mountJournalCountdown(signal: AbortSignal) {
         return false;
     };
     chrome.runtime.onMessage.addListener(updateListener);
+    function requestWorkspaceUpdate() {
+        if (!document.hidden && !disposed) void chrome.runtime.sendMessage({action:'checkWorkspaceUpdate'}).catch(() => {});
+    }
+    document.addEventListener('visibilitychange', requestWorkspaceUpdate, {signal:lifecycle.signal});
+    window.addEventListener('focus', requestWorkspaceUpdate, {signal:lifecycle.signal});
+    const workspaceUpdateTimer = window.setInterval(requestWorkspaceUpdate, 3000);
+    lifecycle.signal.addEventListener('abort', () => window.clearInterval(workspaceUpdateTimer), {once: true});
     document.addEventListener('assistant-journal-update', updateAutomationUI, {signal:lifecycle.signal});
     document.addEventListener('assistant-journal-ready', () => {
         if (!window.BrowserAssistantJournal?.matches()) return;
@@ -558,6 +572,11 @@ function mountJournalCountdown(signal: AbortSignal) {
         const start = document.getElementById('assistant-auto-start-btn') as HTMLButtonElement;
         const pause = document.getElementById('assistant-auto-pause-btn') as HTMLButtonElement;
         const stop = document.getElementById('assistant-auto-stop-btn') as HTMLButtonElement;
+        const backend = document.getElementById('assistant-backend-build');
+        if (backend) {
+            backend.hidden = !backendVersion || backendVersion === extensionVersion;
+            backend.textContent = backend.hidden ? '' : `Backend ${backendVersion} is running. Restart the backend to load ${extensionVersion}.`;
+        }
         const journal = window.BrowserAssistantJournal;
         if (journal?.matches()) {
             const current = journal.getState();
@@ -1553,7 +1572,15 @@ function mountJournalCountdown(signal: AbortSignal) {
             let response;
             try {
                 let requestText = question.text;
-                if (location.origin === 'https://learning.ccbp.in' && /^\/primitive-coding\/practice\//.test(location.pathname)
+                if (question.type === 'ordering') {
+                    await checkServer();
+                    if (!(await waitWhilePaused(runId))) break;
+                    const [major, minor, patch] = backendVersion.split('.').map(Number);
+                    if (major === 1 || (major === 2 && (minor < 9 || (minor === 9 && patch < 10)))) {
+                        throw new Error(`Drag-and-drop needs backend 2.9.10 or newer. Backend ${backendVersion} is running. Restart it, then start automation again.`);
+                    }
+                }
+                if (location.origin === 'https://learning.ccbp.in' && /^\/primitive-coding(?:-review)?\/practice\//.test(location.pathname)
                     && document.querySelector('.ace_editor,.monaco-editor,.CodeMirror')) {
                     const snapshot = await readMcqSnippetSnapshot(question, runId);
                     if (!snapshot?.ok) throw new Error(snapshot?.error || 'Full code snippet could not be read.');
@@ -1857,12 +1884,20 @@ function mountJournalCountdown(signal: AbortSignal) {
         try {
             const res = await apiRequest('/health', 'GET');
             online = res.ok;
+            const version = res.data?.version;
+            if (online && typeof version === 'string' && /^\d+(?:\.\d+){1,3}$/.test(version)) backendVersion = version;
         } catch { /* The next request can reconnect when the backend starts. */ }
-        if (serverOnline === null) setServerStatus(online);
+        if (!disposed) { setServerStatus(online); updateAutomationUI(); }
     }
 
     // Check once on load
     checkServer();
+    const backendStatusTimer = window.setInterval(() => {
+        if (!document.hidden && !isCollapsed && (!serverOnline || (backendVersion && backendVersion !== extensionVersion))) {
+            void checkServer();
+        }
+    }, 6000);
+    lifecycle.signal.addEventListener('abort', () => window.clearInterval(backendStatusTimer), {once: true});
 
     // ── Smart text extraction ────────────────────────────────────────────────
     function extractSmartText() {
@@ -2575,6 +2610,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                     <span class="assistant-qa-state" id="assistant-automation-state" aria-live="polite">${automation.state}</span>
                 </div>
                 <div class="assistant-automation-status" id="assistant-automation-status" aria-live="polite"></div>
+                <div class="assistant-automation-status" id="assistant-backend-build" hidden></div>
                 <dl class="assistant-qa-details">
                     <div class="assistant-qa-wide"><dt>Current page</dt><dd id="assistant-automation-page">—</dd></div>
                     <div><dt>Completed</dt><dd id="assistant-automation-completed">0</dd></div>
@@ -2635,7 +2671,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             // Escape for safe attribute injection (B7)
             const safeContent = content.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
             root.innerHTML = `
-                <button class="assistant-tab collapsed ${content ? 'has-answer' : ''}" id="assistant-trigger" type="button" aria-label="Open Browser Assistant" data-content="${safeContent}">
+                <button class="assistant-tab collapsed ${content ? 'has-answer' : ''}" id="assistant-trigger" type="button" aria-label="Open Browser Assistant" title="Browser Assistant v${extensionVersion}" data-content="${safeContent}">
                     <span class="assistant-mark" aria-hidden="true">BA</span>
                     ${isMinimalMode ? '<div class="assistant-mode-indicator">MIN</div>' : ''}
                 </button>
@@ -2656,7 +2692,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                     <div class="assistant-header">
                         <div class="assistant-title-row">
                             <span class="assistant-mark" aria-hidden="true">BA</span>
-                            <h3 class="assistant-title">Browser Assistant</h3>
+                            <h3 class="assistant-title">Browser Assistant <span class="assistant-build">v${extensionVersion}</span></h3>
                             ${statusDot}
                         </div>
                         <div class="assistant-header-actions">
@@ -2895,9 +2931,19 @@ function mountJournalCountdown(signal: AbortSignal) {
         reopenedAfterUpdate = reopen !== null;
         sessionStorage.removeItem('browserAssistantReopenAfterUpdate');
         if (reopen === 'true') {isCollapsed=false;selectedTab='qa';automation.state='UPDATED';}
+        else if (reopen && reopen !== 'false') {
+            const state = JSON.parse(reopen);
+            isCollapsed = state.isCollapsed !== false;
+            isHidden = state.isHidden === true;
+            if (['auto','mcq','aptitude','code','qa'].includes(state.selectedTab)) selectedTab = state.selectedTab;
+            if (['auto','mcq','aptitude','code'].includes(state.selectedMode)) selectedMode = state.selectedMode;
+            if (isHidden) root.style.display = 'none';
+            automation.state = 'UPDATED';
+        }
     } catch {}
     render();
     void syncDetachedPanel();
+    requestWorkspaceUpdate();
     function hasDirectRunContinuation() {
         try {
             return [AUTO_RESUME_KEY, CODING_BATCH_KEY, 'assistantPendingJournal'].some(key => sessionStorage.getItem(key));

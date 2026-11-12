@@ -145,6 +145,7 @@ test('an extension update clears retired reminder settings while retaining journ
             onInstalled: {addListener(listener) { onInstalled = listener; }},
             onMessage: {addListener() {}},
             getManifest: () => ({version: '2.8.26'}),
+            getURL: file => 'chrome-extension://test/' + file,
         },
         tabs: {query: async () => []},
         storage: {local: {
@@ -158,7 +159,7 @@ test('an extension update clears retired reminder settings while retaining journ
     vm.runInContext(fs.readFileSync(`${__dirname}/background.js`, 'utf8'), ctx);
     onAlarm({name: 'assistant-workspace-update'});
     await new Promise(resolve => setImmediate(resolve));
-    assert.deepEqual(requests, ['http://127.0.0.1:8000/extension-release']);
+    assert.match(requests[0], /^chrome-extension:\/\/test\/workspace-release\.json\?workspace=/);
     onInstalled({reason: 'update'});
     await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(data, {[timerKey]: deadline, [confirmationKey]: true});

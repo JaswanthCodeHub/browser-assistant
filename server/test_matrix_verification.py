@@ -192,6 +192,34 @@ class MatrixVerificationTests(unittest.IsolatedAsyncioTestCase):
             groq.assert_not_awaited()
             ollama.assert_not_awaited()
 
+    async def test_pseudocode_questions_use_the_constructor_and_actual_loop(self):
+        snippet = ('\nComplete code snippets:\nf(Node a,Node b)\n'
+                   'temp1=a\ntemp2=b\ncarry=0\nans=new Node(-1)\ncur=ans\n'
+                   'while(temp1!=null || temp2!=null)\n'
+                   '  if(temp1!=null)\n    temp1=temp1->next\n'
+                   '  if(temp2!=null)\n    temp2=temp2->next\nreturn ans->next\n'
+                   'Question format: select one answer.\n')
+        cases = [
+            ('In the pseudo code, what is the initial value of the ans node?' + snippet
+             + 'A. 0\nB. 1\nC. -1\nD. Null', 'Option C: -1'),
+            ('What is the time complexity of the below pseudo code where size of linked list a and b are m and n respectively?'
+             + snippet + 'A. O(1)\nB. O(log(min(m, n)))\nC. O(max(m, n))\nD. O(m + n)', 'Option C: O(max(m, n))'),
+            ('In the mergeTwoLists function, what happens if temp1→data is less than or equal to temp2→data ?\n'
+             'Complete code snippets:\nmergeTwoLists(head1, head2) {\n'
+             'if(temp1->data <= temp2->data) {\ncur->next = temp\ntemp1 = temp1->next\n}\n'
+             'Question format: select one answer.\nA. The function returns temp1\nB. temp1 is discarded\n'
+             'C. temp1 is linked to the merged list and temp1 is moved to the next node\nD. temp2 is added',
+             'Option C: temp1 is linked to the merged list and temp1 is moved to the next node'),
+        ]
+        with patch.object(main, 'try_groq', new_callable=AsyncMock) as groq:
+            for text, expected in cases:
+                with self.subTest(expected=expected):
+                    result = await main.solve_questions(main.PageContent(
+                        text=text, url='https://example.test', practice_type='mcq', verify_answer=True))
+                    self.assertEqual(json.loads(result['results'])[0]['answer'], expected)
+                    self.assertTrue(result['answer_verified'])
+            groq.assert_not_awaited()
+
     async def test_ordering_retries_disagreement_and_requires_every_displayed_step(self):
         text = 'Arrange the tasks.\nReorder ALL items. Return a permutation.\n1. Build\n2. Design\n3. Check'
         primary = json.dumps([{'type': 'mcq', 'answer': [1, 2, 3]}])

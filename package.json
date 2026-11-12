@@ -1,6 +1,6 @@
 {
   "name": "browser-assistant",
-  "version": "2.9.10",
+  "version": "2.9.11",
   "description": "Chrome extension and local Python backend for exploring webpage questions and coding exercises",
   "license": "MIT",
   "repository": {
@@ -36,13 +36,14 @@
     "server/journal_syllabus.json",
     "server/local_security.py",
     "server/main.py",
+    "server/workspace_server.py",
     "server/practice_quiz.html",
     "server/requirements.lock.txt",
     "server/requirements.txt",
     "server/vision_images.py"
   ],
   "scripts": {
-    "build": "tsc --project tsconfig.json",
+    "build": "tsc --project tsconfig.json && node scripts/mark_workspace_build.cjs",
     "prepack": "npm run build",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "test": "npm run build && node --test extension/*.test.cts",

@@ -1,5 +1,4 @@
 import os
-import uvicorn
 import json
 import asyncio
 import ast
@@ -28,7 +27,7 @@ from local_security import install_local_guards, redact, sanitize_data
 from vision_images import (compress_image_base64, unique_image_blocks, collect_image_evidence,
                            cross_check_visual_answers, relative_percentage_question, RELATIVE_PERCENTAGE_INSTRUCTION,
                            answer_permutation, cross_check_text_answers, solve_matrix_choice, solve_row_parallel_choice,
-                           ordering_question, solve_sorted_list_merge_order, reading_response_constraints,
+                           ordering_question, solve_sorted_list_merge_order, solve_pseudocode_choice, reading_response_constraints,
                            VisionRateLimitError, VisionUnconfirmedError)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -192,7 +191,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.9.10", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.9.11", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)
@@ -1259,6 +1258,9 @@ def local_choice_result(text, language):
     if item is None:
         item = solve_row_parallel_choice(text)
         provider = "local tensor dimension check"
+    if item is None:
+        item = solve_pseudocode_choice(text)
+        provider = "local pseudocode check"
     if item is not None:
         return {"results": json.dumps([item], ensure_ascii=False), "provider": f"{provider} [verified]",
                 "language": language, "answer_verified": True, "code_reviewed": False}
@@ -1940,4 +1942,7 @@ if __name__ == "__main__":
     # loopback keeps direct local runs unavailable to other network devices.
     # Docker overrides SERVER_HOST because its published port is already bound
     # to the host loopback interface in docker-compose.yml.
-    uvicorn.run(app, host=os.getenv("SERVER_HOST", "127.0.0.1"), port=8000)
+    from workspace_server import run_workspace_server
+    raise SystemExit(run_workspace_server(
+        os.getenv("SERVER_HOST", "127.0.0.1"), int(os.getenv("SERVER_PORT", "8000")), app.version,
+    ))
