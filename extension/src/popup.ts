@@ -51,3 +51,25 @@ journalTimerStorage.onChanged.addListener(changes => {
 });
 void refreshPopupJournalTimers();
 setInterval(showJournalCountdown, 1000);
+
+const separatePanelButton = document.querySelector<HTMLButtonElement>('#open-separate-panel');
+const separatePanelStatus = document.getElementById('separate-panel-status');
+if (separatePanelButton) {
+    void chrome.storage.local.get('assistantPanelMode').then(settings => {
+        if (settings.assistantPanelMode === 'separate') separatePanelButton.textContent = 'Resume separate panel for this tab';
+    }).catch(() => {});
+    separatePanelButton.addEventListener('click', async () => {
+        separatePanelButton.disabled = true;
+        separatePanelStatus.hidden = true;
+        try {
+            const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
+            const result = await chrome.runtime.sendMessage({action: 'panel:open', targetTabId: tab?.id});
+            if (!result?.ok) throw Error(result?.error || 'Could not open the separate panel.');
+            window.close();
+        } catch (error) {
+            separatePanelStatus.textContent = error.message;
+            separatePanelStatus.hidden = false;
+            separatePanelButton.disabled = false;
+        }
+    });
+}
