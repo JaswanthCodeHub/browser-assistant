@@ -53,11 +53,29 @@ test('exported CCBP ordering page detects five options and verifies native drop 
 test('numeric answers are values, preserve zero and signs, and are not option numbers', () => {
     const src = fs.readFileSync(`${__dirname}/content.js`, 'utf8');
     const context = vm.createContext({});
-    vm.runInContext(src.slice(src.indexOf('    function answerIndexesFromResult'), src.indexOf('    async function recoverAnswerIndexes')), context);
+    vm.runInContext(src.slice(src.indexOf('    function answerIndexesFromResult'), src.indexOf('    function updateAutomationUI')), context);
     const question = { options: ['3', '2', '1', '4', '0', '-4'].map((text, index) => ({ text, index })) };
-    for (const [answer, expected] of [['Answer: 4', 3], ['Answer 4', 3], [0, 4], ['-4', 5], ['**4**', 3], ['Option 4', 3]]) {
-        assert.deepEqual(Array.from(context.answerIndexesFromResult([{ answer }], question)), [expected]);
+    for (const [answer, expected] of [['4', [3]], [0, [4]], ['-4', [5]], ['Option D: 4', [3]], ['Option 4', []], ['Option A: 4', []]]) {
+        assert.deepEqual(Array.from(context.answerIndexesFromResult([{ answer }], question)), expected);
     }
+});
+
+test('verified matrix options tolerate display notation while preserving signs, order and option labels', () => {
+    const source = fs.readFileSync(__dirname + '/content.js', 'utf8');
+    const context = vm.createContext({});
+    vm.runInContext(source.slice(source.indexOf('    function answerIndexesFromResult'), source.indexOf('    function updateAutomationUI')), context);
+    const question = {
+        options: [
+            { index: 0, text: '$\\begin{bmatrix}3&1\\\\5&2\\end{bmatrix}$' },
+            { index: 1, text: '$\\begin{bmatrix}3&-1\\\\-5&2\\end{bmatrix}$' },
+        ],
+    };
+    for (const [answer, expected] of [
+        ['B. [[3, −1], [-5, 2]]', [1]],
+        ['Option B: \\(\\begin{pmatrix}3 & -1 \\\\ -5 & 2\\end{pmatrix}\\)', [1]],
+        ['Option A: [[3,-1],[-5,2]]', []],
+        ['Option B: [[3,-5],[-1,2]]', []],
+    ]) assert.deepEqual(Array.from(context.answerIndexesFromResult([{ answer }], question)), expected);
 });
 
 test('question diagnostic exports only the question region and strips active content', () => {
@@ -91,11 +109,38 @@ test('ordering adapter detects sortable items and refuses unchanged drag results
 test('multiple choice mapping retains every explicitly selected option', () => {
     const src = fs.readFileSync(`${__dirname}/content.js`, 'utf8');
     const begin = src.indexOf('    function answerIndexesFromResult');
-    const end = src.indexOf('    async function recoverAnswerIndexes', begin);
+    const end = src.indexOf('    function updateAutomationUI', begin);
     const context = vm.createContext({});
     vm.runInContext(src.slice(begin, end), context);
     const question = { selectionType: 'multiple', options: ['One', 'Two', 'Three'].map((text, index) => ({ text, index })) };
     assert.deepEqual(Array.from(context.answerIndexesFromResult([{answer: 'Option A: One; Option C: Three'}], question)), [0, 2]);
+});
+
+test('Big-O options match through backticks and spacing while preserving operators and labels', () => {
+    const src = fs.readFileSync(__dirname + '/content.js', 'utf8');
+    const context = vm.createContext({});
+    vm.runInContext(src.slice(src.indexOf('    function answerIndexesFromResult'), src.indexOf('    function updateAutomationUI')), context);
+    const question = { options: ['\x60O(N log M)\x60', '\x60O(N + M)\x60', '\x60O(N^2)\x60', '\x60O(M^2)\x60']
+        .map((text, index) => ({ text, index })) };
+    for (const [answer, expected] of [['Option B: O(N+M)', [1]], ['O(N + M)', [1]], ['Option A: O(N+M)', []], ['O(N*M)', []]]) {
+        assert.deepEqual(Array.from(context.answerIndexesFromResult([{ answer }], question)), expected);
+    }
+});
+
+test('answer mapping requires the option letter and text to agree for text and chart questions', () => {
+    const src = fs.readFileSync(`${__dirname}/content.js`, 'utf8');
+    const context = vm.createContext({});
+    vm.runInContext(src.slice(src.indexOf('    function answerIndexesFromResult'), src.indexOf('    function updateAutomationUI')), context);
+    const question = { options: ['24.78 %', '16.67 %', '13.33 %', '22.56 %'].map((text, index) => ({ text, index })) };
+    for (const [answer, expected] of [
+        ['Option B: 16.67%', [1]], ['B. 16.67 %', [1]], ['Option A: 16.67%', []],
+        ['Option B: 1667%', []], ['Option B', []], ['16.67% is the answer', []],
+    ]) {
+        assert.deepEqual(Array.from(context.answerIndexesFromResult([{ answer }], question)), expected);
+    }
+    assert.deepEqual(Array.from(context.answerIndexesFromResult([
+        { answer: 'Option B: 16.67%' }, { answer: 'Option A: 24.78%' },
+    ], question)), []);
 });
 
 test('semantic adapter reads short answers and rejects ambiguous fields', () => {
@@ -111,6 +156,46 @@ test('semantic adapter reads short answers and rejects ambiguous fields', () => 
     assert.doesNotMatch(question.text, /SHOW ANSWER/);
     assert.equal(adapter.getSubmit(document, question).textContent, 'SUBMIT');
     document.querySelector('section').appendChild(document.querySelector('textarea').cloneNode());
+    assert.equal(adapter.getQuestion(document), null);
+});
+
+test('visible checkbox question is bound to its own prompt and ignores stale coding wrappers', () => {
+    const { parseHTML } = require('linkedom');
+    const { document, window } = parseHTML(`<html><body><main>
+        <div id="generic-question-wrapper-id" hidden><p>Return the sum of the two numbers represented by linked lists.</p><pre>stale code</pre></div>
+        <div id="exam-question-wrapper-id"><p>Find the number of nodes in a different exercise.</p><pre>unrelated code</pre></div>
+        <form><h3>What happens when both nodes being compared have equal values?</h3>
+            <div><label><input type="checkbox">Skip both nodes</label>
+            <label><input type="checkbox">Add the node from the first list to the merged list</label>
+            <label><input type="checkbox">Add the node from the second list to the merged list</label></div>
+            <button>Submit</button>
+        </form>
+    </main></body></html>`);
+    window.HTMLElement.prototype.getClientRects = () => [{}];
+    vm.runInContext(fs.readFileSync(`${__dirname}/automation-policy.js`, 'utf8'), vm.createContext({ window, URL }));
+    const question = window.BrowserAssistantAutomationPolicy.getAdapter('semantic-mcq').getQuestion(document);
+    assert.equal(question.text, 'What happens when both nodes being compared have equal values?');
+    assert.equal(question.identityText, question.text);
+    assert.equal(question.options.length, 3);
+    assert.equal(question.selectionType, 'multiple');
+});
+
+test('semantic adapter preserves every linked blank before a shared Submit', () => {
+    const { parseHTML } = require('linkedom');
+    const { document, window } = parseHTML(`<html><body><main><p>The football match started late because the other team did not (1) ____ on time. Arjun tried hard to (2) ____ a goal. Everyone felt very (3) ____.</p><form>
+        <section><p>Which word best fits blank (1)?</p><label><input type="radio" name="one">stay</label><label><input type="radio" name="one">come</label><label><input type="radio" name="one">go</label><label><input type="radio" name="one">leave</label></section>
+        <section><p>Which word best fits blank (2)?</p><label><input type="radio" name="two">score</label><label><input type="radio" name="two">take</label><label><input type="radio" name="two">win</label><label><input type="radio" name="two">make</label></section>
+        <section><p>Which word best fits blank (3)?</p><label><input type="radio" name="three">quiet</label><label><input type="radio" name="three">cloudy</label><label><input type="radio" name="three">hungry</label><label><input type="radio" name="three">happy</label></section><button>Submit</button></form></main></body></html>`);
+    window.HTMLElement.prototype.getClientRects = () => [{}];
+    vm.runInContext(fs.readFileSync(`${__dirname}/automation-policy.js`, 'utf8'), vm.createContext({ window, URL }));
+    const adapter = window.BrowserAssistantAutomationPolicy.getAdapter('semantic-mcq');
+    const question = adapter.getQuestion(document);
+    assert.equal(question.type, 'compound-mcq');
+    assert.equal(question.compoundQuestions.length, 3);
+    assert.match(question.compoundContext, /football match/);
+    assert.equal(question.compoundQuestions[1].options[0].text, 'score');
+    assert.equal(adapter.getSubmit(document, question), document.querySelector('button'));
+    document.querySelectorAll('section')[1].remove();
     assert.equal(adapter.getQuestion(document), null);
 });
 

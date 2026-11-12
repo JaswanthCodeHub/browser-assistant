@@ -2,7 +2,7 @@ const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const {webcrypto} = require('node:crypto');
+const {createHash,webcrypto} = require('node:crypto');
 const id = '11111111-2222-4333-8444-555555555555';
 const origin = 'https://learning.ccbp.in';
 const url = `${origin}/question/${id}`;
@@ -59,67 +59,106 @@ for (const existing of [true,false]) test(`IDE Start ${existing ? 'reuses the ex
     assert.equal(displayed[0][0].title,'app.js');
 });
 
-function terminalFixture({existingCode='',idle=true}={}) {
+function ideFixture({existingCode='',idle=true,allowPaste=true,saved=true,editorFolder='coding-practice-5a',firstVisibleLine='1'}={}) {
     const workspace = 'EXAMPLE5A1';
     const token = '83e3d6bd-27c2-4a73-b74c-29c4b53f1ae4';
     const marker = `BA_RESULT_${token}`;
     const report = `${origin}/ide-coding-submission/${id}/bcc0709e-fea6-421e-a46b-fcb119910fe2`;
     const prompt = `nxtwave@${workspace}:~/nodejs/coding-practices/coding-practice-5a$`;
     const output = {children:[{textContent:idle ? prompt : 'Running Tests ...'}]};
-    let command, enter=0;
+    let command, enter=0, editorCode=existingCode, now=0;
+    const events=[];
     const input = {getClientRects:()=>[{}],closest:()=>({querySelector:()=>output}),focus(){document.activeElement=input;},
         dispatchEvent(event){
             if(event.type==='paste') {
+                events.push('terminal paste');
                 command=event.clipboardData.value;
                 output.children=[{textContent:prompt+command}];
             } else if(event.key==='Enter') {
                 enter++;
-                output.children=['All test cases passed',`Open Submission URL : ${report}`,`${marker}:0`,prompt].map(textContent=>({textContent}));
+                events.push('terminal enter');
+                output.children=(saved
+                    ? ['All test cases passed',`Open Submission URL : ${report}`,`${marker}:0`,prompt]
+                    : [`BA_APP_JS_NOT_SAVED_${token}`,`${marker}:1`,prompt]).map(textContent=>({textContent}));
             }
         }};
-    const file = {getClientRects:()=>[{}],click(){}};
-    const editor = {getClientRects:()=>[{}],getAttribute:()=> 'file:///home/work/code/coding-practice-5a/app.js',
-        querySelector:()=>({textContent:existingCode})};
+    let opened=false;
+    const file = {getClientRects:()=>[{}],click(){opened=true;events.push('open app.js');}};
+    const editorInput = {
+        focus(){document.activeElement=editorInput;},
+        dispatchEvent(event){
+            assert.equal(event.type,'paste');
+            assert.equal(event.composed,true,'editor paste reaches the IDE clipboard guard across shadow DOM');
+            events.push('editor paste');
+            if (allowPaste) editorCode=event.clipboardData.value;
+        },
+    };
+    const rendered = {get textContent(){return editorCode;},querySelector:()=>({}),querySelectorAll:()=>[{}]};
+    const editor = {getClientRects:()=>[{}],getAttribute:()=> `file:///home/work/code/${editorFolder}/app.js`,
+        querySelector:selector=>selector==='textarea.inputarea' ? editorInput : rendered,
+        querySelectorAll:()=>[{textContent:firstVisibleLine}]};
     const document = {visibilityState:'visible',querySelectorAll(selector){
         if(selector.startsWith('.xterm')) return [input];
         if(selector.startsWith('div[title="app.js"')) return [file];
-        if(selector.startsWith('.monaco-editor')) return [editor];
+        if(selector.startsWith('.monaco-editor')) return opened ? [editor] : [];
         return [];
     }};
     const ctx=vm.createContext({window:{},document,location:{origin:'https://ide.ccbp.in',pathname:`/playground/${workspace}`},
-        TextEncoder,btoa,crypto:webcrypto,setTimeout:fn=>fn(),
+        TextEncoder,crypto:webcrypto,Date:{now:()=>now},setTimeout:(fn,ms)=>{now+=ms;fn();},
         DataTransfer:class{setData(type,value){this.value=value;}},
         ClipboardEvent:class{constructor(type,options){Object.assign(this,{type},options);}},
         KeyboardEvent:class{constructor(type,options){Object.assign(this,{type},options);}}});
     vm.runInContext(fs.readFileSync(`${__dirname}/editor-bridge.js`,'utf8'),ctx);
-    return {run:(action,code)=>ctx.browserAssistantOnlineIdeTerminal(action,workspace,id,token,code),report,output,
-        command:()=>command,entered:()=>enter};
+    return {run:(action,code)=>ctx.browserAssistantOnlineIde(action,workspace,id,token,code),report,output,events,
+        command:()=>command,entered:()=>enter,editorCode:()=>editorCode};
 }
 
-test('IDE automation encodes source, requires terminal echo, and ties success to a fresh grading report', async () => {
-    const terminal = terminalFixture();
+test('IDE automation pastes source into app.js and only sends a saved-file check and grading command to the terminal', async () => {
+    const ide = ideFixture();
     const source = 'const value = "$(echo test)";\nmodule.exports = value;';
-    const result = await terminal.run('runOnlineIde',source);
+    const result = await ide.run('runOnlineIde',source.replace('\n','\r\n'));
     assert.equal(result.started,true);
-    assert.equal(terminal.entered(),1);
-    assert.doesNotMatch(terminal.command(),/\$\(echo test\)/);
-    assert.ok(terminal.command().includes(Buffer.from(source).toString('base64')));
-    assert.match(terminal.command(),/&& ccbp submit EXAMPLE5A1;/);
-    assert.equal((await terminal.run('onlineIdeStatus')).url,terminal.report);
-    assert.equal((await terminal.run('onlineIdeStatus')).passed,true);
-    terminal.output.children.shift();
-    assert.equal((await terminal.run('onlineIdeStatus')).passed,false);
-    assert.equal((await terminal.run('runOnlineIde',source)).ok,false);
-    assert.equal(terminal.entered(),1);
+    assert.deepEqual(ide.events,['open app.js','editor paste','terminal paste','terminal enter']);
+    assert.equal(ide.editorCode(),source);
+    assert.equal(ide.entered(),1);
+    assert.doesNotMatch(ide.command(),/echo test|module\.exports|node -e|writeFile/);
+    assert.ok(!ide.command().includes(Buffer.from(source).toString('base64')));
+    assert.ok(ide.command().includes(createHash('sha256').update(source).digest('hex')));
+    assert.match(ide.command(),/if .*sha256sum --check --status; then node --check app\.js && ccbp submit EXAMPLE5A1;/);
+    assert.equal((await ide.run('onlineIdeStatus')).url,ide.report);
+    assert.equal((await ide.run('onlineIdeStatus')).passed,true);
+    ide.output.children.shift();
+    assert.equal((await ide.run('onlineIdeStatus')).passed,false);
+    assert.equal((await ide.run('runOnlineIde',source)).ok,false);
+    assert.equal(ide.entered(),1);
 });
 
-test('IDE automation leaves a nonempty app.js and busy terminal alone', async () => {
-    for(const settings of [{existingCode:'const userCode = true'},{idle:false}]) {
-        const terminal=terminalFixture(settings);
-        assert.equal((await terminal.run('runOnlineIde','module.exports = 1')).ok,false);
-        assert.equal(terminal.command(),undefined);
-        assert.equal(terminal.entered(),0);
+test('IDE automation leaves existing or unconfirmed editor content and a busy terminal alone', async () => {
+    for(const settings of [{existingCode:'const userCode = true'},{idle:false},{editorFolder:'other'},{firstVisibleLine:'12'}]) {
+        const ide=ideFixture(settings);
+        assert.equal((await ide.run('runOnlineIde','module.exports = 1')).ok,false);
+        assert.equal(ide.editorCode(),settings.existingCode ?? '');
+        assert.ok(!ide.events.includes('editor paste'));
+        assert.equal(ide.command(),undefined);
+        assert.equal(ide.entered(),0);
     }
+});
+
+test('a blocked editor paste never falls back to the terminal', async () => {
+    const ide=ideFixture({allowPaste:false});
+    const result=await ide.run('runOnlineIde','module.exports = 1');
+    assert.match(result.error,/did not confirm the paste into app\.js/);
+    assert.deepEqual(ide.events,['open app.js','editor paste']);
+    assert.equal(ide.editorCode(),'');
+});
+
+test('an unconfirmed autosave produces a save error instead of a grading result', async () => {
+    const ide=ideFixture({saved:false});
+    await ide.run('runOnlineIde','module.exports = 1');
+    const result=await ide.run('onlineIdeStatus');
+    assert.equal(result.saveUnconfirmed,true);
+    assert.equal(result.passed,false);
+    assert.equal(result.submitted,false);
 });
 
 test('a reviewed IDE solution is submitted once and only confirmed grading counts as completed', async () => {

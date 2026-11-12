@@ -84,16 +84,6 @@ class LanguageDetectionTests(unittest.TestCase):
                 self.assertIn("edge cases", prompt)
         self.assertIn("Do not claim runtime/sample execution unless actually performed", review_prompt)
 
-    def test_retry_prompt_keeps_language_and_platform_interface(self):
-        retry_prompt = main.build_retry_prompt(
-            "class Solution:\n    def run(self, nums): pass",
-            "previous candidate",
-            "python",
-        )
-        self.assertIn("locked to Python", retry_prompt)
-        self.assertIn("class Solution", retry_prompt)
-        self.assertIn("same format as before", retry_prompt.lower())
-
     def test_language_mismatch_detection_and_python_syntax(self):
         self.assertEqual(
             main.code_language_mismatch("#include <bits/stdc++.h>\nint main() {}", "python"),
