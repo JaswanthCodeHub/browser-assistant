@@ -1,3 +1,7 @@
+# 2.9.12
+
+- Start MCQ automation directly with Alt+A on CCBP practice and practice review pages, without a confirmation popup or startup banner.
+
 # 2.9.11
 
 - Reload the locally built Chrome extension as soon as the current panel is idle and a complete new build is available.

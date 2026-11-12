@@ -1,4 +1,8 @@
-# Browser Assistant 2.9.11
+# Browser Assistant 2.9.12
+
+- Alt+A starts MCQ automation directly on CCBP practice and practice review pages. The shortcut leaves the panel closed if it was closed.
+
+## Browser Assistant 2.9.11
 
 - A Chrome extension loaded from the local workspace automatically reloads after a completed build. Active runs finish first, and the webpage stays open.
 - The panel displays its loaded build in the header and identifies a different running backend version.

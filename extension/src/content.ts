@@ -2109,7 +2109,10 @@ function mountJournalCountdown(signal: AbortSignal) {
             : question || (canNavigate && adapter?.getStartPractice?.(document)) ? (/quiz/i.test(location.pathname) ? 'Quiz' : 'MCQ')
             : null;
         if (!type) { showAutomationNotice('Automation is unavailable on this page.'); return; }
-        if (context.target.id !== 'local-practice'
+        const startDirectly = context.target.id === 'local-practice'
+            || (type === 'MCQ' && context.target.id === 'ccbp-learning-practice'
+                && /^\/(?:default-question|primitive-coding(?:-review)?)\/practice\//.test(location.pathname));
+        if (!startDirectly
             && !window.confirm('Start ' + type + ' automation on this page? It can enter and submit answers as it runs.')) return;
         const progress = document.querySelector('[data-practice-quiz] #progress')?.textContent;
         const total = type === 'Journal' || type === 'Coding' ? 1 : Number(progress?.match(/\bof\s+(\d+)/i)?.[1]) || null;
@@ -2117,7 +2120,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             started_at: new Date().toISOString(), ended_at: null, total, completed: 0, failed: 0, status: 'Running', revision: 0};
         directRunStarting = true;
         saveDirectRun();
-        showAutomationNotice(type + ' automation started.');
+        if (!startDirectly) showAutomationNotice(type + ' automation started.');
         const started = startPracticeAutomation();
         directRunStarting = false;
         updateDirectRun();
