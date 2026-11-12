@@ -2,15 +2,26 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to retry on the package registries
+        required: true
+        type: string
 permissions:
   contents: read
 jobs:
   package:
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.pack.outputs.tag }}
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -26,14 +37,91 @@ jobs:
       - run: python -m unittest discover -p 'test*.py' -v
         working-directory: server
       - name: Package matching version
+        id: pack
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: python scripts/package_release.py --tag "$RELEASE_TAG"
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          python scripts/package_release.py --tag "$RELEASE_TAG"
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            git diff --exit-code "refs/tags/$RELEASE_TAG" HEAD -- extension server
+          fi
+          npm pack --ignore-scripts --pack-destination "dist/$RELEASE_TAG"
+          archive="dist/$RELEASE_TAG/browser-assistant-${RELEASE_TAG#v}.tgz"
+          test -f "$archive"
+          tar -tzf "$archive" | grep -Fx 'package/LICENSE' >/dev/null
+          tar -xOf "$archive" package/LICENSE | cmp - LICENSE
+          echo "Verified original MIT LICENSE in $archive"
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: ${{ steps.pack.outputs.archive }}
+          if-no-files-found: error
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.pack.outputs.tag }}
           fail_on_unmatched_files: true
           body_path: docs/RELEASE_NOTES.md
           files: |
             dist/v*/*.zip
             dist/v*/*.sha256
             dist/v*/release-manifest.json
+  npm:
+    name: Publish to npm
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-package
+      - name: Publish with npm Trusted Publishing
+        env:
+          RELEASE_TAG: ${{ needs.package.outputs.tag }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          if [[ "$(npm view "browser-assistant@$version" version --prefer-online 2>/dev/null)" == "$version" ]]; then
+            echo "browser-assistant@$version is already published."
+          else
+            npm publish "./browser-assistant-$version.tgz" --ignore-scripts
+          fi
+  github-packages:
+    name: Publish to GitHub Packages
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: https://npm.pkg.github.com
+          scope: '@jaswanthcodehub'
+          package-manager-cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-package
+      - name: Publish the scoped package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.package.outputs.tag }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          name='@jaswanthcodehub/browser-assistant'
+          if [[ "$(npm view "$name@$version" version --prefer-online 2>/dev/null)" == "$version" ]]; then
+            echo "$name@$version is already published."
+            exit 0
+          fi
+          mkdir github-package
+          tar -xzf "browser-assistant-$version.tgz" -C github-package --strip-components=1
+          npm pkg set --prefix github-package "name=$name" "publishConfig.registry=https://npm.pkg.github.com"
+          npm pkg delete --prefix github-package publishConfig.access
+          npm publish ./github-package --ignore-scripts

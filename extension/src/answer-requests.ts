@@ -6,11 +6,22 @@
         if (Array.isArray(detail)) message=detail.map(item=>item.msg || String(item)).join('; ');
         if (Array.isArray(detail?.errors)) message+=`: ${detail.errors.join(' | ')}`;
         message=String(message).replace(/gsk_[\w]+|sk-[\w-]+/g,'[redacted]').slice(0,900);
-        const error=new Error(`${response?.status ? `HTTP ${response.status}: ` : ''}${message}`);
+        const error=new Error(`${response?.status ? `HTTP ${response.status}: ` : ''}${message}`) as Error & {
+            status?: number;
+            code?: string;
+            retryAfterMs?: number;
+        };
         error.status=response?.status;
+        error.code=detail?.code;
+        const seconds=detail?.retry_after_seconds;
+        if (error.status===429 && Number.isFinite(seconds) && seconds>0) {
+            error.retryAfterMs=seconds*1000;
+        }
         return error;
     }
     function temporary(error) {
+        // The backend already tried the available vision keys.
+        if (error.code==='vision_rate_limited') return false;
         const text=error?.message || '';
         if (/access denied|forbidden|unauthorized|invalid.api.key|not configured|validation|not.support|model.*(?:not found|not exist)|illustration changed|question changed|context invalidated|extension was reloaded|no readable|unparseable/i.test(text)) return false;
         if (error.status) return [408,425,429,500,502,503,504].includes(error.status);
@@ -29,14 +40,14 @@
                 return response;
             } catch (error) {
                 if (!active()) return null;
-                if (attempt===attempts || !temporary(error)) throw error;
+                if (attempt===attempts || !temporary(error) || error.retryAfterMs>60_000) throw error;
                 onRetry({attempt:attempt+1,attempts,message:error.message});
                 // Short waits keep Stop/Pause responsive. Revalidate before the
                 // next request so an old answer cannot target a new question.
-                const delay=attempt===1 ? 1000 : 2500;
+                const delay=error.retryAfterMs ?? (attempt===1 ? 1000 : 2500);
                 for(let elapsed=0;elapsed<delay;elapsed+=100) {
                     if (!active()) return null;
-                    await sleep(100);
+                    await sleep(Math.min(100,delay-elapsed));
                 }
             }
         }

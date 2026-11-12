@@ -2,12 +2,15 @@
 // Never substitute a partial screenshot or a text-only guess for a failed read.
 (function () {
     function nodes(question) {
-        const found = new Set();
-        for (const region of [question.visualRegion, ...question.options.map(option => option.node)]) {
+        const found = new Set<Element>();
+        const optionRegions = question.options.map(option => option.node).filter(Boolean);
+        for (const region of [question.visualRegion, ...optionRegions]) {
             if (!region) continue;
             const candidates = region.matches('img,svg,canvas') ? [region] : region.querySelectorAll('img,svg,canvas');
             for (const node of candidates) {
-                if (node.closest('#assistant-root,nav,aside,button') || !node.getClientRects().length) continue;
+                if (node.closest('#assistant-root,nav,aside') || !node.getClientRects().length) continue;
+                const button = node.closest('button');
+                if (button && !optionRegions.some(option => button.contains(option) && option.contains(node))) continue;
                 if (node.parentElement?.closest('svg')) continue;
                 const width = node.naturalWidth || node.width?.baseVal?.value || Number(node.getAttribute('width'));
                 const height = node.naturalHeight || node.height?.baseVal?.value || Number(node.getAttribute('height'));
@@ -37,7 +40,7 @@
                 if (!response?.dataUrl) throw new Error(response?.error || 'Question illustration could not be read.');
                 data = response.dataUrl;
             }
-            const picture = await new Promise((resolve,reject) => {
+            const picture = await new Promise<HTMLImageElement>((resolve,reject) => {
                 const img = new Image();
                 const timer = window.setTimeout(()=>{img.src='';reject(new Error('Question illustration loading timed out.'));},10000);
                 img.onload=()=>{window.clearTimeout(timer);resolve(img);};
