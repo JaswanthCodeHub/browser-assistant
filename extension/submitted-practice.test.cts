@@ -11,6 +11,20 @@ function fixture(html){
     vm.runInContext(fs.readFileSync(`${__dirname}/automation-policy.js`,'utf8'),vm.createContext({window,URL}));
     return {document,adapter:window.BrowserAssistantAutomationPolicy.getAdapter('semantic-mcq')};
 }
+test('rendered RREF math preserves the matrix rows in the answer request', () => {
+    const rows = [[1, 0, 2], [0, 1, '−1'], [0, 0, 0]];
+    const matrix = rows.map(row => `<mtr>${row.map(cell => `<mtd><mn>${cell}</mn></mtd>`).join('')}</mtr>`).join('');
+    const {document, adapter} = fixture(`<main>
+        <div id="exam-question-wrapper-id">How many pivots does the following RREF matrix have?<span class="katex">
+            <span class="katex-mathml"><math><semantics><mrow><mo>[</mo><mtable>${matrix}</mtable><mo>]</mo></mrow>
+                <annotation encoding="application/x-tex">duplicate source</annotation></semantics></math></span>
+            <span class="katex-html" aria-hidden="true">duplicate display</span></span></div>
+        <div role="radiogroup">${[1, 2, 3, 0].map(number => `<label><input type="radio" name="pivot" aria-label="${number}">${number}</label>`).join('')}</div>
+        <button>SUBMIT</button></main>`);
+    const question = adapter.getQuestion(document);
+    assert.equal(question.text, 'How many pivots does the following RREF matrix have? [[1,0,2],[0,1,-1],[0,0,0]]');
+    assert.deepEqual(Array.from(question.options, option => option.text), ['1', '2', '3', '0']);
+});
 test('submitted CCBP multi-answer layout exposes Next even when all answer controls are disabled',()=>{
     const {document,adapter}=fixture(`<main><p>What are the advantages of a hash map?</p>
         <label><input type="checkbox" disabled checked>Lower time complexity</label>
@@ -69,6 +83,17 @@ test('Submit detection ignores hidden duplicates, ARIA disabled buttons and assi
     document.querySelector('main').insertAdjacentHTML('beforeend','<button>SUBMIT</button>');
     assert.equal(adapter.getSubmit(document,q),null);
 });
+test('practice Skip requires one enabled control in the question and Submit area', () => {
+    const {document,adapter}=fixture('<main><section><div id="options"></div><button disabled>Submit</button><button id="skip">Skip</button></section></main>');
+    const question={container:document.querySelector('#options')};
+    const skip=document.querySelector('#skip');
+    assert.equal(adapter.getPracticeSkip(document,question),skip);
+    skip.setAttribute('aria-disabled','true');
+    assert.equal(adapter.getPracticeSkip(document,question),null);
+    skip.removeAttribute('aria-disabled');
+    document.body.append(skip);
+    assert.equal(adapter.getPracticeSkip(document,question),null);
+});
 test('native Submit detection requires a unique visible enabled control',()=>{
     const {document,adapter}=fixture('<form><button hidden type="submit">SUBMIT</button><input id="submit" type="submit" value="SUBMIT"></form>');
     const q={form:document.querySelector('form')};
@@ -118,7 +143,9 @@ test('a permanently unavailable Submit times out without clicking or losing the 
     assert.equal(h.now(),15000);
 });
 
-for(const previouslySubmitted of [true,false])test(`runner advances ${previouslySubmitted?'an already answered question':'a question auto-submitted during checkbox selection'} once`,async()=>{
+for(const scenario of ['already answered','verified answer','unverified answer'])test(`runner handles ${scenario}`,async()=>{
+    const previouslySubmitted=scenario==='already answered';
+    const verified=scenario!=='unverified answer';
     let now=0,submitted=previouslySubmitted,nextClicks=0,requests=0,submitReads=0;
     const location={origin:'https://learning.ccbp.in',pathname:'/default-question/practice/example',href:'https://learning.ccbp.in/default-question/practice/example'};
     const automation={running:false,runId:0,processed:new Set()};
@@ -134,13 +161,61 @@ for(const previouslySubmitted of [true,false])test(`runner advances ${previously
         automationPolicy:{canExecute:()=>true},getAuthorizedQuestion:()=>submitted?null:question,
         normalizeAutomationText:value=>value.replace(/\s+/g,' ').trim(),waitWhilePaused:async()=>automation.running,
         answerIndexesFromResult:()=>[0,1],
-        requestPracticeAnswer:async()=>{requests++;return {data:{results:JSON.stringify([{answer:'Option A; Option B'}])}};},
+        requestPracticeAnswer:async()=>{requests++;return {data:{answer_verified:verified,results:JSON.stringify([{type:'mcq',answer:'Option A: Lower time complexity; Option B: Faster lookups'}])}};},
         stopAutomation:state=>{automation.running=false;automation.state=state;}});
     load(ctx,'    function hasSameQuestionOptions(','    function getAuthorizedQuestion(');
     load(ctx,'    async function waitForOptionSelection(','    async function waitForNextPracticeQuestion(');
     load(ctx,'    async function startPracticeAutomation(','    async function readMcqSnippetSnapshot(');
     await ctx.startPracticeAutomation();
+    if (!verified) {
+        assert.equal(automation.state,'PAUSED');assert.match(automation.error,/verification is required/);
+        assert.equal(nextClicks,0);assert.equal(submitReads,0);assert.equal(requests,1);
+        assert.ok(options.every(option=>!option.selected));
+        return;
+    }
     assert.equal(automation.state,'COMPLETED');assert.equal(automation.error,'');
     assert.equal(nextClicks,1);assert.equal(submitReads,0);assert.equal(requests,previouslySubmitted?0:1);
     assert.equal(automation.completed,1);
+});
+
+for (const practice of [true,false]) test(`a failed question in a ten-question run ${practice?'defers once':'waits for manual advance'} and the run continues`, async () => {
+    const origin=practice?'https://learning.ccbp.in':'https://quiz.example.test';
+    const pathname=practice?'/default-question/practice/example':'/quiz/example';
+    const location={origin,pathname,href:origin+pathname};
+    const targetId=practice?'ccbp-learning-practice':'website:'+origin;
+    const automation={running:false,runId:0,processed:new Set()};
+    const requests=[], answers=[], selections=[], deferred=[];
+    let index=0, reviewWaits=0;
+    const questions=Array.from({length:10}, (_, i)=>({
+        signature:'question-'+i,text:'Question '+i,selectionType:'single',
+        options:['One','Two'].map((text,index)=>({index,text,input:{click:()=>selections.push(i)}})),
+    }));
+    const adapter={id:'semantic-mcq',isComplete:()=>index===questions.length,
+        getPracticeSkip:()=>({click(){deferred.push(index++);}})};
+    const ctx=vm.createContext({document:{},window:{location},location,automation,
+        updateAutomationUI(){},
+        getAutomationContext:()=>({mode:'FULL',target:{id:targetId}}),getAutomationAdapter:()=>adapter,
+        automationPolicy:{canExecute:()=>true},getAuthorizedQuestion:()=>questions[index],
+        normalizeAutomationText:value=>value.trim(),waitWhilePaused:async()=>automation.running,
+        setTimeout:fn=>{if(automation.state==='WAITING_FOR_REVIEW' && ++reviewWaits===2) index++; fn();},
+        answerIndexesFromResult:()=>[0],waitForOptionSelection:async()=>questions[index],
+        waitForQuestionSubmit:async()=>({button:{click(){answers.push(index++);}}}),
+        waitForAdvanceOrTransition:async()=>index===questions.length?'complete':'next',
+        waitForPracticeTransition:async()=> 'next',
+        requestPracticeAnswer:async()=>{
+            requests.push(index);
+            if(index===4) throw Object.assign(new Error('Verification incomplete'),{code:'answer_unconfirmed'});
+            return {data:{answer_verified:true,results:'[{"type":"mcq","answer":"Option A: One"}]'}};
+        },
+        stopAutomation:state=>{automation.running=false;automation.state=state;}});
+    load(ctx,'    function hasSameQuestionOptions(','    function getAuthorizedQuestion(');
+    load(ctx,'    async function continueAfterUnverifiedQuestion(','    async function readMcqSnippetSnapshot(');
+    await ctx.startPracticeAutomation();
+    assert.equal(requests.length,10);
+    assert.equal(automation.completed,9);
+    assert.deepEqual(selections,answers);
+    assert.ok(!answers.includes(4));
+    assert.deepEqual(deferred,practice?[4]:[]);
+    assert.equal(reviewWaits,practice?0:2);
+    assert.equal(automation.state,practice?'REVIEW_NEEDED':'COMPLETED');
 });

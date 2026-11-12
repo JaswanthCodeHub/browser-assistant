@@ -48,6 +48,8 @@ test('a stationary collapsed-badge pointer press opens the panel despite root po
     assert.equal(opens,1);
     event('pointerdown',badge,20);event('pointermove',root,35);event('pointerup',root,35);
     assert.equal(opens,1);assert.equal(ctx.suppressNextClick,true);
+    event('pointerdown',badge,20);event('pointercancel',root,20);
+    assert.equal(opens,1);
 });
 test('answer rendering escapes untrusted markup and code copy preserves the exact source',async()=>{
     const {document}=parseHTML('<html><body><div id="results"></div></body></html>');
@@ -72,6 +74,36 @@ test('Text Scan keeps long coding statements and excludes hidden executable data
     vm.runInContext(content.slice(start,content.indexOf('    function selectTab(',start)),ctx);
     assert.match(ctx.extractSmartText(),/FINAL_INPUT_SENTINEL/);
     assert.doesNotMatch(ctx.cleanBodyText(60000),/PRIVATE_/);
+});
+test('Text Scan recovers on the same tab after the backend starts',async()=>{
+    const {document}=parseHTML('<div id="assistant-root"><span class="status-dot offline"></span></div>');
+    const results=[],errors=[];
+    let online=false;
+    const ctx=vm.createContext({
+        root:document.getElementById('assistant-root'),document,serverOnline:false,isScanning:false,isCollapsed:false,
+        window:{},console:{log(){},error(){}},render(){},setLoading(){},updateScanControls(){},
+        detectPracticeType:()=> 'auto',extractSmartText:()=> 'What is six plus seven?',
+        prepareVisionQuestionContext:async()=>({url:'http://127.0.0.1:8000/practice'}),
+        assertVisionQuestionCurrent:async()=>{},assertVerifiedScanAnswers(){},
+        safeSendMessage:async()=>{
+            if(!online)return {error:'Local server is offline.'};
+            return {ok:true,status:200,data:{results:'[{"type":"mcq","answer":"13"}]'}};
+        },
+        displayResults:value=>results.push(value),showError:error=>errors.push(error),
+    });
+    const api=content.indexOf('    async function apiRequest(');
+    vm.runInContext(content.slice(api,content.indexOf('    async function saveScanHistory(',api)),ctx);
+    const status=content.indexOf('    // ── Server health check');
+    vm.runInContext(content.slice(status,content.indexOf('    // Check once on load',status)),ctx);
+    const scan=content.indexOf('    async function scanPage(');
+    vm.runInContext(content.slice(scan,content.indexOf('    // ── Helpers',scan)),ctx);
+    await ctx.scanPage();
+    assert.match(errors[0],/offline/i);
+    online=true;
+    await ctx.scanPage();
+    assert.equal(results[0]?.[0].answer,'13');
+    assert.equal(ctx.serverOnline,true);
+    assert.equal(ctx.root.querySelector('.status-dot').getAttribute('title'),'Server online');
 });
 test('Stop cancels automation even when site session storage is unavailable',()=>{
     const automation={runId:1,running:true,paused:true,batch:{},pendingNavigation:true};
