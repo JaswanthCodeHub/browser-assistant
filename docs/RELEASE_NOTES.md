@@ -1,4 +1,8 @@
-# Browser Assistant 2.9.12
+# Browser Assistant 2.9.13
+
+- On the CCBP course instructions page, Alt+A uses the visible Start Practice button and continues when the questions load. The shortcut does not open a confirmation dialog or the floating panel.
+
+## Browser Assistant 2.9.12
 
 - Alt+A starts MCQ automation directly on CCBP practice and practice review pages. The shortcut leaves the panel closed if it was closed.
 

@@ -267,44 +267,55 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
         const windows = () => worker.evaluate(() => chrome.windows.getAll({windowTypes: ['popup']}));
         let detached;
 
-        await t.test('Alt+A starts CCBP practice review without a popup or startup banner', async () => {
-            const review = await context.newPage();
-            const url = 'https://learning.ccbp.in/primitive-coding-review/practice/shortcut/test';
-            const dialogs = [];
-            review.on('dialog', async dialog => {
-                dialogs.push(dialog.message());
-                await dialog.dismiss();
-            });
-            try {
-                await review.route(url, route => route.fulfill({contentType: 'text/html', body: `<!doctype html>
-                    <main id="generic-question-container">
-                        <p id="generic-question-wrapper-id">What is 6 + 7?</p>
-                        <label><input type="radio" name="answer" value="11">11</label>
-                        <label><input type="radio" name="answer" value="12">12</label>
-                        <label><input type="radio" name="answer" value="13">13</label>
-                        <button>Submit</button>
-                    </main>
-                    <script>
-                        window.notices = [];
+        const shortcutReview = 'https://learning.ccbp.in/primitive-coding-review/practice/shortcut/test';
+        const shortcutCourse = 'https://learning.ccbp.in/course?c_id=test&t_id=test&s_id=shortcut';
+        await context.route(shortcutCourse, route => route.fulfill({contentType: 'text/html', body: `<!doctype html>
+            <main><h1>Module II: Linked Lists &gt; MCQ Practice</h1>
+            <a href="${shortcutReview}">START PRACTICE</a></main>`}));
+        await context.route(shortcutReview, route => route.fulfill({contentType: 'text/html', body: `<!doctype html>
+            <main id="generic-question-container">
+                <p id="generic-question-wrapper-id">What is 6 + 7?</p>
+                <label><input type="radio" name="answer" value="11">11</label>
+                <label><input type="radio" name="answer" value="12">12</label>
+                <label><input type="radio" name="answer" value="13">13</label>
+                <button>Submit</button>
+            </main>
+            <script>
+                document.querySelector('button').onclick = () => {
+                    window.submittedAnswer = document.querySelector('input:checked')?.value;
+                    document.querySelector('main').innerHTML = '<p>Quiz completed</p>';
+                };
+            </script>`}));
+        for (const [screen, url] of [['practice review', shortcutReview], ['course instructions', shortcutCourse]]) {
+            await t.test(`Alt+A starts CCBP ${screen} without a popup or startup banner`, async () => {
+                const page = await context.newPage();
+                const dialogs = [];
+                page.on('dialog', async dialog => {
+                    dialogs.push(dialog.message());
+                    await dialog.dismiss();
+                });
+                try {
+                    await page.addInitScript(() => {
                         new MutationObserver(() => {
                             const notice = document.querySelector('#assistant-automation-notice');
-                            if (notice) window.notices.push(notice.textContent);
-                        }).observe(document.body, {subtree: true, childList: true});
-                        document.querySelector('button').onclick = () => {
-                            window.submittedAnswer = document.querySelector('input:checked')?.value;
-                            document.querySelector('main').innerHTML = '<p>Quiz completed</p>';
-                        };
-                    </script>`}));
-                await review.goto(url);
-                await review.locator('#assistant-trigger').waitFor();
-                await review.keyboard.press('Alt+a');
-                assert.deepEqual(dialogs, []);
-                await review.getByText('Quiz completed', {exact: true}).waitFor();
-                assert.equal(await review.evaluate(() => window.submittedAnswer), '13');
-                assert.equal(await review.locator('#assistant-panel').isVisible(), false);
-                assert.equal(await review.evaluate(() => window.notices.some(text => text.includes('automation started'))), false);
-            } finally { await review.close(); }
-        });
+                            if (notice?.textContent.includes('automation started')) {
+                                sessionStorage.setItem('test-startup-banner', 'shown');
+                            }
+                        }).observe(document, {subtree: true, childList: true});
+                    });
+                    await page.goto(url);
+                    await page.locator('#assistant-trigger').waitFor();
+                    await page.keyboard.press('Alt+a');
+                    assert.deepEqual(dialogs, []);
+                    await page.waitForURL(shortcutReview);
+                    await page.getByText('Quiz completed', {exact: true}).waitFor();
+                    assert.equal(await page.evaluate(() => window.submittedAnswer), '13');
+                    assert.equal(await page.locator('#assistant-panel').isVisible(), false);
+                    assert.equal(await page.evaluate(() => sessionStorage.getItem('test-startup-banner')), null);
+                    assert.deepEqual(dialogs, []);
+                } finally { await page.close(); }
+            });
+        }
 
         await t.test('reorders all six linked-list steps through native drag before submitting', async () => {
             const ordering = await context.newPage();

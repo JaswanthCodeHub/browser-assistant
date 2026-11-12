@@ -1,3 +1,7 @@
+# 2.9.13
+
+- Use Alt+A to open the selected CCBP course practice and continue on the question page without a startup prompt.
+
 # 2.9.12
 
 - Start MCQ automation directly with Alt+A on CCBP practice and practice review pages, without a confirmation popup or startup banner.

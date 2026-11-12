@@ -2104,14 +2104,16 @@ function mountJournalCountdown(signal: AbortSignal) {
         const ide = window.BrowserAssistantCoding?.getOnlineIdeQuestion?.(document, location);
         const journalPage = Boolean(journal?.matches());
         const canNavigate = automationPolicy?.canExecute('navigate', context);
+        const startPractice = !question && canNavigate && adapter?.getStartPractice?.(document);
         const type = journalPage ? 'Journal' : batch && canNavigate ? 'Batch Coding'
             : question?.type === 'code' || (ide && canNavigate) ? 'Coding'
-            : question || (canNavigate && adapter?.getStartPractice?.(document)) ? (/quiz/i.test(location.pathname) ? 'Quiz' : 'MCQ')
+            : question || startPractice ? (/quiz/i.test(location.pathname) ? 'Quiz' : 'MCQ')
             : null;
         if (!type) { showAutomationNotice('Automation is unavailable on this page.'); return; }
+        const coursePractice = /^\/course\/?$/.test(location.pathname) && Boolean(startPractice);
         const startDirectly = context.target.id === 'local-practice'
             || (type === 'MCQ' && context.target.id === 'ccbp-learning-practice'
-                && /^\/(?:default-question|primitive-coding(?:-review)?)\/practice\//.test(location.pathname));
+                && (coursePractice || /^\/(?:default-question|primitive-coding(?:-review)?)\/practice\//.test(location.pathname)));
         if (!startDirectly
             && !window.confirm('Start ' + type + ' automation on this page? It can enter and submit answers as it runs.')) return;
         const progress = document.querySelector('[data-practice-quiz] #progress')?.textContent;
