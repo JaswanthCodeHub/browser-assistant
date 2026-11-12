@@ -14,7 +14,7 @@ function setup({changed=false,raw=false,code=false,mismatch=false}={}) {
         nodes:()=>code?[]:[{}],fingerprint:()=> 'chart-unchanged',
         capture:async()=>({images:['data:image/png;base64,FULL_CHART','data:image/png;base64,FULL_LEGEND'],fingerprint:'chart-unchanged'})}},
         location:{href:'https://learning.ccbp.in/primitive-coding/practice/a/b',origin:'https://learning.ccbp.in'},
-        document:{querySelector:()=>code?{}:null},root:{style:{visibility:''}},journalCountdownBadge,selectedMode:'auto',isScanning:false,isCollapsed:false,
+        document:{querySelector:()=>code?{}:null},root:{style:{visibility:''}},journalCountdownBadge,panelToken:'',selectedMode:'auto',isScanning:false,isCollapsed:false,
         getAuthorizedQuestion:()=>current,hasSameQuestionOptions:(before,after)=>before===after,
         render(){},setLoading(){},updateScanControls(){},requestAnimationFrame:fn=>fn(),console:{error(){}},
         safeSendMessage:async request=>{captures.push(request.action);

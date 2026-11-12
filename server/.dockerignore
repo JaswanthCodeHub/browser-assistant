@@ -3,6 +3,7 @@
 !requirements.txt
 !requirements.lock.txt
 !main.py
+!workspace_server.py
 !practice_quiz.html
 !code_contract.py
 !journal.py

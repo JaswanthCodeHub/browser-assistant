@@ -16,6 +16,8 @@ AI answers can be wrong. Automation can change or submit page content: use it on
 
 ## First run
 
+For a separate assistant window and supported recording setup, see the [Separate Panel Window guide](docs/SEPARATE_PANEL.md).
+
 ### Continuous coding batch
 
 On CCBP `/problems-set`, start on page 1 and keep both **Not Attempted** and
@@ -51,12 +53,15 @@ Download the backend ZIP or clone this repository, then open a terminal in the e
 ### Windows PowerShell
 
 ```powershell
-py -3.11 -m venv .venv
+if (-not (Test-Path '.\.venv\Scripts\python.exe')) {
+    py -3 -m venv .venv
+}
 .\.venv\Scripts\python.exe -m pip install --require-hashes -r server\requirements.lock.txt
-Copy-Item server\.env.example server\.env
+if (-not (Test-Path 'server\.env')) {
+    Copy-Item server\.env.example server\.env
+}
 # Edit server\.env as described below, then:
-Set-Location server
-..\.venv\Scripts\python.exe main.py
+.\.venv\Scripts\python.exe server\main.py
 ```
 
 ### macOS / Linux
@@ -70,7 +75,7 @@ cd server
 ../.venv/bin/python main.py
 ```
 
-Python 3.12 or 3.14 can replace 3.11. Pillow 13 security fixes require Python 3.11+, so Python 3.10 is no longer in the secure installation matrix. Existing users on 3.11+ keep their runtime. These commands avoid shell activation requirements. Do not overwrite an existing `.env` or environment when updating a local installation.
+Use Python 3.11 or later. If the Windows launcher cannot find your installed Python, use its full executable path in the environment creation command. For example, in PowerShell run `& 'C:\path\to\python.exe' -m venv .venv`. Install and run the backend through the same virtual environment.
 
 ### Configure a provider
 
@@ -84,7 +89,7 @@ For local text inference, install [Ollama](https://github.com/ollama/ollama), ru
 2. Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select the prepared folder containing `manifest.json`.
 3. Open `http://127.0.0.1:8000/health`. A JSON `status: "ok"` confirms the backend is running; it does not test model access.
 4. Open `http://127.0.0.1:8000/practice`, then use the floating panel's Text Scan. Review the answer before trying automation with Start.
-5. After changing extension files, reload it in the extensions page and refresh the practice tab.
+5. For a local source checkout, run `npm run build` after updating the project. When the build version changes, Chrome reloads the unpacked extension once Browser Assistant is idle. A backend started with `server/main.py` also switches to the new version in the same terminal. Start it once with the updated launcher if an older backend is still running. For ZIP and npm installs, reload the extension manually after upgrading.
 
 The toolbar popup reports backend status. In-page shortcuts are backtick (open), `]` (close), `\` (vision scan), and `[` (minimal mode). They are hardcoded page listeners, not configurable Chrome extension commands.
 
