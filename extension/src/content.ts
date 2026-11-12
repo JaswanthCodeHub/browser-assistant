@@ -1,12 +1,75 @@
 // Browser Assistant Content Script v3.0 — High Accuracy Edition
 
+function mountJournalCountdown(signal: AbortSignal) {
+    const storage = chrome.storage.local;
+    const badge = document.createElement('div');
+    badge.id = 'assistant-journal-countdown-badge';
+    const clock = document.createElement('span');
+    clock.setAttribute('role', 'timer');
+    badge.attachShadow({mode: 'closed'}).append(clock);
+    let timers: AssistantJournalTimer[] = [];
+    let tick: number | undefined;
+    let revision = 0;
+
+    function getCountdownLabel() {
+        const now = Date.now();
+        const path = location.pathname.replace(/\/$/, '');
+        const aurora = location.origin === 'https://admissions.aurora.edu.in';
+        const visible = timers.filter(timer => timer.deadline > now
+            && (!aurora || (path.startsWith('/modules/reflective-journal/') && timer.path !== path)));
+        if (!visible.length) return '';
+        const times = visible.map(timer => {
+            const seconds = Math.ceil((timer.deadline - now) / 1000);
+            return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+        });
+        return `${times.length === 1 ? 'Journal time left' : 'Journal times left'} ≈ ${times.join(' · ')}`;
+    }
+
+    function renderCountdown() {
+        window.clearTimeout(tick);
+        if (signal.aborted) return;
+        const label = getCountdownLabel();
+        if (!label) badge.remove();
+        else {
+            clock.textContent = label;
+            if (!badge.isConnected) document.body.appendChild(badge);
+        }
+        if (label && !document.hidden) tick = window.setTimeout(renderCountdown, 1000);
+    }
+
+    async function refreshCountdown() {
+        const request = ++revision;
+        try {
+            const next = await chrome.runtime.sendMessage<AssistantMessage, AssistantJournalTimer[]>({action: 'journalCountdowns'});
+            if (request !== revision || signal.aborted) return;
+            timers = Array.isArray(next) ? next : [];
+            renderCountdown();
+        } catch { /* Reloading the extension can invalidate the old tab context. */ }
+    }
+
+    const onStorageChange = (changes: Record<string, chrome.storage.StorageChange>) => {
+        if (Object.keys(changes).some(key => key.startsWith('assistantJournalTimer') || key.startsWith('assistantJournalConfirmed:'))) {
+            void refreshCountdown();
+        }
+    };
+    storage.onChanged.addListener(onStorageChange);
+    document.addEventListener('visibilitychange', renderCountdown, {signal});
+    signal.addEventListener('abort', () => {
+        window.clearTimeout(tick);
+        storage.onChanged.removeListener(onStorageChange);
+        badge.remove();
+    }, {once: true});
+    void refreshCountdown();
+    return {badge, getCountdownLabel};
+}
+
 (function () {
     // Abort on pages without a body (about:blank, PDFs, XML docs, etc.)
-    if (!document.body) return;
+    if (!document.body || document.getElementById('assistant-root')) return;
     const extensionVersion = chrome.runtime.getManifest().version;
 
     const lifecycle = new AbortController();
-    const pendingTimeouts = new Set();
+    const pendingTimeouts = new Set<number>();
     const scheduleTimeout = window.setTimeout.bind(window);
     let disposed = false;
     const setTimeout = (fn, delay) => {
@@ -17,25 +80,31 @@
     };
     const navigationCleanup = [];
 
-    console.log("Browser Assistant v3.0 loaded.");
+    console.log("Browser Assistant v" + extensionVersion + " loaded.");
 
     const SERVER = 'http://localhost:8000';
 
     const root = document.createElement('div');
     root.id = 'assistant-root';
+    root.dataset.build = extensionVersion;
+    root.classList.add('assistant-panel-initializing');
     document.body.appendChild(root);
+    const journalCountdown = ['http:', 'https:'].includes(location.protocol)
+        ? mountJournalCountdown(lifecycle.signal) : null;
+    const journalCountdownBadge = journalCountdown?.badge;
+    journalCountdownBadge?.classList.add('assistant-panel-initializing');
 
     // ── Move panel ───────────────────────────────────────────────────────────
     // Drag the header to put the panel anywhere on the current page. The saved
     // location is restored after a refresh on that site.
     const POSITION_KEY = 'browserAssistantPosition';
-    let dragState = { dragging: false, moved: false, startX: 0, startY: 0, origX: 0, origY: 0 };
+    let dragState: { dragging: boolean; moved: boolean; collapsedBadge?: boolean; startX: number; startY: number; origX: number; origY: number } = { dragging: false, moved: false, startX: 0, startY: 0, origX: 0, origY: 0 };
     let suppressNextClick = false;
 
     function clampPanelPosition(x, y) {
         return {
-            x: Math.max(0, Math.min(window.innerWidth - root.offsetWidth, x)),
-            y: Math.max(0, Math.min(window.innerHeight - root.offsetHeight, y)),
+            x: Math.max(4, Math.min(window.innerWidth - root.offsetWidth - 4, x)),
+            y: Math.max(4, Math.min(window.innerHeight - root.offsetHeight - 4, y)),
         };
     }
 
@@ -61,9 +130,9 @@
         root.addEventListener('pointerdown', (event) => {
             // The expanded panel moves by its header; the collapsed round badge
             // itself is also draggable.
-            const isHeader = event.target.closest('.assistant-header');
-            const isCollapsedBadge = event.target.closest('.assistant-tab.collapsed');
-            if ((!isHeader && !isCollapsedBadge) || (event.target.closest('button') && !isCollapsedBadge)) return;
+            const isHeader = (event.target as Element).closest('.assistant-header');
+            const isCollapsedBadge = (event.target as Element).closest('.assistant-tab.collapsed');
+            if ((!isHeader && !isCollapsedBadge) || ((event.target as Element).closest('button') && !isCollapsedBadge)) return;
             const rect = root.getBoundingClientRect();
             dragState = {
                 dragging: true,
@@ -90,7 +159,7 @@
             );
         });
 
-        const stopDragging = () => {
+        const stopDragging = (event: PointerEvent) => {
             if (!dragState.dragging) return;
             suppressNextClick = dragState.moved;
             dragState.dragging = false;
@@ -107,7 +176,7 @@
             }
             // Pointer capture retargets the eventual click to the root, so a
             // stationary badge press must open here rather than lose its click.
-            if (!dragState.moved && dragState.collapsedBadge) openPanel();
+            if (event.type === 'pointerup' && !dragState.moved && dragState.collapsedBadge) openPanel();
         };
         root.addEventListener('pointerup', stopDragging);
         root.addEventListener('pointercancel', stopDragging);
@@ -119,12 +188,20 @@
         }, true);
         window.addEventListener('resize', () => {
             const rect = root.getBoundingClientRect();
-            if (root.style.left) setPanelPosition(rect.left, rect.top);
+            if (root.style.left && root.offsetWidth) setPanelPosition(rect.left, rect.top);
         }, {signal:lifecycle.signal});
     }
 
     initDrag();
     restorePanelPosition();
+    const panelResizeObserver = new ResizeObserver(() => {
+        if (!root.style.left || !root.offsetWidth || dragState.dragging) return;
+        const { left, top } = root.getBoundingClientRect();
+        const { x, y } = clampPanelPosition(left, top);
+        if (left !== x || top !== y) setPanelPosition(left, top);
+    });
+    panelResizeObserver.observe(root);
+    lifecycle.signal.addEventListener('abort', () => panelResizeObserver.disconnect(), { once: true });
 
     let isCollapsed = true;
     // Scan type and visible tab are intentionally separate. Switching away
@@ -135,22 +212,142 @@
     let lastResultSummary = "";
     let isHidden = false;
     let serverOnline = null; // null = unknown, true/false = checked
+    let backendVersion = '';
     let isScanning = false;
     let extensionAlive = true; // false after extension reload invalidates context
     let historyItems = [];
     let isHistoryOpen = false;
     const automationPolicy = window.BrowserAssistantAutomationPolicy;
-    const automation = {
+    const automation: AssistantAutomationState = {
         state: 'IDLE', running: false, paused: false, runId: 0,
         processed: new Set(), completed: 0, error: '', currentSignature: '',
     };
+    const directRunKey = 'browserAssistantDirectRun';
+    let directRun: {
+        id: string; type: string; url: string; started_at: string; ended_at: string | null;
+        total: number | null; completed: number; failed: number; status: string; revision: number;
+    } | null = null;
+    let directRunStarting = false;
+    let noticeTimer: number;
+    let automationNotice = '';
+    try {
+        const saved = JSON.parse(sessionStorage.getItem(directRunKey) || 'null');
+        if (saved?.status === 'Running' && new URL(saved.url).origin === location.origin
+            && Date.now() - Date.parse(saved.started_at) < 8 * 60 * 60 * 1000) directRun = saved;
+    } catch { /* The shortcut still works when storage is unavailable. */ }
 
-    const updateListener = (request, _sender, sendResponse) => {
-        const busy = automation.running || isScanning || Boolean(window.BrowserAssistantJournalBusy);
+    let panelToken = '';
+    let floatingMinimal = false;
+    const panelControlSelector = 'button,select,textarea,summary';
+    const panelControls = new WeakMap<Element, string>();
+    const panelDocumentId = crypto.randomUUID();
+    let panelControlId = 0;
+
+    function setDetachedPanel(token: string) {
+        if (token && !panelToken) {
+            floatingMinimal = isMinimalMode;
+            isMinimalMode = false;
+            openPanel();
+        } else if (!token && panelToken) {
+            isMinimalMode = floatingMinimal;
+        }
+        panelToken = token;
+        root.classList.toggle('assistant-detached', Boolean(token));
+        journalCountdownBadge?.classList.toggle('assistant-detached', Boolean(token));
+    }
+
+    function panelSnapshot() {
+        const copy = root.cloneNode(true) as HTMLElement;
+        const copies = copy.querySelectorAll(panelControlSelector);
+        root.querySelectorAll<HTMLElement>(panelControlSelector).forEach((control, index) => {
+            let id = panelControls.get(control);
+            if (!id) {
+                id = panelDocumentId + ':' + ++panelControlId;
+                panelControls.set(control, id);
+            }
+            const clone = copies[index];
+            clone.setAttribute('data-panel-control', id);
+            if (control instanceof HTMLTextAreaElement) clone.textContent = control.value;
+            if (control instanceof HTMLSelectElement) {
+                clone.querySelectorAll('option').forEach((option, optionIndex) => {
+                    option.toggleAttribute('selected', control.options[optionIndex].selected);
+                });
+            }
+        });
+        return {ok: true, html: copy.innerHTML, countdown: journalCountdown?.getCountdownLabel() || '', notice: automationNotice};
+    }
+
+    function panelAction(request: AssistantMessage) {
+        if (request.operation === 'vision') {void visionScan(); return {ok: true};}
+        if (request.operation === 'automation') {
+            toggleDirectAutomation();
+            return {ok: true};
+        }
+        if (request.operation === 'journal') {
+            if (window.BrowserAssistantJournal?.matches()) void window.BrowserAssistantJournal.start();
+            return {ok: true};
+        }
+        const control = [...root.querySelectorAll<HTMLElement>(panelControlSelector)]
+            .find(element => panelControls.get(element) === request.panelControl);
+        if (!control || control.closest('[hidden]') || control.matches(':disabled')) {
+            return {error: 'The panel changed. Try the control again.'};
+        }
+        if (request.operation === 'click' && control.matches('button,summary')) {
+            control.click();
+        } else if (request.operation === 'value' && typeof request.value === 'string' && request.value.length <= 20000
+            && (control instanceof HTMLSelectElement || control instanceof HTMLTextAreaElement)) {
+            if (control instanceof HTMLSelectElement && ![...control.options].some(option => option.value === request.value)) {
+                return {error: 'That choice is no longer available.'};
+            }
+            control.value = request.value;
+            control.dispatchEvent(new Event(control instanceof HTMLSelectElement ? 'change' : 'input', {bubbles: true}));
+        } else {
+            return {error: 'Unsupported panel control.'};
+        }
+        return {ok: true};
+    }
+
+    async function syncDetachedPanel() {
+        const previous = panelToken;
+        try {
+            const result = await chrome.runtime.sendMessage({action: 'panel:target-status'});
+            if (typeof result?.token === 'string' && panelToken === previous && result.token !== previous) {
+                setDetachedPanel(result.token);
+            }
+        } catch { /* The toolbar can reconnect after a reload. */ }
+        finally {
+            root.classList.remove('assistant-panel-initializing');
+            journalCountdownBadge?.classList.remove('assistant-panel-initializing');
+        }
+    }
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) void syncDetachedPanel();
+    }, {signal: lifecycle.signal});
+
+    const updateListener = (request, sender, sendResponse) => {
+        if (request.action?.startsWith('assistantPanel')) {
+            if (sender.id !== chrome.runtime.id || sender.tab) return false;
+            if (request.action === 'assistantPanelPing') sendResponse({ok: true});
+            if (request.action === 'assistantPanelSnapshot' && typeof request.token === 'string' && request.token) {
+                if (panelToken !== request.token) setDetachedPanel(request.token);
+                sendResponse(panelSnapshot());
+            }
+            if (panelToken && request.token === panelToken) {
+                if (request.action === 'assistantPanelDetach') {setDetachedPanel(''); sendResponse({ok: true});}
+                if (request.action === 'assistantPanelAction') sendResponse(panelAction(request));
+            }
+            return false;
+        }
+        const busy = automation.running || isScanning || dragState.dragging || Boolean(window.BrowserAssistantJournalBusy)
+            || Boolean(root.contains(document.activeElement) && document.activeElement?.matches('textarea,input,select,[contenteditable="true"]'));
         if (request.action === 'assistantUpdateStatus') {sendResponse({busy});return false;}
         if (request.action !== 'assistantPrepareUpdate') return false;
         if (busy) {sendResponse({ready:false});return false;}
-        try {sessionStorage.setItem('browserAssistantReopenAfterUpdate',isCollapsed?'false':'true');} catch {}
+        try {
+            sessionStorage.setItem('browserAssistantReopenAfterUpdate', JSON.stringify({
+                isCollapsed, isHidden, selectedTab, selectedMode,
+            }));
+        } catch {}
         disposed = true; extensionAlive = false; automation.runId++;
         lifecycle.abort();
         for (const cleanup of navigationCleanup) cleanup();
@@ -161,16 +358,24 @@
         return false;
     };
     chrome.runtime.onMessage.addListener(updateListener);
+    function requestWorkspaceUpdate() {
+        if (!document.hidden && !disposed) void chrome.runtime.sendMessage({action:'checkWorkspaceUpdate'}).catch(() => {});
+    }
+    document.addEventListener('visibilitychange', requestWorkspaceUpdate, {signal:lifecycle.signal});
+    window.addEventListener('focus', requestWorkspaceUpdate, {signal:lifecycle.signal});
+    const workspaceUpdateTimer = window.setInterval(requestWorkspaceUpdate, 3000);
+    lifecycle.signal.addEventListener('abort', () => window.clearInterval(workspaceUpdateTimer), {once: true});
     document.addEventListener('assistant-journal-update', updateAutomationUI, {signal:lifecycle.signal});
     document.addEventListener('assistant-journal-ready', () => {
         if (!window.BrowserAssistantJournal?.matches()) return;
-        selectedTab = 'qa'; isCollapsed = false; isHidden = false; root.style.display = 'block'; render();
+        selectedTab = 'qa';
+        openPanel('journal-ready');
     }, {signal:lifecycle.signal});
 
     function getAutomationContext() {
         const target = automationPolicy?.resolveTarget(window.location, document) || null;
         const pageType = target?.pageTypes?.[0] || null;
-        const context = {
+        const context: AssistantContext = {
             authorizationVerified: Boolean(target),
             target: target ? { ...target, authorized: true } : { authorized: false },
             page: { type: pageType, authorized: Boolean(target && pageType) },
@@ -220,7 +425,14 @@
             return { ...coding, signature: `code:${window.location.pathname}:${coding.language}:${identity}` };
         }
         const question = adapter.getQuestion(document);
-        if (!question || !normalizeAutomationText(question.text) || (question.type !== 'short-answer' && question.options.length < 2)) return null;
+        if (!question || !normalizeAutomationText(question.text)) return null;
+        if (question.compoundQuestions) {
+            return { ...question, signature: JSON.stringify([question.type,
+                question.compoundSubmit ? question.compoundContext : '',
+                question.compoundQuestions.map(group => [group.identityText || group.text, group.options.map(option => option.identityText || option.text)]),
+            ]) };
+        }
+        if (question.type !== 'short-answer' && question.options.length < 2) return null;
         return { ...question, text: normalizeAutomationText(question.text), options: question.options.map((option, index) => ({
             ...option, index, text: normalizeAutomationText(option.text),
         })), signature: questionSignature(question.identityText || question.text, question.options)
@@ -301,67 +513,55 @@
     watchSpaNavigation();
 
     function answerIndexesFromResult(results, question) {
-        const answer = String(results?.[0]?.answer ?? '').replace(/[*`]/g, '').trim();
-        const numericValue = answer.replace(/^(?:the\s+)?(?:correct\s+)?(?:answer|result)\s*(?:is\s*|:\s*)?/i, '').trim();
-        if (/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(numericValue)) {
-            const matches = question.options.filter(option => option.text.trim() === numericValue);
-            return matches.length === 1 ? [matches[0].index] : [];
-        }
-        const letterMatches = [...answer.matchAll(/\bOption\s+([A-Z])\b/gi)]
-            .map((match) => match[1].toUpperCase().charCodeAt(0) - 65)
-            .filter((index) => index >= 0 && index < question.options.length);
-        const standaloneLetter = answer.match(/(?:^|\n|(?:answer|correct(?:\s+answer)?)\s*(?:is|:)?\s*)\(?([A-Z])\)?(?:[.:\-\s]|$)/i)?.[1];
-        const standaloneIndex = standaloneLetter ? standaloneLetter.toUpperCase().charCodeAt(0) - 65 : -1;
-        const numericMatches = [...answer.matchAll(/option\s*(?:number|no\.?|#)?\s*([1-9])\b/gi)]
-            .map((match) => Number(match[1]) - 1)
-            .filter((index) => index >= 0 && index < question.options.length);
-        const optionIndexes = [...new Set([
-            ...letterMatches,
-            ...(standaloneIndex >= 0 && standaloneIndex < question.options.length ? [standaloneIndex] : []),
-            ...numericMatches,
-        ])];
-        if (optionIndexes.length) return question.selectionType === 'multiple' ? optionIndexes : [optionIndexes[0]];
-        const answerText = answer.toLowerCase();
-        const compact = (value) => value.toLowerCase().replace(/[^a-z0-9]+/g, '');
-        const normalizedAnswer = answerText
-            .replace(/^(?:the\s+)?(?:correct\s+)?(?:answer|result)\s*(?:is|:)?\s*/i, '')
-            .replace(/^option\s+[a-z]\s*[:.)-]?\s*/i, '')
-            .trim();
-        // Numeric MCQ options such as 0, 2, 9, and 3 need an exact match;
-        // substring matching would be unsafe for values inside code/reasoning.
-        const exactValue = question.options.find((option) =>
-            option.text.trim().toLowerCase() === normalizedAnswer
-            || (!/^[+-]?[\d.]+$/.test(option.text.trim()) && compact(option.text) === compact(normalizedAnswer)),
-        );
-        if (exactValue) return [exactValue.index];
-        const textMatches = question.options
-            .filter((option) => {
-                const optionText = compact(option.text);
-                const modelText = compact(answerText);
-                return optionText.length > 2 && (modelText.includes(optionText) || optionText.includes(modelText));
-            })
-            .map((option) => option.index);
-        return question.selectionType === 'multiple' ? textMatches : textMatches.slice(0, 1);
-    }
-
-    async function recoverAnswerIndexes(question, previousAnswer) {
-        const format = question.selectionType === 'multiple'
-            ? 'Return every correct choice strictly as "Option A; Option C".'
-            : 'Return exactly one choice strictly as "Option A", "Option B", "Option C", or "Option D".';
-        const response = await apiRequest('/solve', 'POST', {
-            text: `OPTION-MAPPING RECOVERY\n${format}\nDo not explain.\n\nQuestion:\n${question.text}\n\nOptions:\n${question.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option.text}`).join('\n')}\n\nPrevious model response:\n${String(previousAnswer || '')}`,
-            url: window.location.href,
-            practice_type: 'mcq',
+        const raw = results?.[0]?.answer;
+        if (!Array.isArray(results) || results.length !== 1 || (typeof raw !== 'string' && typeof raw !== 'number')) return [];
+        const answer = String(raw).trim();
+        if (!answer) return [];
+        const normalize = value => value.trim().replace(/\r\n/g, '\n').replace(/(\d) +%/g, '$1%');
+        const complexityKey = (value: string) => {
+            const expression = value.trim().replace(/^\x60([^\x60\r\n]+)\x60$/, '$1').trim();
+            return /^O[ \t]*\([A-Za-z0-9 \t+*/^().-]+\)$/.test(expression)
+                ? expression.replace(/[ \t]+/g, ' ').replace(/ *([()+*/^.-]) */g, '$1') : '';
+        };
+        const matrixSyntax = /\\begin\{(?:[bpBvV]?matrix|smallmatrix)\}/;
+        const matrixQuestion = matrixSyntax.test(question.text ?? '') || question.options.some(option => matrixSyntax.test(option.text));
+        const matrixKey = (value: string) => {
+            const text = value.trim().replace(/^\${1,2}|\${1,2}$/g, '')
+                .replace(/^\\[\[(]|\\[\])]$/g, '').trim().replace(/−/g, '-');
+            const latex = /^\\begin\{([bpBvV]?matrix|smallmatrix)\}([\s\S]*?)\\end\{\1\}$/.exec(text);
+            const array = /^\[\s*(\[[^\[\]]+\](?:\s*,\s*\[[^\[\]]+\])*)\s*\]$/.exec(text);
+            const rows = latex ? latex[2].split(/\\\\/).map(row => row.split('&'))
+                : array ? [...array[1].matchAll(/\[([^\[\]]+)\]/g)].map(row => row[1].split(',')) : [];
+            const cells = rows.map(row => row.map(cell => cell.trim()));
+            return cells.length && cells.every(row => row.length === cells[0].length
+                && row.every(cell => /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(cell))) ? JSON.stringify(cells) : '';
+        };
+        const matchesOption = (option: string, candidate: string) => {
+            if (normalize(option) === normalize(candidate)) return true;
+            const complexity = complexityKey(option);
+            if (complexity && complexity === complexityKey(candidate)) return true;
+            const matrix = matrixQuestion && matrixKey(option);
+            return Boolean(matrix && matrix === matrixKey(candidate));
+        };
+        const choices = question.selectionType === 'multiple'
+            ? answer.split(/;\s*(?=(?:option\s+)?[a-z]\s*[:.)])/i) : [answer];
+        const indexes = choices.map(choice => {
+            const labeled = /^(?:option\s+)?([a-z])\s*[:.)]\s*(\S[\s\S]*)$/i.exec(choice.trim());
+            if (labeled) {
+                const index = labeled[1].toUpperCase().charCodeAt(0) - 65;
+                const option = question.options[index];
+                return option && matchesOption(option.text, labeled[2]) ? index : -1;
+            }
+            const matches = question.options.map((option, index) => matchesOption(option.text, choice) ? index : -1)
+                .filter(index => index >= 0);
+            return matches.length === 1 ? matches[0] : -1;
         });
-        if (!response?.ok) return [];
-        try {
-            const recovered = JSON.parse(response.data.results);
-            return answerIndexesFromResult(recovered, question);
-        } catch { return []; }
+        return indexes.includes(-1) || new Set(indexes).size !== indexes.length ? [] : indexes;
     }
 
     function updateAutomationUI() {
         if (disposed) return;
+        updateDirectRun();
         const status = document.getElementById('assistant-automation-status');
         const statusBadge = document.getElementById('assistant-automation-state');
         const page = document.getElementById('assistant-automation-page');
@@ -369,9 +569,14 @@
         const question = document.getElementById('assistant-automation-question');
         const progress = document.getElementById('assistant-automation-progress');
         const latest = document.getElementById('assistant-automation-latest');
-        const start = document.getElementById('assistant-auto-start-btn');
-        const pause = document.getElementById('assistant-auto-pause-btn');
-        const stop = document.getElementById('assistant-auto-stop-btn');
+        const start = document.getElementById('assistant-auto-start-btn') as HTMLButtonElement;
+        const pause = document.getElementById('assistant-auto-pause-btn') as HTMLButtonElement;
+        const stop = document.getElementById('assistant-auto-stop-btn') as HTMLButtonElement;
+        const backend = document.getElementById('assistant-backend-build');
+        if (backend) {
+            backend.hidden = !backendVersion || backendVersion === extensionVersion;
+            backend.textContent = backend.hidden ? '' : `Backend ${backendVersion} is running. Restart the backend to load ${extensionVersion}.`;
+        }
         const journal = window.BrowserAssistantJournal;
         if (journal?.matches()) {
             const current = journal.getState();
@@ -398,6 +603,7 @@
         const currentQuestion = automation.batch?.title || (automation.running && automation.codingQuestionText)
             || (authorized ? getAuthorizedQuestion(context)?.text : '');
         const pageName = authorized ? context.target.id : window.location.hostname;
+        const deferred = automation.deferredQuestions?.size ?? 0;
         if (status) {
             status.textContent = authorized
                 ? `Build ${extensionVersion} · ${context.target.id}: ${automation.state} · Completed: ${automation.completed}${automation.error ? ` · ${automation.error}` : ''}`
@@ -410,14 +616,15 @@
         if (page) page.textContent = pageName;
         if (completed) completed.textContent = String(automation.completed);
         if (question) question.textContent = currentQuestion || '—';
-        if (progress) progress.textContent = `${automation.completed} / —`;
+        if (progress) progress.textContent = deferred ? `${automation.completed} completed · ${deferred} deferred` : `${automation.completed} / —`;
         if (latest) {
+            const reviewing = ['WAITING_FOR_REVIEW', 'DEFERRING_QUESTION', 'REVIEW_NEEDED'].includes(automation.state);
             latest.textContent = automation.error
-                ? `⚠ ${automation.error}`
+                ? reviewing ? automation.error : `⚠ ${automation.error}`
                 : authorized
                     ? `Current status: ${automation.state.replace(/_/g, ' ').toLowerCase()}.`
                     : 'Automation is available only on an authorized QA page.';
-            latest.classList.toggle('has-error', Boolean(automation.error));
+            latest.classList.toggle('has-error', Boolean(automation.error) && !reviewing);
         }
         if (start) start.disabled = !authorized || automation.running;
         if (pause) { pause.disabled = !automation.running; pause.textContent = automation.paused ? 'Resume' : 'Pause'; }
@@ -441,6 +648,7 @@
         automation.paused = false;
         automation.pendingNavigation = false;
         automation.state = reason;
+        if (reason === 'REVIEW_NEEDED') automation.error = 'Review deferred questions on the portal.';
         updateAutomationUI();
     }
 
@@ -481,7 +689,7 @@
         return null;
     }
 
-    async function waitForQuestionSubmit(question, runId, adapter, answerIndexes, answerText) {
+    async function waitForQuestionSubmit(question, runId, adapter, answerIndexes, answerText, linkedAnswers = null) {
         let deadline = Date.now() + 15000;
         while (Date.now() < deadline && automation.running && automation.runId === runId) {
             const pausedAt = Date.now();
@@ -499,12 +707,13 @@
             }
             if (adapter.isSaving?.(document)) {
                 automation.state = 'WAITING_FOR_SAVE'; updateAutomationUI();
-            } else if (adapter.getSubmittedAdvance?.(document)) {
+            } else if (!linkedAnswers && adapter.getSubmittedAdvance?.(document)) {
                 return { submitted: true };
             } else if (fresh) {
                 if ((question.type === 'short-answer' && fresh.input?.value !== answerText)
-                    || (answerIndexes && question.type !== 'short-answer' && question.type !== 'ordering'
-                        && fresh.options.some(option => Boolean(option.isSelected?.() || option.input?.checked) !== answerIndexes.includes(option.index)))) {
+                    || (linkedAnswers && !fresh.compoundQuestions.every((group, index) => linkedAnswerMatches(group, linkedAnswers[index])))
+                    || (answerIndexes && !['short-answer', 'ordering'].includes(question.type)
+                        && !selectionMatches(fresh, answerIndexes))) {
                     throw new Error('The selected answer changed while waiting. No Submit was clicked.');
                 }
                 const button = adapter.getSubmit(document, fresh);
@@ -518,6 +727,23 @@
             throw new Error('The portal did not enable a unique Submit button within 15 seconds. The selected answer was kept.');
         }
         return null;
+    }
+
+    function selectionMatches(question, answerIndexes) {
+        return question.options.every((option, index) =>
+            Boolean(option.isSelected?.() || option.input?.checked) === answerIndexes.includes(index));
+    }
+
+    function linkedAnswerMatches(group, answer) {
+        if (group.input) return !group.input.disabled && !group.input.readOnly && group.input.value === answer;
+        return !group.options.some(option => option.disabled) && selectionMatches(group, [answer]);
+    }
+
+    function fillPracticeField(field, value) {
+        const prototype = field.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(prototype, 'value').set.call(field, value);
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+        field.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
     async function waitForPracticeTransition(previousSignature, runId) {
@@ -647,7 +873,7 @@
             if (!response.ok) {
                 const detail = response.data?.detail;
                 const message = typeof detail === 'string' ? detail : detail?.message || 'Code generation failed';
-                const errors = Array.isArray(detail?.errors) ? detail.errors.join(' | ') : '';
+                const errors = Array.isArray((detail as { errors?: string[] })?.errors) ? (detail as { errors: string[] }).errors.join(' | ') : '';
                 throw new Error(`${message} (HTTP ${response.status || 'error'})${errors ? ': ' + errors.slice(0, 1200) : ''}`);
             }
             if (!webProject && response.data.code_reviewed !== true) {
@@ -685,8 +911,8 @@
                 const result = document.querySelector('#submitResultContainer');
                 if (result?.parentElement) {
                     resultObserver = new MutationObserver(records => {
-                        if (records.some(record => record.target.closest?.('#submitResultContainer')
-                            || [...record.addedNodes, ...record.removedNodes].some(node => node.id === 'submitResultContainer'))) resultChanged = true;
+                        if (records.some(record => (record.target as Element).closest?.('#submitResultContainer')
+                            || [...record.addedNodes, ...record.removedNodes].some(node => (node as Element).id === 'submitResultContainer'))) resultChanged = true;
                     });
                     resultObserver.observe(result.parentElement, { childList: true, subtree: true, characterData: true });
                 }
@@ -775,7 +1001,9 @@
         automation.running = true; automation.paused = false; automation.error = '';
         automation.targetId = context.target.id; automation.batch = batch;
         automation.completed = batch.completed;
-        isCollapsed = false; selectedTab = 'qa'; render();
+        if (!directRun) {
+            isHidden = false; isCollapsed = false; root.style.display = 'block'; selectedTab = 'qa'; render();
+        }
         const persist = phase => {
             batch.phase = phase; batch.updatedAt = Date.now();
             sessionStorage.setItem(CODING_BATCH_KEY, JSON.stringify(batch));
@@ -897,7 +1125,7 @@
         return true;
     }
 
-    async function runOnlineIdeAutomation(question) {
+    async function runOnlineIdeAutomation(question: AssistantOnlineIdeQuestion) {
         if (question.solved) {
             stopAutomation('ALREADY_SOLVED');
             return;
@@ -973,6 +1201,7 @@
                         if (!current()) return;
                         if (result?.done) {
                             if (result.passed) automation.completed = 1;
+                            else if (result.saveUnconfirmed) automation.error = 'Code was pasted into app.js, but the saved file did not match. Check app.js and save before running it.';
                             else automation.error = result.submitted ? 'Grading finished. Review the test results in the IDE.' : 'The IDE command finished without a confirmed submission. Check the terminal.';
                             stopAutomation(result.passed ? 'COMPLETED' : 'CHECK_IDE_RESULT');
                             return;
@@ -995,6 +1224,192 @@
         } finally {
             if (automation.runId === runId) stopAutomation('STOPPED');
         }
+    }
+
+    async function continueAfterUnverifiedQuestion(question, runId, reason, allowSkip = true) {
+        if (!(await waitWhilePaused(runId))) return false;
+        const initial = getAutomationContext();
+        const adapter = getAutomationAdapter(initial);
+        if (!adapter || initial.target.id !== automation.targetId) {
+            stopAutomation('UNAUTHORIZED');
+            return false;
+        }
+        const fresh = getAuthorizedQuestion(initial);
+        const sameQuestion = fresh?.signature === question.signature && hasSameQuestionOptions(question, fresh);
+        const practice = initial.target.id === 'ccbp-learning-practice'
+            && /^\/(?:default-question|primitive-coding(?:-review)?)\/practice\//.test(location.pathname);
+        const hasDraft = fresh?.input?.value?.trim() || fresh?.options.some(option => option.isSelected?.() || option.input?.checked);
+        if (allowSkip && practice && sameQuestion && !hasDraft && question.type !== 'ordering'
+            && !adapter.isSaving?.(document) && !adapter.getSubmittedAdvance?.(document)
+            && automationPolicy.canExecute('click', initial) && automationPolicy.canExecute('validate', initial)) {
+            const skip = adapter.getPracticeSkip?.(document, fresh);
+            if (skip) {
+                automation.state = 'DEFERRING_QUESTION';
+                automation.error = reason;
+                automation.pendingNavigation = true;
+                updateAutomationUI();
+                skip.click();
+                const transition = await waitForPracticeTransition(question.signature, runId);
+                if (!automation.running || automation.runId !== runId) return false;
+                automation.pendingNavigation = false;
+                if (transition === 'next' || transition === 'complete') {
+                    automation.deferredQuestions.add(question.signature);
+                    automation.error = '';
+                    return true;
+                }
+            }
+        }
+
+        automation.state = 'WAITING_FOR_REVIEW';
+        automation.error = `${reason} Use the page controls to review and move to the next question. Automation will continue here.`;
+        updateAutomationUI();
+        while (await waitWhilePaused(runId)) {
+            if (automation.state !== 'WAITING_FOR_REVIEW') {
+                automation.state = 'WAITING_FOR_REVIEW';
+                updateAutomationUI();
+            }
+            const context = getAutomationContext();
+            const currentAdapter = getAutomationAdapter(context);
+            if (context.mode !== 'FULL' || context.target.id !== initial.target.id || currentAdapter?.id !== adapter.id) {
+                stopAutomation('UNAUTHORIZED');
+                return false;
+            }
+            const blocked = currentAdapter.getBlockingReason?.(document);
+            if (blocked) {
+                automation.error = blocked;
+                stopAutomation('PAUSED');
+                return false;
+            }
+            if (!currentAdapter.isSaving?.(document)) {
+                const current = getAuthorizedQuestion(context);
+                if (currentAdapter.getSubmittedAdvance?.(document) || currentAdapter.isComplete(document)
+                    || (current && current.signature !== question.signature && !hasSameQuestionOptions(question, current))) {
+                    automation.error = '';
+                    return true;
+                }
+            }
+            await new Promise(resolve => setTimeout(resolve, 250));
+        }
+        return false;
+    }
+
+    async function solveCompoundQuestion(compound, runId, adapter) {
+        const url = location.href;
+        const freeResponse = compound.type === 'compound-short-answer';
+        const findCurrent = (position) => {
+            const context = getAutomationContext();
+            if (location.href !== url || context.target.id !== automation.targetId
+                || !automationPolicy.canExecute(freeResponse ? 'fill' : 'select', context)
+                || !automationPolicy.canExecute('validate', context)) return null;
+            const fresh = getAuthorizedQuestion(context);
+            if (fresh?.signature !== compound.signature) return null;
+            const group = fresh.compoundQuestions[position];
+            if (!group || group.input?.disabled || group.input?.readOnly
+                || group.options.some(option => option.disabled)) return null;
+            return group;
+        };
+        const answers: (string | number)[] = [];
+        for (let position = 0; position < compound.compoundQuestions.length; position++) {
+            if (!(await waitWhilePaused(runId))) return null;
+            const question = findCurrent(position);
+            if (!question) throw new Error('A linked question changed or is already locked. Review it on the page.');
+            automation.state = 'SOLVING'; updateAutomationUI();
+            const keyword = question.requiredWord;
+            const format = freeResponse ? (keyword ? `Question format: 2 to 5 words including the given word ${keyword}.` : 'Question format: one word.')
+                : `Question format: select one answer.\n${question.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option.text}`).join('\n')}`;
+            const prompt = `Reading context:\n${compound.compoundContext || ''}\n\nAnswer only this question: ${question.text}\n${format}`;
+            const response = await window.BrowserAssistantAnswerRequests.run({
+                request: () => apiRequest('/solve', 'POST', {
+                    text: prompt, url, practice_type: 'mcq', verify_answer: true, require_answer_agreement: true,
+                }),
+                active: () => automation.running && automation.runId === runId,
+                ready: () => waitWhilePaused(runId),
+                current: () => Boolean(findCurrent(position)),
+                onRetry: ({attempt, attempts, message}) => {
+                    automation.state = 'RETRYING_REQUEST';
+                    automation.error = `Temporary answer service issue. Retrying ${attempt}/${attempts}: ${message}`;
+                    updateAutomationUI();
+                },
+                sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
+            });
+            if (!response) return null;
+            if (response.data?.answer_agreement !== true) throw new Error('Update and restart the Browser Assistant backend to verify linked answers.');
+            let results;
+            try { results = JSON.parse(response.data.results); } catch { throw new Error('The answer service returned invalid linked-question data.'); }
+            if (!Array.isArray(results) || results.length !== 1 || results[0]?.type !== 'mcq') {
+                throw new Error('Expected one verified answer for each linked question.');
+            }
+            if (freeResponse) {
+                const value = results[0].answer;
+                const words = typeof value === 'string' ? value.trim().split(/\s+/) : [];
+                if (!words.every(word => /^\p{L}+(?:['’\-]\p{L}+)*$/u.test(word))
+                    || (keyword ? words.length < 2 || words.length > 5 || !words.some(word => word.toLowerCase() === keyword.toLowerCase())
+                        : words.length !== 1)) {
+                    throw new Error(`Blank ${position + 1} requires ${keyword ? `two to five words including ${keyword}` : 'one word'}. Review the answer before submitting.`);
+                }
+                answers.push(words.join(' '));
+            } else {
+                const indexes = answerIndexesFromResult(results, question);
+                if (indexes.length !== 1) throw new Error('The verified answer did not match this linked question’s displayed options.');
+                answers.push(indexes[0]);
+            }
+        }
+        automation.error = ''; automation.state = freeResponse ? 'FILLING' : 'SELECTING'; updateAutomationUI();
+        for (const [position, answer] of answers.entries()) {
+            if (!(await waitWhilePaused(runId))) return null;
+            const question = findCurrent(position);
+            if (!question) throw new Error('A linked answer field or option disappeared.');
+            if (freeResponse) {
+                if (question.input.value !== answer) fillPracticeField(question.input, answer);
+            } else {
+                const option = question.options[answer];
+                if (!(option.isSelected?.() || option.input?.checked)) (option.input || option.control)?.click();
+            }
+            let selected = false;
+            for (let attempt = 0; attempt < 50; attempt++) {
+                if (!(await waitWhilePaused(runId))) return null;
+                const current = findCurrent(position);
+                if (current && linkedAnswerMatches(current, answer)) { selected = true; break; }
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+            if (!selected) throw new Error(`The answer could not be entered for linked question ${position + 1}. Review the group before submitting.`);
+        }
+        return waitForQuestionSubmit(compound, runId, adapter, null, '', answers);
+    }
+
+    async function submitPracticeAnswer(question, button, runId, adapter) {
+        automation.state = 'SUBMITTING'; updateAutomationUI();
+        automation.processed.add(question.signature);
+        button.click();
+        automation.state = 'WAITING_FOR_NEXT'; updateAutomationUI();
+        let transition = await waitForAdvanceOrTransition(question.signature, runId, adapter);
+        if (!automation.running || automation.runId !== runId) return false;
+        if ((transition as { proceed?: HTMLElement })?.proceed) {
+            automation.state = 'OPENING_COURSE';
+            automation.pendingNavigation = true;
+            updateAutomationUI();
+            saveCourseResume('course', (transition as { context: AssistantContext }).context, {
+                currentTitle: adapter.getCurrentPracticeTitle?.(document) || '',
+            });
+            (transition as { proceed: HTMLElement }).proceed.click();
+            return false;
+        }
+        if ((transition as { advance?: HTMLElement })?.advance) {
+            if (!automationPolicy.canExecute('click', (transition as { context: AssistantContext }).context)) {
+                automation.error = 'Target policy does not permit Next.'; stopAutomation('UNAUTHORIZED'); return false;
+            }
+            (transition as { advance: HTMLElement }).advance.click();
+            transition = await waitForPracticeTransition(question.signature, runId);
+            if (!automation.running || automation.runId !== runId) return false;
+        }
+        if (transition === 'next' || transition === 'complete') automation.completed += 1;
+        if (transition === 'complete') {
+            stopAutomation(automation.deferredQuestions.size ? 'REVIEW_NEEDED' : 'COMPLETED');
+        } else if (transition !== 'next') {
+            automation.error = (transition as { blocked?: string })?.blocked || 'Next question did not appear in time.';
+            stopAutomation('PAUSED');
+        }
+        return transition === 'next';
     }
 
     async function startPracticeAutomation() {
@@ -1046,6 +1461,7 @@
         automation.paused = false;
         automation.error = '';
         automation.completed = 0;
+        automation.deferredQuestions = new Set();
         automation.targetId = initialContext.target.id;
         automation.pendingNavigation = false;
         automation.currentSignature = null;
@@ -1065,7 +1481,7 @@
                 continue;
             }
             const finalSubmit = currentAdapter.getFinalQuizSubmit?.(document);
-            if (finalSubmit) {
+            if (finalSubmit && getAuthorizedQuestion(context)?.compoundSubmit !== finalSubmit) {
                 const submitted = await submitCompletedQuiz(finalSubmit, currentAdapter, runId);
                 if (!automation.running || automation.runId !== runId) break;
                 if (!submitted) automation.error = 'Final Submit was clicked; the portal did not show a submission confirmation. Check its status.';
@@ -1087,14 +1503,21 @@
                 submittedAdvance.click();
                 const transition = await waitForPracticeTransition(previousSignature, runId);
                 if (!automation.running || automation.runId !== runId) break;
-                if (transition === 'next' || transition === 'complete') automation.completed += 1;
-                if (transition === 'complete') { stopAutomation('COMPLETED'); break; }
+                if (transition === 'next' || transition === 'complete') {
+                    automation.completed += 1;
+                    automation.deferredQuestions.delete(previousSignature);
+                }
+                if (transition === 'complete') { stopAutomation(automation.deferredQuestions.size ? 'REVIEW_NEEDED' : 'COMPLETED'); break; }
                 if (transition !== 'next') {
-                    automation.error = transition?.blocked || 'Next question did not appear after the submitted answer.'; stopAutomation('PAUSED'); break;
+                    automation.error = (transition as { blocked?: string })?.blocked || 'Next question did not appear after the submitted answer.'; stopAutomation('PAUSED'); break;
                 }
                 continue;
             }
             if (currentAdapter.isComplete(document)) {
+                if (automation.deferredQuestions.size) {
+                    stopAutomation('REVIEW_NEEDED');
+                    break;
+                }
                 const nextPractice = currentAdapter.getNextPractice?.(document);
                 if (!nextPractice) { stopAutomation('COMPLETED'); break; }
                 if (!automationPolicy.canExecute('navigate', context) && !automationPolicy.canExecute('click', context)) {
@@ -1125,13 +1548,39 @@
                 stopAutomation('PAUSED'); break;
             }
             if (question.type === 'code') { await runCodingAutomation(question, runId); break; }
+            if (automation.deferredQuestions.has(question.signature)) {
+                automation.currentSignature = question.signature;
+                if (await continueAfterUnverifiedQuestion(question, runId, 'This question was deferred earlier.', false)) continue;
+                break;
+            }
             if (automation.processed.has(question.signature)) { automation.error = 'Repeated question detected.'; stopAutomation('PAUSED'); break; }
             automation.currentSignature = question.signature;
+            if (question.compoundQuestions) {
+                try {
+                    const ready = await solveCompoundQuestion(question, runId, currentAdapter);
+                    if (ready?.button && automation.running && automation.runId === runId
+                        && await submitPracticeAnswer(question, ready.button, runId, currentAdapter)) continue;
+                } catch (error) {
+                    if (automation.running && automation.runId === runId) {
+                        automation.error = error.message || 'Linked questions could not be completed.';
+                        stopAutomation('PAUSED');
+                    }
+                }
+                break;
+            }
             automation.state = 'SOLVING'; updateAutomationUI();
             let response;
             try {
                 let requestText = question.text;
-                if (location.origin === 'https://learning.ccbp.in' && /^\/primitive-coding\/practice\//.test(location.pathname)
+                if (question.type === 'ordering') {
+                    await checkServer();
+                    if (!(await waitWhilePaused(runId))) break;
+                    const [major, minor, patch] = backendVersion.split('.').map(Number);
+                    if (major === 1 || (major === 2 && (minor < 9 || (minor === 9 && patch < 10)))) {
+                        throw new Error(`Drag-and-drop needs backend 2.9.10 or newer. Backend ${backendVersion} is running. Restart it, then start automation again.`);
+                    }
+                }
+                if (location.origin === 'https://learning.ccbp.in' && /^\/primitive-coding(?:-review)?\/practice\//.test(location.pathname)
                     && document.querySelector('.ace_editor,.monaco-editor,.CodeMirror')) {
                     const snapshot = await readMcqSnippetSnapshot(question, runId);
                     if (!snapshot?.ok) throw new Error(snapshot?.error || 'Full code snippet could not be read.');
@@ -1148,7 +1597,7 @@
                 const requestBody = {
                     text: `${requestText}\nQuestion format: ${question.type === 'short-answer' ? 'Free response. Return only the exact value to enter in the JSON answer field, without an option label, explanation, or Markdown.' : question.selectionType === 'multiple' ? 'select all that apply; return every correct option as "Option A: ...; Option B: ...".' : 'select one answer.'}\n${question.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option.text}`).join('\n')}`,
                     ...(question.type === 'ordering' ? { text: `${question.text}\nReorder ALL items. Return the complete permutation as a JSON array of 1-based item numbers in the answer field (example: [2,1,3]). Check every item appears exactly once.\n${question.options.map((option, index) => `${index + 1}. ${option.text}`).join('\n')}` } : {}),
-                    url: window.location.href, practice_type: 'mcq',
+                    url: window.location.href, practice_type: 'mcq', verify_answer: true,
                 };
                 const visuals = window.BrowserAssistantQuestionVisuals;
                 if (visuals?.nodes(question).length) {
@@ -1164,19 +1613,31 @@
                     automation.state = 'SOLVING'; updateAutomationUI();
                     response = await requestPracticeAnswer(question, runId, '/solve-vision', {
                         image:snapshot.images[0], images:snapshot.images.slice(1),
-                        text:requestBody.text, url:requestBody.url, practice_type:'mcq',
+                        text:requestBody.text, url:requestBody.url, practice_type:'mcq', verify_answer:true,
                     });
                 } else {
                     response = await requestPracticeAnswer(question, runId, '/solve', requestBody);
                 }
             } catch (error) {
                 if (!automation.running || automation.runId !== runId) break;
-                automation.error = error.message || 'Local AI server unavailable.'; stopAutomation('ERROR'); break;
+                automation.error = error.message || 'Local AI server unavailable.';
+                if (['answer_unconfirmed', 'vision_unconfirmed'].includes(error.code)) {
+                    if (await continueAfterUnverifiedQuestion(question, runId, automation.error)) continue;
+                } else stopAutomation('ERROR');
+                break;
             }
             if (!automation.running || automation.runId !== runId || !response) break;
             automation.error = ''; automation.state = 'SOLVING'; updateAutomationUI();
+            if (response.data?.answer_verified !== true) {
+                automation.error = 'Answer verification is required. Restart the updated Browser Assistant backend.';
+                stopAutomation('PAUSED'); break;
+            }
             let results;
             try { results = JSON.parse(response.data.results); } catch { automation.error = 'AI returned an invalid answer.'; stopAutomation('ERROR'); break; }
+            if (!Array.isArray(results) || results.length !== 1 || results[0]?.type !== 'mcq') {
+                automation.error = 'Expected one verified answer for the current question.';
+                stopAutomation('PAUSED'); break;
+            }
             if (question.codeSnapshot) {
                 let snapshot;
                 try { snapshot = await readMcqSnippetSnapshot(question, runId); } catch { snapshot = null; }
@@ -1198,11 +1659,6 @@
                         && order.every(value => Number.isInteger(value) && value >= 1 && value <= order.length) ? order.map(value => value - 1) : [];
                 } catch { answerIndexes = []; }
             }
-            if (!answerIndexes.length && !shortAnswer && !ordering && !question.visualSnapshot) {
-                automation.state = 'RECOVERING_ANSWER'; updateAutomationUI();
-                try { answerIndexes = await recoverAnswerIndexes(question, results?.[0]?.answer); }
-                catch { answerIndexes = []; }
-            }
             const currentContext = getAutomationContext();
             let current = getAuthorizedQuestion(currentContext);
             if (question.visualSnapshot && (!current || window.BrowserAssistantQuestionVisuals.fingerprint(current) !== question.visualSnapshot)) {
@@ -1214,7 +1670,11 @@
             // target, so keep the safety check focused on it rather than on
             // transient code-block markup.
             if (!answerIndexes.length || !current || !hasSameQuestionOptions(question, current)) {
-                automation.error = !answerIndexes.length ? 'AI answer did not match a unique option.' : !current ? 'Question controls disappeared while solving.' : 'Question text or options changed while solving. Please retry.';
+                automation.error = !answerIndexes.length ? 'The verified answer did not match the displayed options exactly.' : !current ? 'Question controls disappeared while solving.' : 'Question text or options changed while solving. Please retry.';
+                if (!answerIndexes.length && current?.signature === question.signature && hasSameQuestionOptions(question, current)) {
+                    if (await continueAfterUnverifiedQuestion(question, runId, automation.error)) continue;
+                    break;
+                }
                 stopAutomation('PAUSED'); break;
             }
             if (!automationPolicy.canExecute('select', currentContext) || !automationPolicy.canExecute('validate', currentContext)) { automation.error = 'Target policy does not permit selection or validation.'; stopAutomation('UNAUTHORIZED'); break; }
@@ -1234,10 +1694,7 @@
             if (shortAnswer) {
                 if (current.type !== 'short-answer' || !automationPolicy.canExecute('fill', currentContext)) { automation.error = 'Answer field changed or filling is disabled.'; stopAutomation('PAUSED'); break; }
                 const field = current.input;
-                const prototype = field.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-                Object.getOwnPropertyDescriptor(prototype, 'value').set.call(field, answerText);
-                field.dispatchEvent(new Event('input', { bubbles: true }));
-                field.dispatchEvent(new Event('change', { bubbles: true }));
+                fillPracticeField(field, answerText);
                 if (field.value !== answerText) { automation.error = 'Answer entry could not be verified.'; stopAutomation('PAUSED'); break; }
             }
             if (!shortAnswer && !ordering && current.selectionType === 'multiple') {
@@ -1264,30 +1721,7 @@
             catch (error) { automation.error = error.message; stopAutomation('PAUSED'); break; }
             if (!ready || !automation.running || automation.runId !== runId) break;
             if (ready.submitted) continue;
-            const submit = ready.button;
-            automation.state = 'SUBMITTING'; updateAutomationUI();
-            automation.processed.add(question.signature);
-            submit.click();
-            automation.state = 'WAITING_FOR_NEXT'; updateAutomationUI();
-            let transition = await waitForAdvanceOrTransition(question.signature, runId, currentAdapter);
-            if (transition?.proceed) {
-                automation.state = 'OPENING_COURSE';
-                automation.pendingNavigation = true;
-                updateAutomationUI();
-                saveCourseResume('course', transition.context, {
-                    currentTitle: currentAdapter.getCurrentPracticeTitle?.(document) || '',
-                });
-                transition.proceed.click();
-                return;
-            }
-            if (transition?.advance) {
-                if (!automationPolicy.canExecute('click', transition.context)) { automation.error = 'Target policy does not permit Next.'; stopAutomation('UNAUTHORIZED'); break; }
-                transition.advance.click();
-                transition = await waitForPracticeTransition(question.signature, runId);
-            }
-            if (transition === 'complete') { automation.completed += 1; stopAutomation('COMPLETED'); break; }
-            if (transition !== 'next') { automation.error = transition?.blocked || 'Next question did not appear in time.'; stopAutomation('PAUSED'); break; }
-            automation.completed += 1;
+            if (!(await submitPracticeAnswer(question, ready.button, runId, currentAdapter))) break;
         }
     }
 
@@ -1345,11 +1779,11 @@
      *  - No response from background (unknown action)
      *  - Timeout (background hung)
      */
-    function safeSendMessage(msg, timeoutMs = 10000) {
+    function safeSendMessage(msg: AssistantMessage, timeoutMs = 10000): Promise<AssistantMessageResponse> {
         if (!extensionAlive) {
             return Promise.reject(new Error("Extension was reloaded — please refresh the page"));
         }
-        return new Promise((resolve, reject) => {
+        return new Promise<AssistantMessageResponse>((resolve, reject) => {
             const timer = setTimeout(() => {
                 reject(new Error("Background script did not respond (timeout)"));
             }, timeoutMs);
@@ -1378,13 +1812,17 @@
 
     // Route local API traffic through the extension service worker instead of
     // the page context, so visited sites cannot directly access the API.
-    async function apiRequest(path, method = 'POST', body) {
+    async function apiRequest(path: string, method = 'POST', body?: object) {
         const response = await safeSendMessage(
             { action: 'apiRequest', path, method, body },
             370000,
         );
         if (!response) throw new Error('Local server did not respond');
-        if (response.error) throw new Error(response.error);
+        if (response.error) {
+            if (response.error.startsWith('Local server is offline')) setServerStatus(false);
+            throw new Error(response.error);
+        }
+        if (path !== '/health' && response.status) setServerStatus(true);
         return response;
     }
 
@@ -1410,7 +1848,7 @@
         renderHistoryLoading();
         try {
             const response = await apiRequest('/history', 'GET');
-            if (!response.ok) throw new Error(response.data?.detail || 'Could not load history');
+            if (!response.ok) throw new Error((response.data?.detail as string) || 'Could not load history');
             historyItems = response.data?.items || [];
             renderHistory();
         } catch (error) {
@@ -1419,7 +1857,7 @@
     }
 
     async function clearHistory() {
-        const button = document.getElementById('assistant-clear-history-btn');
+        const button = document.getElementById('assistant-clear-history-btn') as HTMLButtonElement;
         if (button) { button.disabled = true; button.textContent = 'Clearing…'; }
         try {
             const response = await apiRequest('/history', 'DELETE');
@@ -1432,19 +1870,34 @@
     }
 
     // ── Server health check ───────────────────────────────────────────────────
+    function setServerStatus(online: boolean) {
+        serverOnline = online;
+        const dot = root.querySelector('.status-dot');
+        if (!dot) return;
+        dot.classList.remove('unknown', 'online', 'offline');
+        dot.classList.add(online ? 'online' : 'offline');
+        dot.setAttribute('title', online ? 'Server online' : 'Server offline');
+    }
+
     async function checkServer() {
+        let online = false;
         try {
             const res = await apiRequest('/health', 'GET');
-            serverOnline = res.ok;
-        } catch {
-            serverOnline = false;
-        }
-        // Re-render if panel is open to show status
-        if (!isCollapsed) render();
+            online = res.ok;
+            const version = res.data?.version;
+            if (online && typeof version === 'string' && /^\d+(?:\.\d+){1,3}$/.test(version)) backendVersion = version;
+        } catch { /* The next request can reconnect when the backend starts. */ }
+        if (!disposed) { setServerStatus(online); updateAutomationUI(); }
     }
 
     // Check once on load
     checkServer();
+    const backendStatusTimer = window.setInterval(() => {
+        if (!document.hidden && !isCollapsed && (!serverOnline || (backendVersion && backendVersion !== extensionVersion))) {
+            void checkServer();
+        }
+    }, 6000);
+    lifecycle.signal.addEventListener('abort', () => window.clearInterval(backendStatusTimer), {once: true});
 
     // ── Smart text extraction ────────────────────────────────────────────────
     function extractSmartText() {
@@ -1502,7 +1955,7 @@
                 elements.forEach(el => {
                     // Skip our own assistant UI
                     if (el.closest('#assistant-root')) return;
-                    const text = el.innerText?.trim();
+                    const text = (el as HTMLElement).innerText?.trim();
                     if (text && text.length > 20 && !seen.has(text)) {
                         seen.add(text);
                         smartText += text + '\n\n';
@@ -1544,7 +1997,7 @@
         ];
 
         // Clone body to avoid modifying the real DOM
-        const clone = document.body.cloneNode(true);
+        const clone = document.body.cloneNode(true) as HTMLElement;
 
         // Remove noise elements from the clone
         noiseSelectors.forEach(sel => {
@@ -1563,7 +2016,8 @@
      * OPEN the panel. Idempotent: if already open, does nothing.
      * Does NOT trigger a scan — just shows the UI.
      */
-    function openPanel() {
+    function openPanel(source?: 'journal-ready') {
+        if (source === 'journal-ready' && directRun?.type === 'Journal') return;
         if (!isCollapsed && !isHidden) return; // already open — no-op
         isHidden = false;
         isCollapsed = false;
@@ -1582,24 +2036,102 @@
         root.style.display = 'none';
     }
 
-    function handleAutomationShortcut(e) {
-        if (e.repeat || e.isComposing || e.defaultPrevented || !e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey
+    function showAutomationNotice(message: string) {
+        automationNotice = message;
+        window.clearTimeout(noticeTimer);
+        const element = document.getElementById('assistant-automation-notice') || document.createElement('div');
+        element.id = 'assistant-automation-notice';
+        element.setAttribute('role', 'status');
+        element.textContent = message;
+        if (!element.isConnected) document.body.appendChild(element);
+        noticeTimer = window.setTimeout(() => { automationNotice = ''; element.remove(); }, 5000);
+    }
+
+    function saveDirectRun() {
+        if (!directRun) return;
+        const record = {...directRun, revision: ++directRun.revision};
+        try {
+            if (record.status === 'Running') sessionStorage.setItem(directRunKey, JSON.stringify(record));
+            else sessionStorage.removeItem(directRunKey);
+        } catch { /* Storage is optional for runs on the current document. */ }
+        void apiRequest('/automation-history', 'PUT', record).then(response => {
+            if (!response.ok) throw Error('History write failed');
+        }).catch(() => {
+            if (!directRun || directRun.id === record.id) showAutomationNotice('Automation history could not be saved.');
+        });
+    }
+
+    function finishDirectRun(status: string) {
+        if (!directRun) return;
+        directRun.status = status;
+        directRun.ended_at = new Date().toISOString();
+        saveDirectRun();
+        directRun = null;
+    }
+
+    function updateDirectRun() {
+        if (!directRun || directRunStarting) return;
+        const journal = directRun.type === 'Journal' ? window.BrowserAssistantJournal?.getState() : null;
+        const current = journal || automation;
+        const completed = Math.max(directRun.completed, current.completed || 0);
+        const failed = Math.max(directRun.failed, journal ? 0 : automation.deferredQuestions?.size || 0);
+        const changed = directRun.completed !== completed || directRun.failed !== failed;
+        Object.assign(directRun, {completed, failed});
+        if (current.running || ['STARTING_PRACTICE', 'OPENING_NEXT_PRACTICE'].includes(current.state)) {
+            if (changed) saveDirectRun();
+            return;
+        }
+        const status = current.state === 'COMPLETED' ? 'Completed' : current.state === 'STOPPED' ? 'Stopped' : 'Failed';
+        if (status === 'Failed' && directRun.failed === 0) directRun.failed = 1;
+        showAutomationNotice(status === 'Failed' ? (journal?.message || automation.error || 'Automation could not continue.') : 'Automation ' + status.toLowerCase() + '.');
+        finishDirectRun(status);
+    }
+
+    function toggleDirectAutomation() {
+        if (directRunStarting) return;
+        const journal = window.BrowserAssistantJournal;
+        if (journal?.matches() && journal.getState().running) {
+            journal.pause(); updateAutomationUI(); return;
+        }
+        if (automation.running) {
+            pauseOrResumeAutomation();
+            return;
+        }
+        if (directRun) return;
+        const context = getAutomationContext();
+        const adapter = getAutomationAdapter(context);
+        const question = getAuthorizedQuestion(context);
+        const batch = location.origin === 'https://learning.ccbp.in' && /^\/problems-set\/?$/.test(location.pathname);
+        const ide = window.BrowserAssistantCoding?.getOnlineIdeQuestion?.(document, location);
+        const journalPage = Boolean(journal?.matches());
+        const canNavigate = automationPolicy?.canExecute('navigate', context);
+        const startPractice = !question && canNavigate && adapter?.getStartPractice?.(document);
+        const type = journalPage ? 'Journal' : batch && canNavigate ? 'Batch Coding'
+            : question?.type === 'code' || (ide && canNavigate) ? 'Coding'
+            : question || startPractice ? (/quiz/i.test(location.pathname) ? 'Quiz' : 'MCQ')
+            : null;
+        if (!type) { showAutomationNotice('Automation is unavailable on this page.'); return; }
+        const progress = document.querySelector('[data-practice-quiz] #progress')?.textContent;
+        const total = type === 'Journal' || type === 'Coding' ? 1 : Number(progress?.match(/\bof\s+(\d+)/i)?.[1]) || null;
+        directRun = {id: crypto.randomUUID(), type, url: location.origin + location.pathname,
+            started_at: new Date().toISOString(), ended_at: null, total, completed: 0, failed: 0, status: 'Running', revision: 0};
+        directRunStarting = true;
+        saveDirectRun();
+        const started = startPracticeAutomation();
+        directRunStarting = false;
+        updateDirectRun();
+        void started.catch(error => {
+            automation.error = error.message || 'Automation could not start.';
+            stopAutomation('ERROR');
+        });
+    }
+
+    function handleAutomationShortcut(e: KeyboardEvent, isTyping = false) {
+        if (isTyping || e.repeat || e.isComposing || e.defaultPrevented || !e.altKey || e.ctrlKey || e.metaKey
             || (e.code !== 'KeyA' && String(e.key).toLowerCase() !== 'a')) return false;
         e.preventDefault();
         e.stopPropagation();
-        selectedTab = 'qa'; isHidden = false; isCollapsed = false;
-        root.style.display = 'block'; render();
-        const journal = window.BrowserAssistantJournal;
-        if (journal?.matches() && journal.getState().running) {
-            journal.pause(); updateAutomationUI();
-        } else if (automation.running) {
-            pauseOrResumeAutomation();
-        } else {
-            void startPracticeAutomation().catch(error => {
-                automation.error = error.message || 'Automation could not start.';
-                stopAutomation('ERROR');
-            });
-        }
+        toggleDirectAutomation();
         return true;
     }
 
@@ -1607,16 +2139,19 @@
     document.addEventListener('keydown', (e) => {
         // Block held-key auto-repeat to prevent rapid-fire race conditions
         if (e.repeat || e.isComposing) return;
-        // Explicit automation chord also works while the code editor has focus.
-        if (handleAutomationShortcut(e)) return;
-
+        if (panelToken && (e.key === '`' || e.key === ']' || e.key === '[')) return;
         const active = document.activeElement;
         const isTyping =
             active instanceof HTMLInputElement ||
             active instanceof HTMLTextAreaElement ||
             active instanceof HTMLSelectElement ||
-            active?.isContentEditable ||
+            (active as HTMLElement)?.isContentEditable ||
             active?.getAttribute?.('role') === 'textbox';
+        const editorSelector = 'input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"],.monaco-editor,.CodeMirror,.ace_editor';
+        const shortcutTyping = isTyping
+            || Boolean((active as Element | null)?.closest?.(editorSelector))
+            || e.composedPath().some(node => node instanceof Element && node.matches(editorSelector));
+        if (handleAutomationShortcut(e, shortcutTyping)) return;
 
         if (isTyping) return;
 
@@ -1664,10 +2199,12 @@
 
         let timeoutId;
         let panelVisibility = '';
+        const countdownVisibility = journalCountdownBadge?.style.visibility;
         try {
-            // Do not include our own floating panel in the captured screenshot.
+            // Keep extension UI out of the captured screenshot.
             panelVisibility = root.style.visibility;
             root.style.visibility = 'hidden';
+            if (journalCountdownBadge) journalCountdownBadge.style.visibility = 'hidden';
             const context = await prepareVisionQuestionContext();
             const visuals = window.BrowserAssistantQuestionVisuals;
             let images;
@@ -1677,12 +2214,13 @@
                 images = snapshot.images;
                 context.visualSnapshot = snapshot.fingerprint;
             } else {
-                await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-                const response = await safeSendMessage({ action: "captureVisibleTab" });
+                if (!panelToken) await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                const response = await safeSendMessage({ action: "captureVisibleTab", url: context.url });
                 if (!response?.dataUrl || response.error) throw new Error(response?.error || 'Screenshot capture failed');
                 images = [response.dataUrl];
             }
             root.style.visibility = panelVisibility;
+            if (journalCountdownBadge) journalCountdownBadge.style.visibility = countdownVisibility;
             await assertVisionQuestionCurrent(context);
             setLoading("Analyzing and cross-checking…");
 
@@ -1690,7 +2228,8 @@
                 image: images[0], images: images.slice(1), text: context.text,
                 url: context.url,
                 practice_type: context.question ? 'mcq' : practiceType,
-                language: requestedLanguage
+                language: context.question ? undefined : requestedLanguage,
+                verify_answer: true,
             });
 
             if (!res.ok) {
@@ -1708,6 +2247,10 @@
                 throw new Error('Vision returned an invalid answer format. Please scan a clear, complete question again.');
             }
             if (!Array.isArray(parsed) || !parsed.length) throw new Error('The complete question could not be read. No guessed answer was returned.');
+            assertVerifiedScanAnswers(parsed, data.answer_verified, context.question);
+            if (parsed.some(item => item?.type === 'code') && data.code_reviewed !== true) {
+                throw new Error('The code has not passed review against the screenshot.');
+            }
             displayResults(parsed, data.provider);
         } catch (error) {
             if (timeoutId) clearTimeout(timeoutId);
@@ -1718,6 +2261,7 @@
             showError(`Vision Error: ${msg}`);
         } finally {
             root.style.visibility = panelVisibility;
+            if (journalCountdownBadge) journalCountdownBadge.style.visibility = countdownVisibility;
             // Text Scan can hand off to Vision without a visible error. In that
             // case, leave its in-progress state for the caller to clear.
             if (!scanWasAlreadyRunning) {
@@ -1727,8 +2271,28 @@
         }
     }
 
+    function assertVerifiedScanAnswers(results, verified, question) {
+        if (question && (!Array.isArray(results) || results.length !== 1 || results[0]?.type !== 'mcq')) {
+            throw new Error('Expected one verified answer for the current question.');
+        }
+        if (!Array.isArray(results) || !results.some(item => item?.type === 'mcq')) return;
+        if (verified !== true) {
+            throw new Error('Answer verification is required. Restart the updated Browser Assistant backend.');
+        }
+        if (question && question.type !== 'short-answer' && question.type !== 'ordering'
+            && !answerIndexesFromResult(results, question).length) {
+            throw new Error('The verified answer did not match the displayed options exactly.');
+        }
+    }
+
     async function prepareVisionQuestionContext() {
-        const context = {url: location.href, text: '', question: getAuthorizedQuestion()};
+        const context: {
+            url: string;
+            text: string;
+            question: ReturnType<typeof getAuthorizedQuestion>;
+            visualSnapshot?: string;
+            codeSnapshot?: string;
+        } = {url: location.href, text: '', question: getAuthorizedQuestion()};
         if (!context.question || context.question.type === 'code') {
             context.question = null;
             return context;
@@ -1746,9 +2310,12 @@
             sources = snapshot.sources;
         }
         const question = context.question;
+        const ordering = question.type === 'ordering';
         context.text = `${question.identityText || question.text}\n${sources.length ? 'Complete code snippets:\n' + sources.join('\n\n') + '\n' : ''}`
-            + (question.type === 'short-answer' ? 'Free response: return only the exact value.' : question.selectionType === 'multiple' ? 'Select ALL correct options.' : 'Select one answer.')
-            + '\n' + question.options.map((option,index)=>`${String.fromCharCode(65+index)}. ${option.text}`).join('\n');
+            + (ordering ? 'Reorder ALL items. Return the complete permutation as a JSON array of 1-based item numbers.'
+                : question.type === 'short-answer' ? 'Free response: return only the exact value.'
+                : question.selectionType === 'multiple' ? 'Select ALL correct options.' : 'Select one answer.')
+            + '\n' + question.options.map((option,index)=>`${ordering ? index + 1 : String.fromCharCode(65+index)}. ${option.text}`).join('\n');
         return context;
     }
 
@@ -1773,13 +2340,6 @@
         if (isScanning) return;
         isScanning = true;
 
-        // Show server-offline warning early
-        if (serverOnline === false) {
-            showError("Server offline. Start the backend with: python main.py");
-            isScanning = false;
-            return;
-        }
-
         isCollapsed = false;
         render();
         setLoading("Solving…");
@@ -1789,28 +2349,25 @@
 
         let timeoutId;
         try {
-            // Use smart extraction instead of raw body text
-            const pageText = extractSmartText();
-            console.log(`Sending ${pageText.length} chars to server`);
-
-            const question = getAuthorizedQuestion();
+            const context = await prepareVisionQuestionContext();
+            const question = context.question;
             const visuals = window.BrowserAssistantQuestionVisuals;
             let res;
-            if (question && question.type !== 'code' && visuals?.nodes(question).length) {
+            if (question && visuals?.nodes(question).length) {
                 setLoading('Reading complete question illustrations…');
                 await visuals.requireBackend(apiRequest, visuals.nodes(question).length);
                 const snapshot = await visuals.capture(question, safeSendMessage);
-                if (!hasSameQuestionOptions(question, getAuthorizedQuestion()) || visuals.fingerprint(getAuthorizedQuestion()) !== snapshot.fingerprint) {
-                    throw new Error('Question illustration changed while loading. Please scan again.');
-                }
+                context.visualSnapshot = snapshot.fingerprint;
+                await assertVisionQuestionCurrent(context);
                 res = await apiRequest('/solve-vision', 'POST', {
                     image:snapshot.images[0], images:snapshot.images.slice(1),
-                    text:`${question.text}\n${question.selectionType === 'multiple' ? 'Select ALL correct options.' : 'Select one answer.'}\n${question.options.map((option,index)=>`${String.fromCharCode(65+index)}. ${option.text}`).join('\n')}`,
-                    url:location.href, practice_type:'mcq',
+                    text:context.text,
+                    url:location.href, practice_type:'mcq', verify_answer:true,
                 });
             } else {
                 res = await apiRequest('/solve', 'POST', {
-                    text: pageText, url: window.location.href, practice_type: practiceType,
+                    text: question ? context.text : extractSmartText(), url: context.url,
+                    practice_type: question ? 'mcq' : practiceType, verify_answer: Boolean(question) || practiceType !== 'code',
                 });
             }
 
@@ -1819,7 +2376,7 @@
                 if (res.status === 422 && err.detail?.code === 'no_readable_question') {
                     console.info('No usable page text; automatically falling back to Vision scan.');
                     setLoading("Text isn't readable — analyzing the visible screen…");
-                    await visionScan(true, err.detail?.language, practiceType);
+                    await visionScan(true, practiceType === 'code' ? err.detail?.language : null, practiceType);
                     return;
                 }
                 const msg = typeof err.detail === 'string' ? err.detail : (err.detail?.message || err.message || 'Backend error');
@@ -1827,11 +2384,12 @@
             }
 
             const data = res.data;
-            serverOnline = true;
+            await assertVisionQuestionCurrent(context);
             let parsed;
             try {
                 parsed = JSON.parse(data.results);
             } catch (e) {
+                if (question || practiceType !== 'code') throw new Error('The server returned an invalid answer format.');
                 const raw = data.results || "";
                 const optMatch = raw.match(/Option\s+([A-D])\s*[:\s]+(.+?)(?:\.|$)/i);
                 if (optMatch) {
@@ -1840,15 +2398,13 @@
                     parsed = [{ type: "mcq", question: "Result", reasoning: "", answer: raw.substring(0, 200) }];
                 }
             }
+            assertVerifiedScanAnswers(parsed, data.answer_verified, question);
             displayResults(parsed, data.provider);
         } catch (error) {
             if (timeoutId) clearTimeout(timeoutId);
             console.error("Scan error:", error);
             if (error.name === 'AbortError') {
                 showError("Request timed out — server may be busy, please try again");
-            } else if (error instanceof TypeError && error.message.includes('fetch')) {
-                serverOnline = false;
-                showError(`Error: ${error.message}`);
             } else {
                 showError(`Error: ${error.message}`);
             }
@@ -1874,7 +2430,7 @@
     // buttons so the next Text or Vision scan works immediately.
     function updateScanControls() {
         for (const id of ['assistant-scan-btn', 'assistant-vision-btn']) {
-            const button = document.getElementById(id);
+            const button = document.getElementById(id) as HTMLButtonElement;
             if (button) button.disabled = isScanning;
         }
     }
@@ -2012,7 +2568,7 @@
     }
 
     function bindTabKeyboardNavigation() {
-        const tabs = [...root.querySelectorAll('[role="tab"]')];
+        const tabs = [...root.querySelectorAll<HTMLElement>('[role="tab"]')];
         tabs.forEach((tab, index) => {
             tab.addEventListener('keydown', (event) => {
                 let nextIndex = null;
@@ -2023,14 +2579,14 @@
                 if (nextIndex === null) return;
                 event.preventDefault();
                 tabs[nextIndex].click();
-                requestAnimationFrame(() => root.querySelectorAll('[role="tab"]')[nextIndex]?.focus());
+                requestAnimationFrame(() => root.querySelectorAll<HTMLElement>('[role="tab"]')[nextIndex]?.focus());
             });
         });
     }
 
     function scanPanelMarkup() {
         return `
-            <section class="assistant-scan-panel" id="assistant-scan-panel" role="tabpanel" aria-labelledby="mode-${selectedTab}">
+            <section class="assistant-scan-panel" id="assistant-scan-panel" role="tabpanel" aria-labelledby="mode-${selectedTab === 'aptitude' ? 'apt' : selectedTab}">
                 <div class="assistant-btn-row">
                     <button class="assistant-btn" id="assistant-scan-btn">⚡ Scan (Text)</button>
                     <button class="assistant-btn secondary" id="assistant-vision-btn">⌁ Scan (Vision)</button>
@@ -2053,20 +2609,22 @@
                     <span class="assistant-qa-state" id="assistant-automation-state" aria-live="polite">${automation.state}</span>
                 </div>
                 <div class="assistant-automation-status" id="assistant-automation-status" aria-live="polite"></div>
+                <div class="assistant-automation-status" id="assistant-backend-build" hidden></div>
                 <dl class="assistant-qa-details">
                     <div class="assistant-qa-wide"><dt>Current page</dt><dd id="assistant-automation-page">—</dd></div>
                     <div><dt>Completed</dt><dd id="assistant-automation-completed">0</dd></div>
                     <div><dt>Progress</dt><dd id="assistant-automation-progress">0 / —</dd></div>
                     <div class="assistant-qa-wide"><dt>Current question</dt><dd id="assistant-automation-question">—</dd></div>
                 </dl>
+                <div class="assistant-qa-latest" id="assistant-journal-list-clock" hidden></div>
                 <div class="assistant-qa-latest" id="assistant-automation-latest" aria-live="polite"></div>
                 <div id="assistant-journal-slot"></div>
                 <div class="assistant-automation-actions assistant-qa-actions">
-                    <button class="assistant-auto-btn start" id="assistant-auto-start-btn" aria-keyshortcuts="Alt+Shift+A" title="Start automation (Alt + Shift + A)">▶ Start automation</button>
-                    <button class="assistant-auto-btn" id="assistant-auto-pause-btn" aria-keyshortcuts="Alt+Shift+A" title="Pause or resume (Alt + Shift + A)" disabled>Pause</button>
+                    <button class="assistant-auto-btn start" id="assistant-auto-start-btn" aria-keyshortcuts="Alt+A Alt+Shift+A" title="Start automation (Alt + A)">▶ Start automation</button>
+                    <button class="assistant-auto-btn" id="assistant-auto-pause-btn" aria-keyshortcuts="Alt+A Alt+Shift+A" title="Pause or resume (Alt + A)" disabled>Pause</button>
                     <button class="assistant-auto-btn stop" id="assistant-auto-stop-btn" disabled>■ Stop</button>
                 </div>
-                <p class="assistant-automation-status">Alt + Shift + A: Start / Pause / Resume</p>
+                <p class="assistant-automation-status">Alt + A: Start / Pause / Resume</p>
                 <button class="assistant-auto-btn" id="assistant-export-question-btn">Export question details</button>
             </section>
         `;
@@ -2112,7 +2670,8 @@
             // Escape for safe attribute injection (B7)
             const safeContent = content.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
             root.innerHTML = `
-                <button class="assistant-tab collapsed ${content ? 'has-answer' : ''}" id="assistant-trigger" type="button" aria-label="Open Browser Assistant" data-content="${safeContent}">
+                <button class="assistant-tab collapsed ${content ? 'has-answer' : ''}" id="assistant-trigger" type="button" aria-label="Open Browser Assistant" title="Browser Assistant v${extensionVersion}" data-content="${safeContent}">
+                    <span class="assistant-mark" aria-hidden="true">BA</span>
                     ${isMinimalMode ? '<div class="assistant-mode-indicator">MIN</div>' : ''}
                 </button>
             `;
@@ -2131,8 +2690,9 @@
                 <div class="assistant-tab" id="assistant-panel">
                     <div class="assistant-header">
                         <div class="assistant-title-row">
+                            <span class="assistant-mark" aria-hidden="true">BA</span>
+                            <h3 class="assistant-title">Browser Assistant <span class="assistant-build">v${extensionVersion}</span></h3>
                             ${statusDot}
-                            <h3 class="assistant-title">Browser Assistant</h3>
                         </div>
                         <div class="assistant-header-actions">
                             <button class="assistant-icon-btn" id="assistant-history-btn" type="button" aria-label="Open Scan History" title="Scan History">
@@ -2165,7 +2725,7 @@
             bindTabKeyboardNavigation();
             document.getElementById('assistant-history-btn').onclick = openHistory;
             document.getElementById('assistant-scan-btn')?.addEventListener('click', scanPage);
-            document.getElementById('assistant-vision-btn')?.addEventListener('click', visionScan);
+            document.getElementById('assistant-vision-btn')?.addEventListener('click', () => { void visionScan(); });
             document.getElementById('assistant-auto-start-btn')?.addEventListener('click', startPracticeAutomation);
             document.getElementById('assistant-export-question-btn')?.addEventListener('click', exportQuestionDiagnostic);
             document.getElementById('assistant-auto-pause-btn')?.addEventListener('click', pauseOrResumeAutomation);
@@ -2174,8 +2734,8 @@
 
             // Disable scan buttons while a scan is in progress (B3: prevent double-click)
             if (isScanning) {
-                const textScan = document.getElementById('assistant-scan-btn');
-                const visionScanButton = document.getElementById('assistant-vision-btn');
+                const textScan = document.getElementById('assistant-scan-btn') as HTMLButtonElement;
+                const visionScanButton = document.getElementById('assistant-vision-btn') as HTMLButtonElement;
                 if (textScan) textScan.disabled = true;
                 if (visionScanButton) visionScanButton.disabled = true;
             }
@@ -2332,8 +2892,7 @@
         const context = getAutomationContext();
         const isFresh = Number.isFinite(resume?.createdAt) && Date.now() - resume.createdAt < 120000;
         if (!isFresh || resume.targetId !== context.target?.id || context.mode !== 'FULL') return;
-        isCollapsed = false;
-        render();
+        if (!directRun) { isCollapsed = false; render(); }
         const adapter = getAutomationAdapter(context);
         if (!adapter) return;
 
@@ -2371,7 +2930,29 @@
         reopenedAfterUpdate = reopen !== null;
         sessionStorage.removeItem('browserAssistantReopenAfterUpdate');
         if (reopen === 'true') {isCollapsed=false;selectedTab='qa';automation.state='UPDATED';}
+        else if (reopen && reopen !== 'false') {
+            const state = JSON.parse(reopen);
+            isCollapsed = state.isCollapsed !== false;
+            isHidden = state.isHidden === true;
+            if (['auto','mcq','aptitude','code','qa'].includes(state.selectedTab)) selectedTab = state.selectedTab;
+            if (['auto','mcq','aptitude','code'].includes(state.selectedMode)) selectedMode = state.selectedMode;
+            if (isHidden) root.style.display = 'none';
+            automation.state = 'UPDATED';
+        }
     } catch {}
     render();
-    if (!reopenedAfterUpdate) void resumeCodingBatch().then(resumed => { if (!resumed) void resumeAuthorizedQaAfterNavigation(); });
+    void syncDetachedPanel();
+    requestWorkspaceUpdate();
+    function hasDirectRunContinuation() {
+        try {
+            return [AUTO_RESUME_KEY, CODING_BATCH_KEY, 'assistantPendingJournal'].some(key => sessionStorage.getItem(key));
+        } catch { return false; }
+    }
+    if (directRun && !hasDirectRunContinuation()) finishDirectRun('Stopped');
+    window.addEventListener('pagehide', () => {
+        if (!hasDirectRunContinuation()) finishDirectRun('Stopped');
+    }, {signal:lifecycle.signal});
+    if (!reopenedAfterUpdate) void resumeCodingBatch().then(resumed => {
+        if (!resumed) return resumeAuthorizedQaAfterNavigation();
+    });
 })();

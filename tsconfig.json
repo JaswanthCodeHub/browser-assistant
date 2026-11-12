@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "none",
+    "lib": ["ES2023", "DOM", "DOM.Iterable", "WebWorker.ImportScripts"],
+    "types": ["chrome"],
+    "rootDir": "extension/src",
+    "outDir": "extension",
+    "newLine": "lf",
+    "noEmitOnError": true,
+    "skipLibCheck": true
+  },
+  "include": ["extension/src/*.ts"],
+  "exclude": []
+}

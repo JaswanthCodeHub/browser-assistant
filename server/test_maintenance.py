@@ -60,12 +60,11 @@ class VisionBatchTests(unittest.IsolatedAsyncioTestCase):
         def create(**kwargs):
             nonlocal failed
             messages = kwargs['messages']
-            blocks = messages[-1]['content']
-            # Schema-repair prompts are additional string messages.
+            # The original visual evidence stays in the first user message.
             batch_prompt = messages[1]['content'][0]['text']
             physical = [block for block in messages[1]['content'] if isinstance(block,dict) and block.get('type') == 'image_url']
             calls.append((physical, str(messages)))
-            if isinstance(messages[-1]['content'],str) and messages[-1]['content'].startswith('SECOND VISUAL SOLVE'):
+            if messages[0]['content'].startswith('SECOND VISUAL SOLVE'):
                 content=json.dumps({'readable':True,'answers':[{'id':1,'answer':'Option C: 13'}]})
             elif 'Use exactly these image ids' in batch_prompt:
                 ids = json.loads(batch_prompt.split('in order: ',1)[1].split('. ',1)[0])
@@ -164,6 +163,24 @@ class ReliabilityTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(main,'_groq_clients',clients),patch.object(main,'_groq_key_index',0),patch.object(main,'_groq_disabled_until',0):
             self.assertEqual(await main.try_groq([],model='test'),ANSWER)
 
+    async def test_concurrent_rotation_does_not_skip_a_backup_key(self):
+        def rate_limit_first_key(**_):
+            # Another request rotated the preferred key while this call was in flight.
+            main._groq_key_index = 1
+            raise RuntimeError('HTTP 429 rate_limit')
+
+        first = Mock(side_effect=rate_limit_first_key)
+        second = Mock(return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=ANSWER))]))
+        third = Mock(side_effect=RuntimeError('HTTP 429 rate_limit'))
+        clients = [SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+                   for create in (first, second, third)]
+        with patch.object(main, '_groq_clients', clients), patch.object(main, '_groq_key_index', 0), \
+             patch.object(main, '_groq_disabled_until', 0):
+            self.assertEqual(await main.try_groq([], model='test'), ANSWER)
+        first.assert_called_once()
+        second.assert_called_once()
+        third.assert_not_called()
+
     async def test_ollama_uses_a_bounded_transport_and_closes_it(self):
         local=MagicMock();local.__enter__.return_value=local;local.chat.return_value={'message':{'content':ANSWER}}
         with patch.object(main.ollama,'Client',return_value=local) as factory:
@@ -206,6 +223,16 @@ class LocalApiTests(unittest.TestCase):
         self.assertEqual(self.client.get('/history',headers={'Host':'evil.example'}).status_code,400)
         self.assertEqual(self.client.get('/history',headers={'Origin':'null'}).status_code,403)
 
+    def test_unreadable_journal_syllabus_does_not_disable_other_routes(self):
+        missing = self.path.with_name('missing-syllabus.json')
+        with patch('journal.SYLLABUS_PATH', missing):
+            health = self.client.get('/health')
+            self.assertEqual(health.status_code, 200)
+            self.assertEqual(health.json()['journal_syllabus_subjects'], [])
+            self.assertEqual(self.client.get('/practice').status_code, 200)
+            response = self.client.post('/journal', json={'subject': 'AI201', 'number': 1})
+            self.assertEqual(response.status_code, 503)
+
     def test_database_persistence_and_sql_injection_like_text_remain_data(self):
         entry={'scan_type':'text','url':"https://example.test/'; DROP TABLE scan_history; --",'provider':'mock', 'results':ANSWER}
         saved=self.client.post('/history',json=entry);self.assertEqual(saved.status_code,201)
@@ -215,6 +242,50 @@ class LocalApiTests(unittest.TestCase):
         self.assertEqual(len(self.client.get('/history').json()['items']),1)
         self.assertEqual(self.client.get('/history?limit=101').status_code,422)
         self.assertEqual(self.client.post('/history',json={**entry,'scan_type':'bad'}).status_code,422)
+
+    def test_automation_history_shares_the_scan_database_but_not_its_table(self):
+        run={'id':'123e4567-e89b-12d3-a456-426614174000','type':'MCQ','url':'https://example.test/practice',
+             'started_at':'2026-11-11T06:00:00+00:00','ended_at':None,'total':10,'completed':0,'failed':0,
+             'status':'Running','revision':1}
+        self.assertEqual(self.client.put('/automation-history',json=run).status_code,200)
+        self.assertEqual([item['status'] for item in self.client.get('/automation-history').json()['items']],['Running'])
+        self.assertEqual(self.client.get('/history').json()['items'],[])
+        finished={**run,'revision':2,'status':'Completed','completed':10,'ended_at':'2026-11-11T06:05:00+00:00'}
+        self.assertEqual(self.client.put('/automation-history',json=finished).status_code,200)
+        items=self.client.get('/automation-history').json()['items']
+        self.assertEqual([(item['status'],item['revision'],item['completed']) for item in items],[('Completed',2,10)])
+        self.assertEqual(self.client.get('/history').json()['items'],[])
+        with main.get_history_connection() as connection:
+            tables={row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        self.assertTrue({'scan_history','automation_history'}.issubset(tables))
+        self.assertTrue(self.path.exists())
+        main.initialize_history_database()
+        self.assertEqual([item['status'] for item in self.client.get('/automation-history').json()['items']],['Completed'])
+
+    def test_automation_history_ignores_stale_or_overwritten_revisions(self):
+        run={'id':'123e4567-e89b-12d3-a456-426614174001','type':'Coding','url':'https://example.test/code',
+             'started_at':'2026-11-11T07:00:00+00:00','ended_at':None,'total':1,'completed':0,'failed':0,
+             'status':'Running','revision':2}
+        self.client.put('/automation-history',json=run)
+        stale={**run,'revision':1,'status':'Stopped','ended_at':'2026-11-11T07:01:00+00:00'}
+        self.client.put('/automation-history',json=stale)
+        self.assertEqual(self.client.get('/automation-history').json()['items'][0]['status'],'Running')
+        duplicate={**run,'revision':3,'status':'Failed','failed':1,'ended_at':'2026-11-11T07:02:00+00:00'}
+        self.client.put('/automation-history',json=duplicate)
+        self.assertEqual(self.client.get('/automation-history').json()['items'][0]['status'],'Failed')
+        overwritten={**run,'revision':4,'status':'Completed','completed':1,'ended_at':'2026-11-11T07:03:00+00:00'}
+        self.client.put('/automation-history',json=overwritten)
+        self.assertEqual(self.client.get('/automation-history').json()['items'][0]['status'],'Failed')
+
+    def test_automation_history_validates_dates_and_page_urls(self):
+        run={'id':'123e4567-e89b-12d3-a456-426614174002','type':'Quiz','url':'https://example.test/quiz',
+             'started_at':'2026-11-11T08:00:00+00:00','ended_at':None,'completed':0,'failed':0,
+             'status':'Running','revision':1}
+        self.assertEqual(self.client.put('/automation-history',json={**run,'ended_at':'2026-11-11T08:01:00+00:00'}).status_code,422)
+        self.assertEqual(self.client.put('/automation-history',json={**run,'status':'Completed'}).status_code,422)
+        self.assertEqual(self.client.put('/automation-history',json={**run,'url':'https://example.test/quiz?answer=1'}).status_code,422)
+        self.assertEqual(self.client.put('/automation-history',json={**run,'type':'Unknown'}).status_code,422)
+        self.assertEqual(self.client.get('/automation-history?limit=101').status_code,422)
 
     def test_math_route_contract_and_history_retention_are_preserved(self):
         with patch.object(main,'try_groq',AsyncMock(return_value=ANSWER)):

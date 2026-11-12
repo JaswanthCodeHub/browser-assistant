@@ -8,27 +8,52 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 ROOT = Path(__file__).resolve().parents[1]
 EXTENSION = ('manifest.json', 'background.js', 'editor-bridge.js', 'automation-policy.js',
+             'detached-panel-background.js', 'detached-panel.html', 'detached-panel.js',
              'question-visuals.js', 'answer-requests.js', 'coding-automation.js', 'coding-batch.js', 'content.js', 'journal-automation.js', 'popup.html', 'popup.js', 'styles.css')
-BACKEND = ('server/main.py', 'server/code_contract.py', 'server/local_security.py', 'server/vision_images.py', 'server/journal.py', 'server/journal_prompt.md', 'server/journal_syllabus.json', 'server/practice_quiz.html', 'server/requirements.txt', 'server/requirements.lock.txt',
+BACKEND = ('server/main.py', 'server/workspace_server.py', 'server/code_contract.py', 'server/local_security.py', 'server/vision_images.py', 'server/journal.py', 'server/journal_prompt.md', 'server/journal_syllabus.json', 'server/practice_quiz.html', 'server/requirements.txt', 'server/requirements.lock.txt',
            'server/.env.example', 'server/Dockerfile', 'server/.dockerignore',
            'docker-compose.yml', 'README.md', 'LICENSE', 'CONTRIBUTING.md', 'SECURITY.md', 'CODE_OF_CONDUCT.md', 'CHANGELOG.md',
            'docs/SETUP.md', 'docs/API.md', 'docs/JOURNALS.md', 'docs/ARCHITECTURE.md', 'docs/AUDIT.md', 'docs/LAUNCH.md',
-           'docs/ROADMAP.md', 'docs/RELEASE_NOTES.md', 'docs/FEATURE_PRESERVATION.md', 'docs/REPAIR_REPORT.md')
+           'docs/ROADMAP.md', 'docs/RELEASE_NOTES.md', 'docs/FEATURE_PRESERVATION.md', 'docs/REPAIR_REPORT.md',
+           'docs/SEPARATE_PANEL.md')
 
 
 def release_files():
     extension = tuple('extension/' + path for path in EXTENSION) + ('LICENSE',)
-    tests = tuple(path.relative_to(ROOT).as_posix() for path in sorted((ROOT/'extension').glob('*.test.cjs')))
+    typescript = ('extension/src/assistant.d.ts', *(
+        'extension/src/' + Path(name).with_suffix('.ts').name
+        for name in EXTENSION if name.endswith('.js')
+    ))
+    extension_assets = tuple(name for name in extension if not name.endswith('.js'))
+    tests = tuple(path.relative_to(ROOT).as_posix() for path in sorted((ROOT/'extension').glob('*.test.cts')))
     tests += tuple(path.relative_to(ROOT).as_posix() for path in sorted((ROOT/'server').glob('test_*.py')))
-    source = tuple(dict.fromkeys((*extension, *BACKEND, *tests, 'extension/fixtures/ccbp-ordering.html',
-        'package.json','package-lock.json','.gitignore','.editorconfig', 'scripts/check_repo.py',
-        'scripts/package_release.py','scripts/start_journal_assistant.ps1','scripts/smoke_backend.py',
+    source = tuple(dict.fromkeys((*extension_assets, *typescript, *BACKEND, *tests, 'extension/fixtures/ccbp-ordering.html',
+        'package.json','package-lock.json','tsconfig.json','.gitignore','.editorconfig','AGENTS.md','scripts/check_repo.py',
+        'scripts/package_release.py','scripts/mark_workspace_build.cjs','scripts/start_journal_assistant.ps1','scripts/smoke_backend.py','scripts/test_separate_panel.cjs',
         '.github/workflows/ci.yml','.github/workflows/release.yml')))
     return [('extension',extension),('backend',BACKEND),('source',source)]
 
 
 def validate_inputs(groups):
     manifest = json.loads((ROOT/'extension/manifest.json').read_text(encoding='utf-8'))
+    npm_package = json.loads((ROOT/'package.json').read_text(encoding='utf-8'))
+    npm_lock = json.loads((ROOT/'package-lock.json').read_text(encoding='utf-8'))
+    assert npm_package['version'] == manifest['version'], 'npm version must match the extension manifest'
+    assert npm_lock['version'] == npm_package['version'], 'npm lockfile version must match package.json'
+
+    license_bytes = (ROOT/'LICENSE').read_bytes()
+    license_text = license_bytes.decode('utf-8')
+    assert 'MIT License' in license_text, 'Root LICENSE must retain the MIT license'
+    assert 'Copyright (c) 2024-present Browser Assistant Contributors' in license_text, 'Original copyright notice is missing'
+    assert 'The above copyright notice and this permission notice shall be included' in license_text, 'MIT notice-preservation condition is missing'
+    assert npm_package.get('license') == 'MIT', 'package.json license metadata must remain MIT'
+
+    npm_runtime = {'extension/' + path for path in EXTENSION}
+    npm_runtime.update(path for path in BACKEND if path.startswith('server/')
+                       and Path(path).name not in {'Dockerfile', '.dockerignore'})
+    expected_npm_files = npm_runtime | {'LICENSE'}
+    assert set(npm_package['files']) == expected_npm_files, 'npm files must include LICENSE and match the extension/backend runtime'
+
     assert manifest['manifest_version'] == 3
     for _kind,files in groups:
         assert len(files) == len(set(files)), 'Duplicate release member'
@@ -53,6 +78,7 @@ def validate_inputs(groups):
             for source in line.split()[1:-1]:
                 assert source in docker_allowed, f'Docker excludes required file: {source}'
 
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--tag', help='Release tag, required to match the manifest if supplied')
@@ -69,6 +95,7 @@ def main():
     out = ROOT / 'dist' / f'v{version}'
     out.mkdir(parents=True, exist_ok=True)
     artifacts = []
+    expected_license = (ROOT/'LICENSE').read_bytes()
     for kind, files in groups:
         path = out / f'browser-assistant-{kind}-v{version}.zip'
         with ZipFile(path, 'w', ZIP_DEFLATED) as archive:
@@ -77,6 +104,8 @@ def main():
                 archive.write(ROOT / name, arcname)
         with ZipFile(path) as archive:
             assert archive.testzip() is None
+            assert 'LICENSE' in archive.namelist(), f'{kind} archive is missing LICENSE'
+            assert archive.read('LICENSE') == expected_license, f'{kind} archive changed the original LICENSE notice'
             if kind == 'extension':
                 manifest = json.loads(archive.read('manifest.json'))
                 for group in manifest['content_scripts']:

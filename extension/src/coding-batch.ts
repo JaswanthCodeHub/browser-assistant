@@ -125,7 +125,7 @@
         return null;
     }
     function getSaveBeforeLeaving(doc) {
-        const choices = new Set();
+        const choices = new Set<HTMLElement>();
         for (const prompt of doc.querySelectorAll('p,span,div,h2,h3')) {
             if (!visible(prompt) || !/^do you want to save code before leaving\?$/i.test(text(prompt))) continue;
             for (let scope = prompt.parentElement; scope && scope !== doc.body; scope = scope.parentElement) {

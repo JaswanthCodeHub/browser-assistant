@@ -55,7 +55,9 @@ jobs:
       - run: docker compose up --build -d
       - name: Verify health and practice
         run: |
-          curl --fail --retry 15 --retry-connrefused --retry-delay 2 http://127.0.0.1:8000/health
+          curl --fail --retry 15 --retry-all-errors --retry-delay 2 --connect-timeout 2 --max-time 5 http://127.0.0.1:8000/health
           curl --fail http://127.0.0.1:8000/practice > /dev/null
+      - run: docker compose logs --no-color
+        if: failure()
       - run: docker compose down
         if: always()
