@@ -336,15 +336,16 @@ def normalize_checked_answer(value, *, matrix_math=False):
     value = re.sub(r'(^|;[ \t]*)(?:option[ \t]+)?([a-z])[ \t]*[:.)][ \t]*',
                    lambda match: ('; ' if match[1] else '') + f'Option {match[2].upper()}: ',
                    value, flags=re.I)
-    if not matrix_math:
-        return value
     choices = re.split(r'; (?=Option [A-Z]: )', value)
     normalized = []
     for choice in choices:
         label = re.match(r'Option [A-Z]: ', choice)
         prefix = label[0] if label else ''
         body = choice[len(prefix):]
-        normalized.append(prefix + (numeric_matrix_key(body) or body))
+        expression = re.sub(r'^\x60([^\x60\r\n]+)\x60$', r'\1', body.strip()).strip()
+        if re.fullmatch(r'O[ \t]*\([A-Za-z0-9 \t+*/^().-]+\)', expression):
+            body = re.sub(r' *([()+*/^.-]) *', r'\1', re.sub(r'[ \t]+', ' ', expression))
+        normalized.append(prefix + ((numeric_matrix_key(body) if matrix_math else None) or body))
     return '; '.join(normalized)
 
 

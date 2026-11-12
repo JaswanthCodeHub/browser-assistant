@@ -1,4 +1,10 @@
-# Browser Assistant 2.9.8
+# Browser Assistant 2.9.9
+
+- Phrase sets are detected when the portal renders directions separately and puts keywords in individual inline elements.
+- MCQ solving uses the visible prompt associated with the current options and excludes unrelated coding question wrappers.
+- Big-O answers match their displayed options when only backticks or operator spacing differ.
+
+## Browser Assistant 2.9.8
 
 - Continue through numbered reading comprehension, person matching, and sentence gaps with one Submit per passage.
 - Fill sentence transformations after verifying the answer uses two to five words and includes the given word.

@@ -86,7 +86,10 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
                 if (url.pathname === '/history') return Response.json([]);
                 if (url.pathname === '/extension-release') return Response.json({version: '2.9.1'});
                 if (url.pathname === '/solve' && /^https:\/\/learning\.ccbp\.in\/test-reading(?:\?written)?$/.test(body.url || '')) {
-                    const format = formats.find(item => body.text.includes(item.passage));
+                        const format = formats.find(item => item.keywords
+                            ? body.text.includes('Tom is not old enough') && body.text.includes('I have never visited Mumbai before')
+                                && body.text.includes('The red dress is more expensive')
+                            : body.text.includes(item.passage));
                     if (format) {
                         const position = format.prompts.findIndex(prompt => body.text.includes('Answer only this question: ' + prompt));
                         const keyword = format.keywords?.[position];
@@ -194,7 +197,24 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
                         if (window.submissions.length < (mixed ? formats.length + 2 : 2)) {
                             const passage = document.getElementById('passage');
                             if (mixed && window.submissions.length > 1) {
-                                passage.textContent = formats[window.submissions.length - 2].passage;
+                                const next = formats[window.submissions.length - 2];
+                                if (next.keywords) {
+                                    const [instruction, ...lines] = next.passage.split('\\n');
+                                    const directions = document.createElement('p');
+                                    directions.id = 'phrase-directions';
+                                    directions.textContent = instruction;
+                                    document.querySelector('main').before(directions);
+                                    // The text wraps visually, but the inline spans
+                                    // do not create separators in textContent.
+                                    passage.replaceChildren(...lines.map(line => {
+                                        const span = document.createElement('span');
+                                        span.textContent = line;
+                                        return span;
+                                    }));
+                                } else {
+                                    document.getElementById('phrase-directions')?.remove();
+                                    passage.textContent = next.passage;
+                                }
                             } else if (mixed) {
                                 passage.textContent = 'Leo comes (1) ____ Canada. He sat next to me (2) ____ our English lesson. After class, I asked him (3) ____ he liked our school.';
                             } else passage.prepend('On the second trip, ');

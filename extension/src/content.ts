@@ -504,6 +504,11 @@ function mountJournalCountdown(signal: AbortSignal) {
         const answer = String(raw).trim();
         if (!answer) return [];
         const normalize = value => value.trim().replace(/\r\n/g, '\n').replace(/(\d) +%/g, '$1%');
+        const complexityKey = (value: string) => {
+            const expression = value.trim().replace(/^\x60([^\x60\r\n]+)\x60$/, '$1').trim();
+            return /^O[ \t]*\([A-Za-z0-9 \t+*/^().-]+\)$/.test(expression)
+                ? expression.replace(/[ \t]+/g, ' ').replace(/ *([()+*/^.-]) */g, '$1') : '';
+        };
         const matrixSyntax = /\\begin\{(?:[bpBvV]?matrix|smallmatrix)\}/;
         const matrixQuestion = matrixSyntax.test(question.text ?? '') || question.options.some(option => matrixSyntax.test(option.text));
         const matrixKey = (value: string) => {
@@ -519,6 +524,8 @@ function mountJournalCountdown(signal: AbortSignal) {
         };
         const matchesOption = (option: string, candidate: string) => {
             if (normalize(option) === normalize(candidate)) return true;
+            const complexity = complexityKey(option);
+            if (complexity && complexity === complexityKey(candidate)) return true;
             const matrix = matrixQuestion && matrixKey(option);
             return Boolean(matrix && matrix === matrixKey(candidate));
         };

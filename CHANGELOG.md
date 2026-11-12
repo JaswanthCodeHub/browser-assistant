@@ -1,3 +1,9 @@
+# 2.9.9
+
+- Detect sentence transformations when directions and passage are rendered separately or keywords are split across inline elements.
+- Use the active MCQ prompt and its matching code context. Ignore stale question wrappers.
+- Match Big-O options across display backticks and spacing without changing operators or option letters.
+
 # 2.9.8
 
 - Recognize grouped passage comprehension, person matching, and sentence gaps with a shared Submit.

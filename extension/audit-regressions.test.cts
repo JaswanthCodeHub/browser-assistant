@@ -116,6 +116,17 @@ test('multiple choice mapping retains every explicitly selected option', () => {
     assert.deepEqual(Array.from(context.answerIndexesFromResult([{answer: 'Option A: One; Option C: Three'}], question)), [0, 2]);
 });
 
+test('Big-O options match through backticks and spacing while preserving operators and labels', () => {
+    const src = fs.readFileSync(__dirname + '/content.js', 'utf8');
+    const context = vm.createContext({});
+    vm.runInContext(src.slice(src.indexOf('    function answerIndexesFromResult'), src.indexOf('    function updateAutomationUI')), context);
+    const question = { options: ['\x60O(N log M)\x60', '\x60O(N + M)\x60', '\x60O(N^2)\x60', '\x60O(M^2)\x60']
+        .map((text, index) => ({ text, index })) };
+    for (const [answer, expected] of [['Option B: O(N+M)', [1]], ['O(N + M)', [1]], ['Option A: O(N+M)', []], ['O(N*M)', []]]) {
+        assert.deepEqual(Array.from(context.answerIndexesFromResult([{ answer }], question)), expected);
+    }
+});
+
 test('answer mapping requires the option letter and text to agree for text and chart questions', () => {
     const src = fs.readFileSync(`${__dirname}/content.js`, 'utf8');
     const context = vm.createContext({});
@@ -146,6 +157,27 @@ test('semantic adapter reads short answers and rejects ambiguous fields', () => 
     assert.equal(adapter.getSubmit(document, question).textContent, 'SUBMIT');
     document.querySelector('section').appendChild(document.querySelector('textarea').cloneNode());
     assert.equal(adapter.getQuestion(document), null);
+});
+
+test('visible checkbox question is bound to its own prompt and ignores stale coding wrappers', () => {
+    const { parseHTML } = require('linkedom');
+    const { document, window } = parseHTML(`<html><body><main>
+        <div id="generic-question-wrapper-id" hidden><p>Return the sum of the two numbers represented by linked lists.</p><pre>stale code</pre></div>
+        <div id="exam-question-wrapper-id"><p>Find the number of nodes in a different exercise.</p><pre>unrelated code</pre></div>
+        <form><h3>What happens when both nodes being compared have equal values?</h3>
+            <div><label><input type="checkbox">Skip both nodes</label>
+            <label><input type="checkbox">Add the node from the first list to the merged list</label>
+            <label><input type="checkbox">Add the node from the second list to the merged list</label></div>
+            <button>Submit</button>
+        </form>
+    </main></body></html>`);
+    window.HTMLElement.prototype.getClientRects = () => [{}];
+    vm.runInContext(fs.readFileSync(`${__dirname}/automation-policy.js`, 'utf8'), vm.createContext({ window, URL }));
+    const question = window.BrowserAssistantAutomationPolicy.getAdapter('semantic-mcq').getQuestion(document);
+    assert.equal(question.text, 'What happens when both nodes being compared have equal values?');
+    assert.equal(question.identityText, question.text);
+    assert.equal(question.options.length, 3);
+    assert.equal(question.selectionType, 'multiple');
 });
 
 test('semantic adapter preserves every linked blank before a shared Submit', () => {

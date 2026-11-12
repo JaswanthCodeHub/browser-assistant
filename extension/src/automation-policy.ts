@@ -147,26 +147,79 @@
             const numberedPrompt = /^(\d+)[.)]\s+.{3,1000}\?$/;
             const blankNumbers = (text: string) => [...text.matchAll(/\(\s*(\d+)\s*\)\s*(?:_{2,}|\.{3,}|…)/g)]
                 .map(match => Number(match[1]));
+            const readingText = (node, separateInline = false) => {
+                const copy = node.cloneNode(true);
+                copy.querySelectorAll('script,style,template,[hidden],[aria-hidden="true"]').forEach(child => child.remove());
+                copy.querySelectorAll(separateInline ? 'br,p,div,li,span,strong,b,em' : 'br,p,div,li').forEach(child => {
+                    child.before('\n'); child.after('\n');
+                });
+                return (copy.textContent || '').trim();
+            };
+            const phraseKeywords = (context: string) => {
+                const keywords = new Map<number, string>();
+                // Preserve rendered lines when available. Some portals join
+                // the end of one item directly to the next item number.
+                const items = [...context.matchAll(/(?:^|[^\w])([1-9]\d*)\s*[.)]\s*(?=[A-Za-z])/g)];
+                for (const [index, item] of items.entries()) {
+                    const pair = context.slice(item.index + item[0].length, items[index + 1]?.index);
+                    const standalone = [...pair.matchAll(/^\s*([A-Z]{2,})\s*$/gm)].map(match => match[1]);
+                    const candidates = standalone.length ? standalone : pair.match(/\b[A-Z]{2,}\b/g) || [];
+                    if ((pair.match(/_{2,}/g) || []).length !== 1 || candidates.length !== 1
+                        || keywords.has(Number(item[1]))) return null;
+                    keywords.set(Number(item[1]), candidates[0]);
+                }
+                return keywords;
+            };
             const pageText = doc.body.innerText || doc.body.textContent || '';
             const readingRange = /questions\s+(\d+)\s*[-–—]\s*(\d+)/i.exec(pageText);
-            const phraseSet = /which phrase best completes/i.test(pageText) && /between two and five words/i.test(pageText);
+            const phraseSet = /which\s+phrase\s+best\s+completes/i.test(pageText)
+                && /(?:two\s+and\s+five|2\s*(?:and|to|[-–—])\s*5)\s+words/i.test(pageText);
             const gapSet = blankNumbers(pageText).length >= 2 && /which (?:word|sentence) (?:best )?fits/i.test(pageText);
             if (gapSet || phraseSet || readingRange) {
-                const promptPattern = gapSet ? blankPrompt : phraseSet ? phrasePrompt : numberedPrompt;
-                const blocks = [...doc.querySelectorAll('div,p,h1,h2,h3,h4,span,legend,[role="heading"]')]
+                const promptPattern = phraseSet ? phrasePrompt : gapSet ? blankPrompt : numberedPrompt;
+                const blocks = [...doc.querySelectorAll('div,p,h1,h2,h3,h4,span,label,section,article,legend,[role="heading"]')]
                     .filter(node => visible(node) && !node.closest('#assistant-root,nav,aside'));
                 const headings = blocks.filter(node => promptPattern.test((node.textContent || '').trim())
-                    && ![...node.children].some(child => promptPattern.test((child.textContent || '').trim())));
-                let passage = gapSet && blocks.find(node => {
+                    && ![...node.querySelectorAll('div,p,h1,h2,h3,h4,span,label,section,article,legend,[role="heading"]')]
+                        .some(child => promptPattern.test((child.textContent || '').trim())));
+                const headingNumbers = headings.map(node => Number(textOf(node).match(promptPattern)?.[1]));
+                let phraseContext: string;
+                let phrases: Map<number, string>;
+                let passage = !phraseSet && gapSet && blocks.find(node => {
                     const text = node.textContent || '';
                     return text.length <= 12000 && blankNumbers(text).length >= 2
                         && !/which (?:word|sentence) (?:best )?fits/i.test(text) && !node.querySelector(radioSelector)
                         && ![...node.children].some(child => blankNumbers(child.textContent || '').length >= 2);
                 });
-                if (!gapSet && headings.length) {
+                if (phraseSet && headings.length >= 2) {
+                    // Some layouts place directions and the numbered source
+                    // text in different wrappers. Find the source by its gaps,
+                    // independent of where the directions are rendered.
+                    const sources = blocks.filter(node => {
+                        const raw = node.textContent || '';
+                        return raw.length <= 12000 && (raw.match(/_{2,}/g) || []).length >= 2
+                            && !node.querySelector(`${radioSelector},${readingFieldSelector}`);
+                    });
+                    const gapCount = node => (node.textContent.match(/_{2,}/g) || []).length;
+                    const total = Math.max(0, ...sources.map(gapCount));
+                    if (total !== headings.length) return null;
+                    for (const source of sources.reverse()) {
+                        if (gapCount(source) !== total) continue;
+                        for (const context of [source.innerText?.trim(), readingText(source), readingText(source, true)]) {
+                            if (!context) continue;
+                            const found = phraseKeywords(context);
+                            if (found?.size !== total || !headingNumbers.every(number => found.has(number))) continue;
+                            passage = source;
+                            phraseContext = context;
+                            phrases = found;
+                            break;
+                        }
+                        if (passage) break;
+                    }
+                } else if (!gapSet && !phraseSet && headings.length) {
                     // The passage occupies a separate column preceding the
                     // shared answer column. Never use the timer or palette.
-                    const instruction = phraseSet ? /complete the second sentence/i : /read the (?:text|comments|passage)/i;
+                    const instruction = /read the (?:text|comments|passage)/i;
                     for (let column = headings[0].parentElement; column && column !== doc.body && !passage; column = column.parentElement) {
                         if (!headings.every(heading => column.contains(heading))) continue;
                         for (let node = column.previousElementSibling; node; node = node.previousElementSibling) {
@@ -180,22 +233,9 @@
                     }
                 }
                 if (passage && headings.length) {
-                    const copy = passage.cloneNode(true);
-                    copy.querySelectorAll('br,p,div,li').forEach(node => { node.before('\n'); node.after('\n'); });
-                    const context = (copy.textContent || '').trim();
-                    const headingNumbers = headings.map(node => Number(textOf(node).match(promptPattern)?.[1]));
-                    const phrases = new Map<number, string>();
-                    if (phraseSet) {
-                        const items = [...context.matchAll(/(?:^|\s)(\d+)\s*[.)]\s+/g)];
-                        for (const [index, item] of items.entries()) {
-                            const pair = context.slice(item.index + item[0].length, items[index + 1]?.index);
-                            const keywords = pair.match(/\b[A-Z]{2,}\b/g) || [];
-                            if (!/_{2,}/.test(pair) || keywords.length !== 1 || phrases.has(Number(item[1]))) return null;
-                            phrases.set(Number(item[1]), keywords[0]);
-                        }
-                    }
+                    const context = phraseContext || readingText(passage);
                     const count = readingRange ? Number(readingRange[2]) - Number(readingRange[1]) + 1 : 0;
-                    const numbers = (gapSet ? blankNumbers(context) : phraseSet ? [...phrases.keys()]
+                    const numbers = (phraseSet ? [...phrases.keys()] : gapSet ? blankNumbers(context)
                         : count >= 2 && count <= 30 ? Array.from({length: count}, (_, index) => Number(readingRange[1]) + index) : [])
                         .sort((a, b) => a - b);
                     // A partially rendered or unrecognized reading set must
@@ -227,7 +267,7 @@
                             const next = headings[position + 1] || submit;
                             const group = fields.filter(node => follows(heading, node) && follows(node, next));
                             return { text: textOf(heading), options: [], input: group.length === 1 ? group[0] : null,
-                                requiredWord: phrases.get(headingNumbers[position]), container: scope };
+                                requiredWord: phrases?.get(headingNumbers[position]), container: scope };
                         });
                         if (questions.some(question => !question.input) || fields.length !== questions.length) return null;
                         return { ...questions[0], type: 'compound-short-answer', compoundQuestions: questions,
@@ -306,6 +346,17 @@
                 groups.get(key).push(control);
             }
             const radioCandidates = [];
+            const choiceSelector = 'input[type="radio"],input[type="checkbox"],[role="radio"],[role="checkbox"]';
+            const codeSelector = 'pre,code,.ace_editor,.CodeMirror,.monaco-editor';
+            const promptSelector = '#generic-question-wrapper-id,#exam-question-wrapper-id,[data-question-text]';
+            const readable = node => visible(node) && !node.closest('[hidden],[aria-hidden="true"],[inert],#assistant-root')
+                && doc.defaultView?.getComputedStyle?.(node)?.visibility !== 'hidden';
+            const proseText = node => {
+                if (!readable(node) || node.matches(codeSelector)) return '';
+                const clone = node.cloneNode(true);
+                clone.querySelectorAll(`${codeSelector},[hidden],[aria-hidden="true"],[inert]`).forEach(child => child.remove());
+                return textOf(clone);
+            };
             for (const group of groups.values()) {
                 if (group.length < 2) continue;
                 const container = group[0].closest('fieldset,[role="radiogroup"],form')
@@ -331,38 +382,40 @@
                 const fieldset = container.closest('fieldset') || group[0].closest('fieldset');
                 const radioGroup = group[0].closest('[role="radiogroup"]');
                 const optionScope = fieldset || radioGroup || group[0].parentElement?.parentElement || container;
-                const heading = fieldset?.querySelector('legend')
-                    || radioGroup?.querySelector('h1,h2,h3,h4,[role="heading"]')
-                    || container.querySelector?.('h1,h2,h3,h4,[role="heading"]');
+                const heading = [fieldset?.querySelector('legend'), radioGroup?.querySelector('h1,h2,h3,h4,[role="heading"]'),
+                    container.querySelector?.('h1,h2,h3,h4,[role="heading"]')].find(node => node && readable(node));
                 const localPrompt = [...optionScope.querySelectorAll('p,h1,h2,h3,h4,[role="heading"],div,span')]
-                    .find(node => !node.querySelector('input[type="radio"],input[type="checkbox"],[role="radio"],[role="checkbox"]')
+                    .find(node => readable(node) && !node.matches(choiceSelector) && !node.querySelector(choiceSelector)
+                        && !options.some(option => option.node.contains(node))
                         && textOf(node).length >= 12 && textOf(node).length <= 1200);
                 let nearbyPrompt = '';
-                let branch = optionScope;
-                for (let ancestor = optionScope; ancestor && ancestor !== doc.body && !nearbyPrompt; ancestor = ancestor.parentElement) {
+                for (let branch = optionScope; branch && branch !== doc.body && !nearbyPrompt; branch = branch.parentElement) {
                     for (let sibling = branch.previousElementSibling; sibling; sibling = sibling.previousElementSibling) {
-                        const prose = sibling.cloneNode(true);
-                        prose.querySelectorAll('pre,code,.ace_editor,.CodeMirror,.monaco-editor').forEach(node => node.remove());
-                        const candidate = sibling.matches('pre,code,.ace_editor,.CodeMirror,.monaco-editor') ? '' : textOf(prose);
-                        if (candidate.length >= 20 && candidate.length <= 1200 && !sibling.querySelector('input[type="radio"],[role="radio"]')) {
+                        const candidate = proseText(sibling);
+                        if (candidate.length >= 20 && candidate.length <= 1200
+                            && !sibling.matches(choiceSelector) && !sibling.querySelector(choiceSelector)
+                            && !options.some(option => option.node === sibling || option.node.contains(sibling))) {
                             nearbyPrompt = candidate;
                             break;
                         }
                     }
-                    branch = ancestor;
-                    if (ancestor === doc.body) break;
                 }
                 const text = textOf(heading) || textOf(localPrompt) || labelledText(radioGroup) || labelledText(container)
                     || radioGroup?.getAttribute('aria-label') || container.getAttribute('aria-label') || nearbyPrompt;
                 if (!text.trim()) continue;
                 // Coding MCQs often render the code separately from the prose
                 // question. Preserve that visible context before asking the AI.
-                const questionRegion = optionScope.closest('[data-question],article,section,main') || optionScope.parentElement;
-                const promptRegion = questionRegion?.querySelector('#generic-question-wrapper-id,#exam-question-wrapper-id,[data-question-text]')
-                    || doc.querySelector('#generic-question-wrapper-id,#exam-question-wrapper-id');
+                const questionRegion = optionScope.closest('[data-question],#generic-question-container,#exam-question-container,article,section,main')
+                    || optionScope.parentElement;
+                const promptRegion = [...(questionRegion?.querySelectorAll(promptSelector) || [])].find(node => {
+                    if (node.querySelector(choiceSelector)) return false;
+                    const prose = proseText(node);
+                    return prose.length >= 12 && (prose.includes(text.trim()) || text.includes(prose));
+                });
                 const sourceRegion = promptRegion || questionRegion;
-                const snippets = [...(sourceRegion?.querySelectorAll('pre,code,.ace_editor,.CodeMirror,.monaco-editor') || [])]
-                    .filter(node => visible(node) && !node.parentElement?.closest('pre,code,.ace_editor,.CodeMirror,.monaco-editor'));
+                const snippets = [...(sourceRegion?.querySelectorAll(codeSelector) || [])]
+                    .filter(node => readable(node) && !node.parentElement?.closest(codeSelector)
+                        && (!node.closest(promptSelector) || node.closest(promptSelector) === promptRegion));
                 const codeText = node => {
                     const lines = [...node.querySelectorAll('.ace_line,.view-line,.CodeMirror-line')];
                     if (lines.length) return lines.map(line => line.textContent || '').join('\n');
@@ -371,7 +424,7 @@
                     return (clone.textContent || '').trim();
                 };
                 let questionText;
-                if (promptRegion && !promptRegion.querySelector('input[type="radio"],[role="radio"]')) {
+                if (promptRegion) {
                     // Preserve filenames, prose and ALL snippets together; the
                     // last code block alone is not the question's full context.
                     const clone = promptRegion.cloneNode(true);

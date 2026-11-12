@@ -165,6 +165,16 @@ class MatrixVerificationTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(VisionUnconfirmedError):
             await cross_check_text_answers([], json.dumps([initial]), complete, question_text=text)
 
+    async def test_complexity_answer_preserves_the_displayed_option_after_verification(self):
+        text = 'How long does merging take?\nQuestion format: select one answer.\nA. O(N log M)\nB. \x60O(N + M)\x60'
+        primary = json.dumps([{'type': 'mcq', 'answer': 'Option B: O(N+M)'}])
+        verified = AsyncMock(return_value=self.response('O(N + M)'))
+        result = await cross_check_text_answers([], primary, verified, question_text=text)
+        self.assertEqual(json.loads(result)[0]['answer'], 'Option B: \x60O(N + M)\x60')
+        with self.assertRaises(VisionUnconfirmedError):
+            await cross_check_text_answers([], primary, AsyncMock(side_effect=[self.response('O(N log M)'), self.response('O(N*M)')]),
+                                           question_text=text, require_agreement=True)
+
     async def test_solve_route_requires_agreement_for_one_word_blanks(self):
         question = 'Leo comes (1) ____ Canada.\n\nWhich word best fits blank (1)?\nQuestion format: one word.'
         request = main.PageContent(text=question, url='https://example.test', practice_type='mcq', require_answer_agreement=True)
