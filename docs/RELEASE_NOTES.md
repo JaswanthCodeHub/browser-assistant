@@ -1,4 +1,66 @@
-# Browser Assistant 2.9.4
+# Browser Assistant 2.9.16
+
+- The Docker image includes the backend launcher required by its startup command.
+
+## Browser Assistant 2.9.15
+
+- Alt+A starts supported automation directly, including Aurora Reflective Journal. When there is one identifiable ongoing journal, the shortcut opens it from Assessments with the floating panel closed.
+
+## Browser Assistant 2.9.14
+
+- Alt+A starts Batch Coding directly on the CCBP Coding Problem Set and leaves a closed floating panel closed.
+
+## Browser Assistant 2.9.13
+
+- On the CCBP course instructions page, Alt+A uses the visible Start Practice button and continues when the questions load. The shortcut does not open a confirmation dialog or the floating panel.
+
+## Browser Assistant 2.9.12
+
+- Alt+A starts MCQ automation directly on CCBP practice and practice review pages. The shortcut leaves the panel closed if it was closed.
+
+## Browser Assistant 2.9.11
+
+- A Chrome extension loaded from the local workspace automatically reloads after a completed build. Active runs finish first, and the webpage stays open.
+- The panel displays its loaded build in the header and identifies a different running backend version.
+- Drag-and-drop shows a backend restart message when the running server predates ordering verification.
+- Starting the local backend with the existing Python command now watches completed builds. It keeps the terminal open and drains active requests before restarting the server worker.
+- Pseudocode questions on review routes use the full snippet. Recognized linked-list constructor, merge-branch, and loop-count questions are checked against the code locally.
+
+## Browser Assistant 2.9.10
+
+- The six-step sorted linked-list merge exercise uses a local rule and maps each step to its displayed number.
+- Other ordering exercises retry a disagreement and verify that the result contains each displayed step once.
+- Restart the backend after updating to enable the new ordering verification.
+
+## Browser Assistant 2.9.9
+
+- Phrase sets are detected when the portal renders directions separately and puts keywords in individual inline elements.
+- MCQ solving uses the visible prompt associated with the current options and excludes unrelated coding question wrappers.
+- Big-O answers match their displayed options when only backticks or operator spacing differ.
+
+## Browser Assistant 2.9.8
+
+- Continue through numbered reading comprehension, person matching, and sentence gaps with one Submit per passage.
+- Fill sentence transformations after verifying the answer uses two to five words and includes the given word.
+- Restart the matching backend after updating the extension to enable phrase verification.
+
+## Browser Assistant 2.9.7
+
+- Reading sets with one-word text boxes now continue in the same run as multiple-choice reading sets.
+- The extension verifies each word using the shared passage and checks every field before clicking Submit.
+- Update and restart the backend along with the extension to enable one-word verification.
+
+## Browser Assistant 2.9.6
+
+- Reading sets with a shared passage and Submit button now match each numbered blank to its own options.
+- The extension verifies the complete set before selecting answers. It checks the selections together before submitting and waits for the next passage.
+- Install the matching extension and backend versions together to enable linked-answer verification.
+
+## Browser Assistant 2.9.5
+
+- Text scans accept a primary answer when independent verification returns unparseable responses. Linked reading sets in 2.9.6 require agreement on each blank.
+
+## Browser Assistant 2.9.4
 
 - **Alt+A direct automation:** starts, pauses, and resumes the supported run without changing the visibility, position, size, or selected tab of the floating or separate panel. The shortcut is ignored while typing in inputs, textareas, and supported code editors.
 - **Automation history:** records direct run type, page, timestamps, totals, completed count, failed count, and final status in a dedicated SQLite table. Scan history remains separate.

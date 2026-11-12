@@ -1,5 +1,4 @@
 import os
-import uvicorn
 import json
 import asyncio
 import ast
@@ -28,6 +27,7 @@ from local_security import install_local_guards, redact, sanitize_data
 from vision_images import (compress_image_base64, unique_image_blocks, collect_image_evidence,
                            cross_check_visual_answers, relative_percentage_question, RELATIVE_PERCENTAGE_INSTRUCTION,
                            answer_permutation, cross_check_text_answers, solve_matrix_choice, solve_row_parallel_choice,
+                           ordering_question, solve_sorted_list_merge_order, solve_pseudocode_choice, reading_response_constraints,
                            VisionRateLimitError, VisionUnconfirmedError)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -191,7 +191,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.9.4", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.9.16", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)
@@ -209,6 +209,7 @@ class PageContent(BaseModel):
     repair_attempt: int = 0
     review_before_submit: bool = False
     verify_answer: bool = False
+    require_answer_agreement: bool = False
     starter_code: str | None = None
 
     @field_validator('starter_code')
@@ -1257,6 +1258,9 @@ def local_choice_result(text, language):
     if item is None:
         item = solve_row_parallel_choice(text)
         provider = "local tensor dimension check"
+    if item is None:
+        item = solve_pseudocode_choice(text)
+        provider = "local pseudocode check"
     if item is not None:
         return {"results": json.dumps([item], ensure_ascii=False), "provider": f"{provider} [verified]",
                 "language": language, "answer_verified": True, "code_reviewed": False}
@@ -1277,6 +1281,25 @@ async def solve_questions(content: PageContent):
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     system_prompt = build_system_prompt(content.practice_type, language)
+    ordering = ordering_question(trimmed_text)
+    reading_constraints = reading_response_constraints(trimmed_text) if content.require_answer_agreement else None
+    if ordering:
+        system_prompt = (
+            'Arrange all steps in the order required by the problem. Check prerequisites and use each displayed '
+            'step number once. Return exactly one JSON array item with type "mcq", the question, a brief '
+            'reasoning string, and an answer array of the original step numbers in their new order.'
+        )
+    elif reading_constraints:
+        _, _, keyword = reading_constraints
+        rule = (f'Use two to five words including the unchanged word {keyword}. Preserve the meaning of the original sentence. '
+                if keyword else 'Use exactly one word. ')
+        system_prompt = (
+            'Read the entire passage and fill only the numbered blank asked about. '
+            + rule +
+            'Return one JSON array item with type "mcq", the exact question, a brief reasoning string, '
+            'and an answer string containing only the words that belong in the gap. Use no option label, quotation marks '
+            'inside the answer value, surrounding punctuation, or Markdown. If the blank is unclear, return [].'
+        )
     if content.repair_attempt > 0:
         system_prompt += """
 
@@ -1303,8 +1326,13 @@ REPAIR MODE:
         detect_requested_language(content.text) is not None or content.language is not None,
     )
     strict_code_review = require_code and (content.review_before_submit or not FAST_CODE_MODE or STRICT_REPAIR_REVIEW)
-    verify_answers = not require_code and (content.verify_answer or not FAST_SCAN_MODE)
-    if not require_code and content.practice_type in {'auto', 'mcq', 'math', 'aptitude'}:
+    verify_answers = not require_code and (content.verify_answer or content.require_answer_agreement or not FAST_SCAN_MODE)
+    if ordering and not require_code:
+        item = solve_sorted_list_merge_order(ordering)
+        if item is not None:
+            return {"results": json.dumps([item], ensure_ascii=False), "provider": "local merge-step check [verified]",
+                    "language": language, "answer_verified": True, "code_reviewed": False}
+    if not require_code and not content.require_answer_agreement and content.practice_type in {'auto', 'mcq', 'math', 'aptitude'}:
         local_result = local_choice_result(trimmed_text, language)
         if local_result is not None:
             return local_result
@@ -1325,7 +1353,10 @@ REPAIR MODE:
             return await try_groq(prompt_messages, model=source_model, temperature=0.0)
 
         try:
-            checked = await cross_check_text_answers(messages, cleaned, independent_solve, question_text=trimmed_text)
+            checked = await cross_check_text_answers(
+                messages, cleaned, independent_solve, question_text=trimmed_text,
+                require_agreement=content.require_answer_agreement,
+            )
         except Exception as exc:
             if isinstance(exc, VisionUnconfirmedError):
                 message = str(exc)
@@ -1361,6 +1392,7 @@ REPAIR MODE:
                 cleaned, verified = await confirm_answers(cleaned, model_id)
                 return {"results": cleaned, "provider": f"groq ({model_id})" + (' [cross-checked]' if verified else ''),
                         "language": language, "answer_verified": verified,
+                        "answer_agreement": verified and content.require_answer_agreement,
                         "code_reviewed": strict_code_review and language != 'web'}
             else:
                 errors.append(f"{model_id}: returned empty/unparseable results")
@@ -1399,6 +1431,7 @@ REPAIR MODE:
                 "results": cleaned,
                 "provider": f"ollama ({OLLAMA_MODEL})" + (' [cross-checked]' if verified else ''),
                 "answer_verified": verified,
+                "answer_agreement": verified and content.require_answer_agreement,
                 "language": language,
                 "code_reviewed": strict_code_review and language != 'web',
             }
@@ -1909,4 +1942,7 @@ if __name__ == "__main__":
     # loopback keeps direct local runs unavailable to other network devices.
     # Docker overrides SERVER_HOST because its published port is already bound
     # to the host loopback interface in docker-compose.yml.
-    uvicorn.run(app, host=os.getenv("SERVER_HOST", "127.0.0.1"), port=8000)
+    from workspace_server import run_workspace_server
+    raise SystemExit(run_workspace_server(
+        os.getenv("SERVER_HOST", "127.0.0.1"), int(os.getenv("SERVER_PORT", "8000")), app.version,
+    ))

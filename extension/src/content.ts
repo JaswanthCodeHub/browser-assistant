@@ -86,6 +86,7 @@ function mountJournalCountdown(signal: AbortSignal) {
 
     const root = document.createElement('div');
     root.id = 'assistant-root';
+    root.dataset.build = extensionVersion;
     root.classList.add('assistant-panel-initializing');
     document.body.appendChild(root);
     const journalCountdown = ['http:', 'https:'].includes(location.protocol)
@@ -211,6 +212,7 @@ function mountJournalCountdown(signal: AbortSignal) {
     let lastResultSummary = "";
     let isHidden = false;
     let serverOnline = null; // null = unknown, true/false = checked
+    let backendVersion = '';
     let isScanning = false;
     let extensionAlive = true; // false after extension reload invalidates context
     let historyItems = [];
@@ -336,11 +338,16 @@ function mountJournalCountdown(signal: AbortSignal) {
             }
             return false;
         }
-        const busy = automation.running || isScanning || Boolean(window.BrowserAssistantJournalBusy);
+        const busy = automation.running || isScanning || dragState.dragging || Boolean(window.BrowserAssistantJournalBusy)
+            || Boolean(root.contains(document.activeElement) && document.activeElement?.matches('textarea,input,select,[contenteditable="true"]'));
         if (request.action === 'assistantUpdateStatus') {sendResponse({busy});return false;}
         if (request.action !== 'assistantPrepareUpdate') return false;
         if (busy) {sendResponse({ready:false});return false;}
-        try {sessionStorage.setItem('browserAssistantReopenAfterUpdate',isCollapsed?'false':'true');} catch {}
+        try {
+            sessionStorage.setItem('browserAssistantReopenAfterUpdate', JSON.stringify({
+                isCollapsed, isHidden, selectedTab, selectedMode,
+            }));
+        } catch {}
         disposed = true; extensionAlive = false; automation.runId++;
         lifecycle.abort();
         for (const cleanup of navigationCleanup) cleanup();
@@ -351,11 +358,18 @@ function mountJournalCountdown(signal: AbortSignal) {
         return false;
     };
     chrome.runtime.onMessage.addListener(updateListener);
+    function requestWorkspaceUpdate() {
+        if (!document.hidden && !disposed) void chrome.runtime.sendMessage({action:'checkWorkspaceUpdate'}).catch(() => {});
+    }
+    document.addEventListener('visibilitychange', requestWorkspaceUpdate, {signal:lifecycle.signal});
+    window.addEventListener('focus', requestWorkspaceUpdate, {signal:lifecycle.signal});
+    const workspaceUpdateTimer = window.setInterval(requestWorkspaceUpdate, 3000);
+    lifecycle.signal.addEventListener('abort', () => window.clearInterval(workspaceUpdateTimer), {once: true});
     document.addEventListener('assistant-journal-update', updateAutomationUI, {signal:lifecycle.signal});
     document.addEventListener('assistant-journal-ready', () => {
         if (!window.BrowserAssistantJournal?.matches()) return;
         selectedTab = 'qa';
-        openPanel();
+        openPanel('journal-ready');
     }, {signal:lifecycle.signal});
 
     function getAutomationContext() {
@@ -411,7 +425,14 @@ function mountJournalCountdown(signal: AbortSignal) {
             return { ...coding, signature: `code:${window.location.pathname}:${coding.language}:${identity}` };
         }
         const question = adapter.getQuestion(document);
-        if (!question || !normalizeAutomationText(question.text) || (question.type !== 'short-answer' && question.options.length < 2)) return null;
+        if (!question || !normalizeAutomationText(question.text)) return null;
+        if (question.compoundQuestions) {
+            return { ...question, signature: JSON.stringify([question.type,
+                question.compoundSubmit ? question.compoundContext : '',
+                question.compoundQuestions.map(group => [group.identityText || group.text, group.options.map(option => option.identityText || option.text)]),
+            ]) };
+        }
+        if (question.type !== 'short-answer' && question.options.length < 2) return null;
         return { ...question, text: normalizeAutomationText(question.text), options: question.options.map((option, index) => ({
             ...option, index, text: normalizeAutomationText(option.text),
         })), signature: questionSignature(question.identityText || question.text, question.options)
@@ -497,6 +518,11 @@ function mountJournalCountdown(signal: AbortSignal) {
         const answer = String(raw).trim();
         if (!answer) return [];
         const normalize = value => value.trim().replace(/\r\n/g, '\n').replace(/(\d) +%/g, '$1%');
+        const complexityKey = (value: string) => {
+            const expression = value.trim().replace(/^\x60([^\x60\r\n]+)\x60$/, '$1').trim();
+            return /^O[ \t]*\([A-Za-z0-9 \t+*/^().-]+\)$/.test(expression)
+                ? expression.replace(/[ \t]+/g, ' ').replace(/ *([()+*/^.-]) */g, '$1') : '';
+        };
         const matrixSyntax = /\\begin\{(?:[bpBvV]?matrix|smallmatrix)\}/;
         const matrixQuestion = matrixSyntax.test(question.text ?? '') || question.options.some(option => matrixSyntax.test(option.text));
         const matrixKey = (value: string) => {
@@ -512,6 +538,8 @@ function mountJournalCountdown(signal: AbortSignal) {
         };
         const matchesOption = (option: string, candidate: string) => {
             if (normalize(option) === normalize(candidate)) return true;
+            const complexity = complexityKey(option);
+            if (complexity && complexity === complexityKey(candidate)) return true;
             const matrix = matrixQuestion && matrixKey(option);
             return Boolean(matrix && matrix === matrixKey(candidate));
         };
@@ -544,6 +572,11 @@ function mountJournalCountdown(signal: AbortSignal) {
         const start = document.getElementById('assistant-auto-start-btn') as HTMLButtonElement;
         const pause = document.getElementById('assistant-auto-pause-btn') as HTMLButtonElement;
         const stop = document.getElementById('assistant-auto-stop-btn') as HTMLButtonElement;
+        const backend = document.getElementById('assistant-backend-build');
+        if (backend) {
+            backend.hidden = !backendVersion || backendVersion === extensionVersion;
+            backend.textContent = backend.hidden ? '' : `Backend ${backendVersion} is running. Restart the backend to load ${extensionVersion}.`;
+        }
         const journal = window.BrowserAssistantJournal;
         if (journal?.matches()) {
             const current = journal.getState();
@@ -656,7 +689,7 @@ function mountJournalCountdown(signal: AbortSignal) {
         return null;
     }
 
-    async function waitForQuestionSubmit(question, runId, adapter, answerIndexes, answerText) {
+    async function waitForQuestionSubmit(question, runId, adapter, answerIndexes, answerText, linkedAnswers = null) {
         let deadline = Date.now() + 15000;
         while (Date.now() < deadline && automation.running && automation.runId === runId) {
             const pausedAt = Date.now();
@@ -674,12 +707,13 @@ function mountJournalCountdown(signal: AbortSignal) {
             }
             if (adapter.isSaving?.(document)) {
                 automation.state = 'WAITING_FOR_SAVE'; updateAutomationUI();
-            } else if (adapter.getSubmittedAdvance?.(document)) {
+            } else if (!linkedAnswers && adapter.getSubmittedAdvance?.(document)) {
                 return { submitted: true };
             } else if (fresh) {
                 if ((question.type === 'short-answer' && fresh.input?.value !== answerText)
-                    || (answerIndexes && question.type !== 'short-answer' && question.type !== 'ordering'
-                        && fresh.options.some(option => Boolean(option.isSelected?.() || option.input?.checked) !== answerIndexes.includes(option.index)))) {
+                    || (linkedAnswers && !fresh.compoundQuestions.every((group, index) => linkedAnswerMatches(group, linkedAnswers[index])))
+                    || (answerIndexes && !['short-answer', 'ordering'].includes(question.type)
+                        && !selectionMatches(fresh, answerIndexes))) {
                     throw new Error('The selected answer changed while waiting. No Submit was clicked.');
                 }
                 const button = adapter.getSubmit(document, fresh);
@@ -693,6 +727,23 @@ function mountJournalCountdown(signal: AbortSignal) {
             throw new Error('The portal did not enable a unique Submit button within 15 seconds. The selected answer was kept.');
         }
         return null;
+    }
+
+    function selectionMatches(question, answerIndexes) {
+        return question.options.every((option, index) =>
+            Boolean(option.isSelected?.() || option.input?.checked) === answerIndexes.includes(index));
+    }
+
+    function linkedAnswerMatches(group, answer) {
+        if (group.input) return !group.input.disabled && !group.input.readOnly && group.input.value === answer;
+        return !group.options.some(option => option.disabled) && selectionMatches(group, [answer]);
+    }
+
+    function fillPracticeField(field, value) {
+        const prototype = field.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(prototype, 'value').set.call(field, value);
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+        field.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
     async function waitForPracticeTransition(previousSignature, runId) {
@@ -1242,23 +1293,38 @@ function mountJournalCountdown(signal: AbortSignal) {
         return false;
     }
 
-    async function solveCompoundMcq(compound, runId, adapter) {
-        const findCurrent = (original) => {
-            const fresh = getAuthorizedQuestion();
-            return fresh?.compoundQuestions?.find(candidate => hasSameQuestionOptions(original, candidate)) || null;
+    async function solveCompoundQuestion(compound, runId, adapter) {
+        const url = location.href;
+        const freeResponse = compound.type === 'compound-short-answer';
+        const findCurrent = (position) => {
+            const context = getAutomationContext();
+            if (location.href !== url || context.target.id !== automation.targetId
+                || !automationPolicy.canExecute(freeResponse ? 'fill' : 'select', context)
+                || !automationPolicy.canExecute('validate', context)) return null;
+            const fresh = getAuthorizedQuestion(context);
+            if (fresh?.signature !== compound.signature) return null;
+            const group = fresh.compoundQuestions[position];
+            if (!group || group.input?.disabled || group.input?.readOnly
+                || group.options.some(option => option.disabled)) return null;
+            return group;
         };
-        for (const original of compound.compoundQuestions || []) {
-            if (!(await waitWhilePaused(runId))) return false;
-            let question = findCurrent(original);
-            if (!question) throw new Error('A linked question changed before its answer was selected. Nothing else was submitted.');
-            if (question.options.some(option => option.isSelected?.() || option.input?.checked)) continue;
+        const answers: (string | number)[] = [];
+        for (let position = 0; position < compound.compoundQuestions.length; position++) {
+            if (!(await waitWhilePaused(runId))) return null;
+            const question = findCurrent(position);
+            if (!question) throw new Error('A linked question changed or is already locked. Review it on the page.');
             automation.state = 'SOLVING'; updateAutomationUI();
-            const prompt = `${compound.compoundContext || ''}\n\nAnswer only this linked question: ${question.text}\nQuestion format: select one answer.\n${question.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option.text}`).join('\n')}`;
+            const keyword = question.requiredWord;
+            const format = freeResponse ? (keyword ? `Question format: 2 to 5 words including the given word ${keyword}.` : 'Question format: one word.')
+                : `Question format: select one answer.\n${question.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option.text}`).join('\n')}`;
+            const prompt = `Reading context:\n${compound.compoundContext || ''}\n\nAnswer only this question: ${question.text}\n${format}`;
             const response = await window.BrowserAssistantAnswerRequests.run({
-                request: () => apiRequest('/solve', 'POST', { text: prompt, url: window.location.href, practice_type: 'mcq', verify_answer: true }),
+                request: () => apiRequest('/solve', 'POST', {
+                    text: prompt, url, practice_type: 'mcq', verify_answer: true, require_answer_agreement: true,
+                }),
                 active: () => automation.running && automation.runId === runId,
                 ready: () => waitWhilePaused(runId),
-                current: () => Boolean(findCurrent(original)),
+                current: () => Boolean(findCurrent(position)),
                 onRetry: ({attempt, attempts, message}) => {
                     automation.state = 'RETRYING_REQUEST';
                     automation.error = `Temporary answer service issue. Retrying ${attempt}/${attempts}: ${message}`;
@@ -1266,38 +1332,84 @@ function mountJournalCountdown(signal: AbortSignal) {
                 },
                 sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
             });
-            if (!response?.data?.answer_verified) throw new Error('Answer verification is required for every linked question.');
+            if (!response) return null;
+            if (response.data?.answer_agreement !== true) throw new Error('Update and restart the Browser Assistant backend to verify linked answers.');
             let results;
             try { results = JSON.parse(response.data.results); } catch { throw new Error('The answer service returned invalid linked-question data.'); }
-            const answerIndexes = answerIndexesFromResult(results, question);
-            if (!answerIndexes.length) throw new Error('The verified answer did not match this linked question’s displayed options.');
-            automation.state = 'SELECTING'; updateAutomationUI();
-            for (const index of answerIndexes) {
-                question = findCurrent(original);
-                const option = question?.options[index];
-                if (!option) throw new Error('A linked question option disappeared before selection.');
-                if (!(option.isSelected?.() || option.input?.checked)) (option.input || option.control)?.click();
-                let selected = false;
-                for (let attempt = 0; attempt < 50 && await waitWhilePaused(runId); attempt++) {
-                    question = findCurrent(original);
-                    const current = question?.options[index];
-                    if (current?.isSelected?.() || current?.input?.checked) { selected = true; break; }
-                    await new Promise(resolve => setTimeout(resolve, 50));
+            if (!Array.isArray(results) || results.length !== 1 || results[0]?.type !== 'mcq') {
+                throw new Error('Expected one verified answer for each linked question.');
+            }
+            if (freeResponse) {
+                const value = results[0].answer;
+                const words = typeof value === 'string' ? value.trim().split(/\s+/) : [];
+                if (!words.every(word => /^\p{L}+(?:['’\-]\p{L}+)*$/u.test(word))
+                    || (keyword ? words.length < 2 || words.length > 5 || !words.some(word => word.toLowerCase() === keyword.toLowerCase())
+                        : words.length !== 1)) {
+                    throw new Error(`Blank ${position + 1} requires ${keyword ? `two to five words including ${keyword}` : 'one word'}. Review the answer before submitting.`);
                 }
-                if (!selected) throw new Error('A linked answer could not be verified after selection.');
+                answers.push(words.join(' '));
+            } else {
+                const indexes = answerIndexesFromResult(results, question);
+                if (indexes.length !== 1) throw new Error('The verified answer did not match this linked question’s displayed options.');
+                answers.push(indexes[0]);
             }
         }
-        const current = getAuthorizedQuestion();
-        const submitQuestion = current?.compoundQuestions?.[0] || compound.compoundQuestions?.[0];
-        const submit = submitQuestion && adapter.getSubmit(document, submitQuestion);
-        if (!submit?.isConnected || submit.disabled || submit.getAttribute('aria-disabled') === 'true') {
-            throw new Error('All linked answers were selected, but the portal did not enable a unique Submit button.');
+        automation.error = ''; automation.state = freeResponse ? 'FILLING' : 'SELECTING'; updateAutomationUI();
+        for (const [position, answer] of answers.entries()) {
+            if (!(await waitWhilePaused(runId))) return null;
+            const question = findCurrent(position);
+            if (!question) throw new Error('A linked answer field or option disappeared.');
+            if (freeResponse) {
+                if (question.input.value !== answer) fillPracticeField(question.input, answer);
+            } else {
+                const option = question.options[answer];
+                if (!(option.isSelected?.() || option.input?.checked)) (option.input || option.control)?.click();
+            }
+            let selected = false;
+            for (let attempt = 0; attempt < 50; attempt++) {
+                if (!(await waitWhilePaused(runId))) return null;
+                const current = findCurrent(position);
+                if (current && linkedAnswerMatches(current, answer)) { selected = true; break; }
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+            if (!selected) throw new Error(`The answer could not be entered for linked question ${position + 1}. Review the group before submitting.`);
         }
+        return waitForQuestionSubmit(compound, runId, adapter, null, '', answers);
+    }
+
+    async function submitPracticeAnswer(question, button, runId, adapter) {
         automation.state = 'SUBMITTING'; updateAutomationUI();
-        automation.processed.add(compound.signature);
-        submit.click();
+        automation.processed.add(question.signature);
+        button.click();
         automation.state = 'WAITING_FOR_NEXT'; updateAutomationUI();
-        return true;
+        let transition = await waitForAdvanceOrTransition(question.signature, runId, adapter);
+        if (!automation.running || automation.runId !== runId) return false;
+        if ((transition as { proceed?: HTMLElement })?.proceed) {
+            automation.state = 'OPENING_COURSE';
+            automation.pendingNavigation = true;
+            updateAutomationUI();
+            saveCourseResume('course', (transition as { context: AssistantContext }).context, {
+                currentTitle: adapter.getCurrentPracticeTitle?.(document) || '',
+            });
+            (transition as { proceed: HTMLElement }).proceed.click();
+            return false;
+        }
+        if ((transition as { advance?: HTMLElement })?.advance) {
+            if (!automationPolicy.canExecute('click', (transition as { context: AssistantContext }).context)) {
+                automation.error = 'Target policy does not permit Next.'; stopAutomation('UNAUTHORIZED'); return false;
+            }
+            (transition as { advance: HTMLElement }).advance.click();
+            transition = await waitForPracticeTransition(question.signature, runId);
+            if (!automation.running || automation.runId !== runId) return false;
+        }
+        if (transition === 'next' || transition === 'complete') automation.completed += 1;
+        if (transition === 'complete') {
+            stopAutomation(automation.deferredQuestions.size ? 'REVIEW_NEEDED' : 'COMPLETED');
+        } else if (transition !== 'next') {
+            automation.error = (transition as { blocked?: string })?.blocked || 'Next question did not appear in time.';
+            stopAutomation('PAUSED');
+        }
+        return transition === 'next';
     }
 
     async function startPracticeAutomation() {
@@ -1369,7 +1481,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                 continue;
             }
             const finalSubmit = currentAdapter.getFinalQuizSubmit?.(document);
-            if (finalSubmit) {
+            if (finalSubmit && getAuthorizedQuestion(context)?.compoundSubmit !== finalSubmit) {
                 const submitted = await submitCompletedQuiz(finalSubmit, currentAdapter, runId);
                 if (!automation.running || automation.runId !== runId) break;
                 if (!submitted) automation.error = 'Final Submit was clicked; the portal did not show a submission confirmation. Check its status.';
@@ -1436,11 +1548,6 @@ function mountJournalCountdown(signal: AbortSignal) {
                 stopAutomation('PAUSED'); break;
             }
             if (question.type === 'code') { await runCodingAutomation(question, runId); break; }
-            if (question.type === 'compound-mcq') {
-                try { await solveCompoundMcq(question, runId, adapter); }
-                catch (error) { automation.error = error.message || 'Linked questions could not be completed.'; stopAutomation('PAUSED'); }
-                break;
-            }
             if (automation.deferredQuestions.has(question.signature)) {
                 automation.currentSignature = question.signature;
                 if (await continueAfterUnverifiedQuestion(question, runId, 'This question was deferred earlier.', false)) continue;
@@ -1448,11 +1555,32 @@ function mountJournalCountdown(signal: AbortSignal) {
             }
             if (automation.processed.has(question.signature)) { automation.error = 'Repeated question detected.'; stopAutomation('PAUSED'); break; }
             automation.currentSignature = question.signature;
+            if (question.compoundQuestions) {
+                try {
+                    const ready = await solveCompoundQuestion(question, runId, currentAdapter);
+                    if (ready?.button && automation.running && automation.runId === runId
+                        && await submitPracticeAnswer(question, ready.button, runId, currentAdapter)) continue;
+                } catch (error) {
+                    if (automation.running && automation.runId === runId) {
+                        automation.error = error.message || 'Linked questions could not be completed.';
+                        stopAutomation('PAUSED');
+                    }
+                }
+                break;
+            }
             automation.state = 'SOLVING'; updateAutomationUI();
             let response;
             try {
                 let requestText = question.text;
-                if (location.origin === 'https://learning.ccbp.in' && /^\/primitive-coding\/practice\//.test(location.pathname)
+                if (question.type === 'ordering') {
+                    await checkServer();
+                    if (!(await waitWhilePaused(runId))) break;
+                    const [major, minor, patch] = backendVersion.split('.').map(Number);
+                    if (major === 1 || (major === 2 && (minor < 9 || (minor === 9 && patch < 10)))) {
+                        throw new Error(`Drag-and-drop needs backend 2.9.10 or newer. Backend ${backendVersion} is running. Restart it, then start automation again.`);
+                    }
+                }
+                if (location.origin === 'https://learning.ccbp.in' && /^\/primitive-coding(?:-review)?\/practice\//.test(location.pathname)
                     && document.querySelector('.ace_editor,.monaco-editor,.CodeMirror')) {
                     const snapshot = await readMcqSnippetSnapshot(question, runId);
                     if (!snapshot?.ok) throw new Error(snapshot?.error || 'Full code snippet could not be read.');
@@ -1566,10 +1694,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             if (shortAnswer) {
                 if (current.type !== 'short-answer' || !automationPolicy.canExecute('fill', currentContext)) { automation.error = 'Answer field changed or filling is disabled.'; stopAutomation('PAUSED'); break; }
                 const field = current.input;
-                const prototype = field.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-                Object.getOwnPropertyDescriptor(prototype, 'value').set.call(field, answerText);
-                field.dispatchEvent(new Event('input', { bubbles: true }));
-                field.dispatchEvent(new Event('change', { bubbles: true }));
+                fillPracticeField(field, answerText);
                 if (field.value !== answerText) { automation.error = 'Answer entry could not be verified.'; stopAutomation('PAUSED'); break; }
             }
             if (!shortAnswer && !ordering && current.selectionType === 'multiple') {
@@ -1596,34 +1721,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             catch (error) { automation.error = error.message; stopAutomation('PAUSED'); break; }
             if (!ready || !automation.running || automation.runId !== runId) break;
             if (ready.submitted) continue;
-            const submit = ready.button;
-            automation.state = 'SUBMITTING'; updateAutomationUI();
-            automation.processed.add(question.signature);
-            submit.click();
-            automation.state = 'WAITING_FOR_NEXT'; updateAutomationUI();
-            let transition = await waitForAdvanceOrTransition(question.signature, runId, currentAdapter);
-            if ((transition as { proceed?: HTMLElement })?.proceed) {
-                automation.state = 'OPENING_COURSE';
-                automation.pendingNavigation = true;
-                updateAutomationUI();
-                saveCourseResume('course', (transition as { context: AssistantContext }).context, {
-                    currentTitle: currentAdapter.getCurrentPracticeTitle?.(document) || '',
-                });
-                (transition as { proceed: HTMLElement }).proceed.click();
-                return;
-            }
-            if ((transition as { advance?: HTMLElement })?.advance) {
-                if (!automationPolicy.canExecute('click', (transition as { context: AssistantContext }).context)) { automation.error = 'Target policy does not permit Next.'; stopAutomation('UNAUTHORIZED'); break; }
-                (transition as { advance: HTMLElement }).advance.click();
-                transition = await waitForPracticeTransition(question.signature, runId);
-            }
-            if (transition === 'complete') {
-                automation.completed += 1;
-                stopAutomation(automation.deferredQuestions.size ? 'REVIEW_NEEDED' : 'COMPLETED');
-                break;
-            }
-            if (transition !== 'next') { automation.error = (transition as { blocked?: string })?.blocked || 'Next question did not appear in time.'; stopAutomation('PAUSED'); break; }
-            automation.completed += 1;
+            if (!(await submitPracticeAnswer(question, ready.button, runId, currentAdapter))) break;
         }
     }
 
@@ -1786,12 +1884,20 @@ function mountJournalCountdown(signal: AbortSignal) {
         try {
             const res = await apiRequest('/health', 'GET');
             online = res.ok;
+            const version = res.data?.version;
+            if (online && typeof version === 'string' && /^\d+(?:\.\d+){1,3}$/.test(version)) backendVersion = version;
         } catch { /* The next request can reconnect when the backend starts. */ }
-        if (serverOnline === null) setServerStatus(online);
+        if (!disposed) { setServerStatus(online); updateAutomationUI(); }
     }
 
     // Check once on load
     checkServer();
+    const backendStatusTimer = window.setInterval(() => {
+        if (!document.hidden && !isCollapsed && (!serverOnline || (backendVersion && backendVersion !== extensionVersion))) {
+            void checkServer();
+        }
+    }, 6000);
+    lifecycle.signal.addEventListener('abort', () => window.clearInterval(backendStatusTimer), {once: true});
 
     // ── Smart text extraction ────────────────────────────────────────────────
     function extractSmartText() {
@@ -1910,7 +2016,8 @@ function mountJournalCountdown(signal: AbortSignal) {
      * OPEN the panel. Idempotent: if already open, does nothing.
      * Does NOT trigger a scan — just shows the UI.
      */
-    function openPanel() {
+    function openPanel(source?: 'journal-ready') {
+        if (source === 'journal-ready' && directRun?.type === 'Journal') return;
         if (!isCollapsed && !isHidden) return; // already open — no-op
         isHidden = false;
         isCollapsed = false;
@@ -1998,20 +2105,18 @@ function mountJournalCountdown(signal: AbortSignal) {
         const ide = window.BrowserAssistantCoding?.getOnlineIdeQuestion?.(document, location);
         const journalPage = Boolean(journal?.matches());
         const canNavigate = automationPolicy?.canExecute('navigate', context);
+        const startPractice = !question && canNavigate && adapter?.getStartPractice?.(document);
         const type = journalPage ? 'Journal' : batch && canNavigate ? 'Batch Coding'
             : question?.type === 'code' || (ide && canNavigate) ? 'Coding'
-            : question || (canNavigate && adapter?.getStartPractice?.(document)) ? (/quiz/i.test(location.pathname) ? 'Quiz' : 'MCQ')
+            : question || startPractice ? (/quiz/i.test(location.pathname) ? 'Quiz' : 'MCQ')
             : null;
         if (!type) { showAutomationNotice('Automation is unavailable on this page.'); return; }
-        if (context.target.id !== 'local-practice'
-            && !window.confirm('Start ' + type + ' automation on this page? It can enter and submit answers as it runs.')) return;
         const progress = document.querySelector('[data-practice-quiz] #progress')?.textContent;
         const total = type === 'Journal' || type === 'Coding' ? 1 : Number(progress?.match(/\bof\s+(\d+)/i)?.[1]) || null;
         directRun = {id: crypto.randomUUID(), type, url: location.origin + location.pathname,
             started_at: new Date().toISOString(), ended_at: null, total, completed: 0, failed: 0, status: 'Running', revision: 0};
         directRunStarting = true;
         saveDirectRun();
-        showAutomationNotice(type + ' automation started.');
         const started = startPracticeAutomation();
         directRunStarting = false;
         updateDirectRun();
@@ -2504,6 +2609,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                     <span class="assistant-qa-state" id="assistant-automation-state" aria-live="polite">${automation.state}</span>
                 </div>
                 <div class="assistant-automation-status" id="assistant-automation-status" aria-live="polite"></div>
+                <div class="assistant-automation-status" id="assistant-backend-build" hidden></div>
                 <dl class="assistant-qa-details">
                     <div class="assistant-qa-wide"><dt>Current page</dt><dd id="assistant-automation-page">—</dd></div>
                     <div><dt>Completed</dt><dd id="assistant-automation-completed">0</dd></div>
@@ -2564,7 +2670,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             // Escape for safe attribute injection (B7)
             const safeContent = content.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
             root.innerHTML = `
-                <button class="assistant-tab collapsed ${content ? 'has-answer' : ''}" id="assistant-trigger" type="button" aria-label="Open Browser Assistant" data-content="${safeContent}">
+                <button class="assistant-tab collapsed ${content ? 'has-answer' : ''}" id="assistant-trigger" type="button" aria-label="Open Browser Assistant" title="Browser Assistant v${extensionVersion}" data-content="${safeContent}">
                     <span class="assistant-mark" aria-hidden="true">BA</span>
                     ${isMinimalMode ? '<div class="assistant-mode-indicator">MIN</div>' : ''}
                 </button>
@@ -2585,7 +2691,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                     <div class="assistant-header">
                         <div class="assistant-title-row">
                             <span class="assistant-mark" aria-hidden="true">BA</span>
-                            <h3 class="assistant-title">Browser Assistant</h3>
+                            <h3 class="assistant-title">Browser Assistant <span class="assistant-build">v${extensionVersion}</span></h3>
                             ${statusDot}
                         </div>
                         <div class="assistant-header-actions">
@@ -2824,9 +2930,19 @@ function mountJournalCountdown(signal: AbortSignal) {
         reopenedAfterUpdate = reopen !== null;
         sessionStorage.removeItem('browserAssistantReopenAfterUpdate');
         if (reopen === 'true') {isCollapsed=false;selectedTab='qa';automation.state='UPDATED';}
+        else if (reopen && reopen !== 'false') {
+            const state = JSON.parse(reopen);
+            isCollapsed = state.isCollapsed !== false;
+            isHidden = state.isHidden === true;
+            if (['auto','mcq','aptitude','code','qa'].includes(state.selectedTab)) selectedTab = state.selectedTab;
+            if (['auto','mcq','aptitude','code'].includes(state.selectedMode)) selectedMode = state.selectedMode;
+            if (isHidden) root.style.display = 'none';
+            automation.state = 'UPDATED';
+        }
     } catch {}
     render();
     void syncDetachedPanel();
+    requestWorkspaceUpdate();
     function hasDirectRunContinuation() {
         try {
             return [AUTO_RESUME_KEY, CODING_BATCH_KEY, 'assistantPendingJournal'].some(key => sessionStorage.getItem(key));
