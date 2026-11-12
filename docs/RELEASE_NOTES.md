@@ -1,4 +1,10 @@
-# Browser Assistant 2.9.9
+# Browser Assistant 2.9.10
+
+- The six-step sorted linked-list merge exercise uses a local rule and maps each step to its displayed number.
+- Other ordering exercises retry a disagreement and verify that the result contains each displayed step once.
+- Restart the backend after updating to enable the new ordering verification.
+
+## Browser Assistant 2.9.9
 
 - Phrase sets are detected when the portal renders directions separately and puts keywords in individual inline elements.
 - MCQ solving uses the visible prompt associated with the current options and excludes unrelated coding question wrappers.

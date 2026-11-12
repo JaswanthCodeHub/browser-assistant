@@ -28,7 +28,8 @@ from local_security import install_local_guards, redact, sanitize_data
 from vision_images import (compress_image_base64, unique_image_blocks, collect_image_evidence,
                            cross_check_visual_answers, relative_percentage_question, RELATIVE_PERCENTAGE_INSTRUCTION,
                            answer_permutation, cross_check_text_answers, solve_matrix_choice, solve_row_parallel_choice,
-                           reading_response_constraints, VisionRateLimitError, VisionUnconfirmedError)
+                           ordering_question, solve_sorted_list_merge_order, reading_response_constraints,
+                           VisionRateLimitError, VisionUnconfirmedError)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("browser-assistant")
@@ -191,7 +192,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.9.9", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.9.10", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)
@@ -1278,8 +1279,15 @@ async def solve_questions(content: PageContent):
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     system_prompt = build_system_prompt(content.practice_type, language)
+    ordering = ordering_question(trimmed_text)
     reading_constraints = reading_response_constraints(trimmed_text) if content.require_answer_agreement else None
-    if reading_constraints:
+    if ordering:
+        system_prompt = (
+            'Arrange all steps in the order required by the problem. Check prerequisites and use each displayed '
+            'step number once. Return exactly one JSON array item with type "mcq", the question, a brief '
+            'reasoning string, and an answer array of the original step numbers in their new order.'
+        )
+    elif reading_constraints:
         _, _, keyword = reading_constraints
         rule = (f'Use two to five words including the unchanged word {keyword}. Preserve the meaning of the original sentence. '
                 if keyword else 'Use exactly one word. ')
@@ -1317,6 +1325,11 @@ REPAIR MODE:
     )
     strict_code_review = require_code and (content.review_before_submit or not FAST_CODE_MODE or STRICT_REPAIR_REVIEW)
     verify_answers = not require_code and (content.verify_answer or content.require_answer_agreement or not FAST_SCAN_MODE)
+    if ordering and not require_code:
+        item = solve_sorted_list_merge_order(ordering)
+        if item is not None:
+            return {"results": json.dumps([item], ensure_ascii=False), "provider": "local merge-step check [verified]",
+                    "language": language, "answer_verified": True, "code_reviewed": False}
     if not require_code and not content.require_answer_agreement and content.practice_type in {'auto', 'mcq', 'math', 'aptitude'}:
         local_result = local_choice_result(trimmed_text, language)
         if local_result is not None:

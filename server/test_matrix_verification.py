@@ -175,6 +175,36 @@ class MatrixVerificationTests(unittest.IsolatedAsyncioTestCase):
             await cross_check_text_answers([], primary, AsyncMock(side_effect=[self.response('O(N log M)'), self.response('O(N*M)')]),
                                            question_text=text, require_agreement=True)
 
+    async def test_sorted_merge_steps_are_solved_locally_in_displayed_number_order(self):
+        text = ('Rearrange the steps to merge two sorted linked lists:\nReorder ALL items. Return a permutation.\n'
+                '1. Create a dummy node to serve as the head of the merged list\n'
+                '2. Traverse both lists simultaneously\n'
+                '3. Compare elements of both lists and link the smaller node to the merged list\n'
+                '4. Initialize pointers for the first and second list\n'
+                '5. Return the merged list starting from the next of the dummy node\n'
+                '6. Append remaining nodes of either list to the merged list')
+        with patch.object(main, 'try_groq', new_callable=AsyncMock) as groq, \
+             patch.object(main, 'try_ollama', new_callable=AsyncMock) as ollama:
+            result = await main.solve_questions(main.PageContent(
+                text=text, url='https://example.test', practice_type='mcq', verify_answer=True))
+            self.assertTrue(result['answer_verified'])
+            self.assertEqual(json.loads(result['results'])[0]['answer'], [4, 1, 2, 3, 6, 5])
+            groq.assert_not_awaited()
+            ollama.assert_not_awaited()
+
+    async def test_ordering_retries_disagreement_and_requires_every_displayed_step(self):
+        text = 'Arrange the tasks.\nReorder ALL items. Return a permutation.\n1. Build\n2. Design\n3. Check'
+        primary = json.dumps([{'type': 'mcq', 'answer': [1, 2, 3]}])
+        complete = AsyncMock(side_effect=[self.response([2, 1, 3]), self.response('[2, 1, 3]')])
+        result = await cross_check_text_answers([], primary, complete, question_text=text)
+        self.assertEqual(json.loads(result)[0]['answer'], [2, 1, 3])
+        self.assertEqual(complete.await_count, 2)
+
+        for answers in [([1, 2], [1, 2]), ([2, 1, 1], [2, 1, 1]), ([2, 1, 3], [3, 2, 1])]:
+            with self.subTest(answers=answers), self.assertRaises(VisionUnconfirmedError):
+                await cross_check_text_answers([], primary, AsyncMock(side_effect=list(map(self.response, answers))),
+                                               question_text=text)
+
     async def test_solve_route_requires_agreement_for_one_word_blanks(self):
         question = 'Leo comes (1) ____ Canada.\n\nWhich word best fits blank (1)?\nQuestion format: one word.'
         request = main.PageContent(text=question, url='https://example.test', practice_type='mcq', require_answer_agreement=True)

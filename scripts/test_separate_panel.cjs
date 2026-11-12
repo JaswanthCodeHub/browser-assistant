@@ -10,6 +10,7 @@ const extension = path.resolve(process.env.ASSISTANT_TEST_EXTENSION || path.join
 const practice = 'http://127.0.0.1:8000/practice';
 const secondUrl = 'http://127.0.0.1:8000/panel-test';
 const readingUrl = 'https://learning.ccbp.in/test-reading';
+const orderingUrl = 'https://learning.ccbp.in/primitive-coding/practice/ordering/test';
 const readingFormats = [
     {
         passage: 'Complete the second sentence using the given word so it means the same.\n1. Tom is not old enough to drive a car.\nTOO\nTom is ____ a car.\n2. I have never visited Mumbai before.\nFIRST\nThis is ____ visited Mumbai.\n3. The red dress is more expensive than the blue dress.\nCHEAPER\nThe blue dress ____ the red dress.',
@@ -85,6 +86,13 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
                 if (url.pathname === '/health') return Response.json({status: 'ok'});
                 if (url.pathname === '/history') return Response.json([]);
                 if (url.pathname === '/extension-release') return Response.json({version: '2.9.1'});
+                if (url.pathname === '/solve' && body.url === 'https://learning.ccbp.in/primitive-coding/practice/ordering/test') {
+                    if (!body.verify_answer || !body.text.includes('Reorder ALL items.')
+                        || !body.text.includes('6. Append remaining nodes of either list to the merged list')) {
+                        return Response.json({detail: 'Expected all six steps'}, {status: 422});
+                    }
+                    return Response.json({answer_verified: true, results: JSON.stringify([{type: 'mcq', answer: [4, 1, 2, 3, 6, 5]}])});
+                }
                 if (url.pathname === '/solve' && /^https:\/\/learning\.ccbp\.in\/test-reading(?:\?written)?$/.test(body.url || '')) {
                         const format = formats.find(item => item.keywords
                             ? body.text.includes('Tom is not old enough') && body.text.includes('I have never visited Mumbai before')
@@ -132,6 +140,31 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
         await context.route(secondUrl, route => route.fulfill({contentType: 'text/html', body:
             '<!doctype html><title>Second test tab</title><main>Panel test fixture</main>',
         }));
+        await context.route(orderingUrl, route => route.fulfill({contentType: 'text/html', body: `<!doctype html>
+            <main id="generic-question-container">
+                <p id="generic-question-wrapper-id">Rearrange the steps to merge two sorted linked lists:</p>
+                <div id="steps">
+                    ${[
+                        'Create a dummy node to serve as the head of the merged list',
+                        'Traverse both lists simultaneously',
+                        'Compare elements of both lists and link the smaller node to the merged list',
+                        'Initialize pointers for the first and second list',
+                        'Return the merged list starting from the next of the dummy node',
+                        'Append remaining nodes of either list to the merged list',
+                    ].map((label, index) => `<div data-position="${index + 1}"><span class="drag-icon-container" draggable="true">Move</span><span class="drag-and-drop-option-label">${label}</span></div>`).join('')}
+                </div>
+                <button>Submit</button>
+            </main>
+            <script>
+                const steps = document.querySelector('#steps');
+                let moving;
+                steps.addEventListener('dragstart', event => { moving = event.target.parentElement; });
+                steps.addEventListener('drop', event => { if (moving) steps.insertBefore(moving, event.target.parentElement); });
+                document.querySelector('button').addEventListener('click', () => {
+                    window.submittedOrder = [...steps.children].map(row => Number(row.dataset.position));
+                    document.querySelector('main').innerHTML = '<p>Quiz completed</p>';
+                });
+            </script>`}));
         await context.route(url => url.origin + url.pathname === readingUrl, route => route.fulfill({contentType: 'text/html', body: `<!doctype html>
             <meta charset="utf-8">
             <header>PRIVATE HEADER</header>
@@ -233,6 +266,19 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
             chrome.runtime.sendMessage({action: 'panel:open', targetTabId}), id);
         const windows = () => worker.evaluate(() => chrome.windows.getAll({windowTypes: ['popup']}));
         let detached;
+
+        await t.test('reorders all six linked-list steps through native drag before submitting', async () => {
+            const ordering = await context.newPage();
+            try {
+                await ordering.goto(orderingUrl);
+                await ordering.locator('#assistant-trigger').waitFor();
+                await ordering.keyboard.press('Backquote');
+                await ordering.locator('#mode-qa').click();
+                await ordering.locator('#assistant-auto-start-btn').click();
+                await ordering.getByText('Quiz completed', {exact: true}).waitFor();
+                assert.deepEqual(await ordering.evaluate(() => window.submittedOrder), [4, 1, 2, 3, 6, 5]);
+            } finally { await ordering.close(); }
+        });
 
         for (const {name, query, secondAnswers} of [
             {name: 'continues to the next multiple-choice passage', query: '', secondAnswers: ['stand', 'answer', 'shop']},

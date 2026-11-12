@@ -167,6 +167,55 @@ def answer_permutation(value):
             and sorted(value) == list(range(1, len(value) + 1)))
 
 
+def ordering_question(text):
+    prompt, separator, block = text.strip().rpartition('\nReorder ALL items.')
+    if not separator or not prompt:
+        return None
+    rows = block.splitlines()[1:]
+    if not 2 <= len(rows) <= 30:
+        return None
+    options = []
+    for index, line in enumerate(rows, 1):
+        match = re.fullmatch(rf'{index}\.\s+(\S.*)', line.strip())
+        if not match:
+            return None
+        options.append(match[1])
+    return prompt, options
+
+
+def solve_sorted_list_merge_order(ordering):
+    if not ordering:
+        return None
+    prompt, options = ordering
+    if prompt.strip().rstrip(':').lower() != 'rearrange the steps to merge two sorted linked lists':
+        return None
+    steps = (
+        'initialize pointers for the first and second list',
+        'create a dummy node to serve as the head of the merged list',
+        'traverse both lists simultaneously',
+        'compare elements of both lists and link the smaller node to the merged list',
+        'append remaining nodes of either list to the merged list',
+        'return the merged list starting from the next of the dummy node',
+    )
+    normalized = [' '.join(option.split()).lower().rstrip('.') for option in options]
+    if len(normalized) != len(steps) or set(normalized) != set(steps):
+        return None
+    return {
+        'type': 'mcq', 'question': prompt, 'answer': [normalized.index(step) + 1 for step in steps],
+        'reasoning': 'Initialize both pointers and the dummy head before traversal. Compare and link nodes while both '
+                     'lists have items, append the remaining tail, then return the node after the dummy head.',
+    }
+
+
+def ordering_key(value, size):
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return None
+    return tuple(value) if answer_permutation(value) and len(value) == size else None
+
+
 MATRIX_SYNTAX = re.compile(r'\\begin\{(?:[bpBvV]?matrix|smallmatrix)\}')
 
 
@@ -449,11 +498,21 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
     )
     check_messages = [{'role': 'system', 'content': instruction}, *messages[1:]]
     matrix_math = matrix_question(messages)
+    ordering = ordering_question(question_text)
+    if ordering and len(items) != 1:
+        raise VisionUnconfirmedError('Expected one answer containing all numbered steps.')
+    step_count = len(ordering[1]) if ordering else 0
     choices = displayed_single_choices(question_text) if len(items) == 1 else {}
     constraints = reading_response_constraints(question_text) if require_agreement and len(items) == 1 else None
-    if require_agreement and not (choices or constraints):
+    if require_agreement and not (choices or constraints or step_count):
         raise VisionUnconfirmedError('Expected one linked answer with displayed options or a reading response format.')
-    if constraints:
+    if step_count:
+        check_messages[0]['content'] = (
+            'Independently order the displayed steps. Use every original item number once, check all prerequisite '
+            f'relationships, and return only JSON with readable=true and one answers entry with id=1. '
+            f'The answer value must be a JSON array of all {step_count} original item numbers in the correct order.'
+        )
+    elif constraints:
         _, _, keyword = constraints
         rule = (f'Use two to five words, including the unchanged word {keyword}. Preserve the meaning of the original sentence.'
                 if keyword else 'Return exactly one word.')
@@ -461,6 +520,8 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
         check_messages[0]['content'] = instruction
 
     def answer_key(entries):
+        if step_count:
+            return ordering_key(entries[0].get('answer'), step_count)
         if choices:
             return bind_displayed_choice(entries[0].get('answer'), choices, matrix_math=matrix_math)
         if constraints:
@@ -486,6 +547,11 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
         except ValueError:
             current = None
         if current is not None and (current == first or current == previous):
+            if step_count:
+                if current != first:
+                    items[0].pop('reasoning', None)
+                items[0]['answer'] = list(current)
+                return json.dumps(items, ensure_ascii=False)
             if choices:
                 if current != first:
                     items[0].pop('reasoning', None)
@@ -497,7 +563,7 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
                 items[0]['answer'] = ' '.join((items[0] if current == first else verified[0])['answer'].split())
                 return json.dumps(items, ensure_ascii=False)
             return results
-        if not (choices or constraints) and current is not None:
+        if not (choices or constraints or step_count) and current is not None:
             break
         if not attempt:
             previous = current
@@ -509,16 +575,18 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
     # primary answer over blocking the automation entirely. The primary solve was
     # validated and the verification provider returned unusable JSON — a parsing
     # failure, not a disagreement — so a hard 422 is disproportionate.
-    if not require_agreement and current is None and previous is None:
+    if not require_agreement and not step_count and current is None and previous is None:
         return results
     # For multi-answer questions (fill-in-the-blank), accept the primary answers
     # when the majority of individual answers agree with any independent solve.
-    if not require_agreement and not choices and first is not None and len(first) > 1:
+    if not require_agreement and not choices and not step_count and first is not None and len(first) > 1:
         best = current or previous
         if best is not None:
             agreed = sum(a == b for a, b in zip(first, best))
             if agreed > len(first) // 2:
                 return results
+    if step_count:
+        raise VisionUnconfirmedError('The independent checks could not confirm a complete order for the displayed steps.')
     raise VisionUnconfirmedError('The independent solves could not agree on the answer for this blank.' if constraints
                                  else 'The independent solves could not agree on the displayed answer.')
 

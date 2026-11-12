@@ -1,3 +1,8 @@
+# 2.9.10
+
+- Solve the six-step sorted linked-list merge exercise locally against the displayed order.
+- Retry verification when ordering answers disagree and require a complete sequence with each displayed number used once.
+
 # 2.9.9
 
 - Detect sentence transformations when directions and passage are rendered separately or keywords are split across inline elements.
