@@ -144,7 +144,7 @@
         const webResult = doc.querySelector('#submitResultContainer');
         if (webResult && visible(webResult)) {
             const cards = [...webResult.querySelectorAll('[class*="TestCaseSummaryCard-"]')];
-            const counts = {};
+            const counts: Partial<Record<'total' | 'passed' | 'failed', number>> = {};
             for (const card of cards) {
                 const label = text(card.querySelector('[class*="TestCaseSummaryLabel-"]')).toLowerCase();
                 const value = text(card.querySelector('[class*="TestCaseSummaryCount-"]'));

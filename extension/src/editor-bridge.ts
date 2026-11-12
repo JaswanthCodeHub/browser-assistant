@@ -1,11 +1,11 @@
 // Serialized by chrome.scripting into the page's MAIN world to access editor APIs.
-function browserAssistantEditor(operation, selector, expected, value) {
+function browserAssistantEditor(operation: string, selector: string, expected: string, value: string) {
     try {
         if (operation === 'readProject' || operation === 'writeProject') {
             const files = { html: '#htmlEditor', css: '#cssEditor', javascript: '#javascriptEditor' };
-            const editors = {};
+            const editors: Record<string, AssistantAceEditor> = {};
             for (const [name, id] of Object.entries(files)) {
-                const matches = [...document.querySelectorAll(id)];
+                const matches = [...document.querySelectorAll<AssistantEditorElement>(id)];
                 if (matches.length !== 1 || !matches[0].matches('.ace_editor') || matches[0].closest('#assistant-root')) throw new Error('Web project editor missing: ' + name);
                 const editor = matches[0].env?.editor;
                 if (!editor || editor.getReadOnly()) throw new Error('Web project editor is unavailable or read-only: ' + name);
@@ -29,7 +29,7 @@ function browserAssistantEditor(operation, selector, expected, value) {
             }
             return { ok: true, value: JSON.stringify(readFiles()) };
         }
-        const nodes = [...document.querySelectorAll(selector)].filter(node => node.getClientRects().length > 0 && !node.closest('#assistant-root'));
+        const nodes = [...document.querySelectorAll<AssistantEditorElement>(selector)].filter(node => node.getClientRects().length > 0 && !node.closest('#assistant-root'));
         if (nodes.length !== 1) throw new Error('Expected one visible code editor.');
         const node = nodes[0];
         let read, write;
@@ -66,17 +66,18 @@ function browserAssistantEditor(operation, selector, expected, value) {
     } catch (error) { return { ok: false, error: error.message }; }
 }
 
-// Runs in the portal IDE frame only. The terminal command is built here from
-// fixed operations and encoded source, never from model-generated shell text.
-async function browserAssistantOnlineIdeTerminal(action, workspace, questionId, token, source) {
+// Run the IDE's normal paste and autosave flow. The terminal only verifies and
+// grades the saved file; generated source is never passed to the shell.
+async function browserAssistantOnlineIde(action: string, workspace: string, questionId: string, token: string, source: string) {
     if (location.origin !== 'https://ide.ccbp.in' || location.pathname.replace(/\/$/, '') !== `/playground/${workspace}`) return null;
     const visible = node => node.getClientRects().length > 0;
     const inputs = [...document.querySelectorAll('.xterm-helper-textarea[aria-label="Terminal input"]')].filter(visible);
     if (inputs.length !== 1) return {ok:false,retry:inputs.length === 0,error:'A unique IDE terminal is required.'};
-    const input = inputs[0];
+    const input = inputs[0] as HTMLTextAreaElement;
     const rowContainer = input.closest('.xterm')?.querySelector('.xterm-rows');
     const rows = () => [...(rowContainer?.children || [])].map(row => row.textContent.trim()).filter(Boolean);
     const finishMarker = `BA_RESULT_${token}`;
+    const saveMarker = `BA_APP_JS_NOT_SAVED_${token}`;
     const reportPrefix = `https://learning.ccbp.in/ide-coding-submission/${questionId}/`;
     const reports = lines => {
         const text = lines.join('');
@@ -93,7 +94,7 @@ async function browserAssistantOnlineIdeTerminal(action, workspace, questionId, 
         const report = index >= 0 && reports(lines.slice(index)).find(id=>!previous.reports.includes(id));
         const passed = result === `${finishMarker}:0` && Boolean(report) && index > 0
             && lines.slice(Math.max(0,index-3),index).includes('All test cases passed');
-        return {ok:true,done:true,passed,submitted:Boolean(report),url:report ? reportPrefix + report : null};
+        return {ok:true,done:true,passed,submitted:Boolean(report),saveUnconfirmed:lines.includes(saveMarker),url:report ? reportPrefix + report : null};
     }
     if (previous?.token === token) return {ok:false,error:'This IDE run was already started. Check the terminal.'};
     if (document.visibilityState !== 'visible') return {ok:false,error:'Keep the matching IDE tab active to submit.'};
@@ -101,10 +102,10 @@ async function browserAssistantOnlineIdeTerminal(action, workspace, questionId, 
     const prompt = before.at(-1)?.match(/^nxtwave@([a-z0-9]+):~\/nodejs\/coding-practices\/([a-z0-9_-]+)\$$/i);
     if (!prompt || prompt[1] !== workspace) return {ok:false,retry:true,error:'Waiting for the correct workspace shell prompt.'};
     if (reports(before).length && before.includes('All test cases passed')) return {ok:true,alreadyPassed:true};
-    const findFile = () => [...document.querySelectorAll('div[title="app.js"]')].filter(visible);
+    const findFile = () => [...document.querySelectorAll<HTMLElement>('div[title="app.js"]')].filter(visible);
     let files = findFile();
     if (!files.length) {
-        const folders = [...document.querySelectorAll('div[title=""] span')]
+        const folders = [...document.querySelectorAll<HTMLElement>('div[title=""] span')]
             .filter(node=>visible(node) && node.textContent.trim() === prompt[2]);
         if (folders.length === 1) {
             folders[0].click();
@@ -115,33 +116,56 @@ async function browserAssistantOnlineIdeTerminal(action, workspace, questionId, 
     if (files.length !== 1) return {ok:false,retry:true,error:'Waiting for the workspace app.js file in Explorer.'};
     files[0].click();
     await new Promise(resolve=>setTimeout(resolve,200));
-    const editors = [...document.querySelectorAll('.monaco-editor[data-uri]')].filter(visible);
-    const editor = editors.length === 1 && editors[0];
-    if (!editor || !editor.getAttribute('data-uri').endsWith(`/${prompt[2]}/app.js`)) {
+    const findEditor = () => {
+        const editors = [...document.querySelectorAll('.monaco-editor[data-uri]')].filter(visible);
+        const node = editors.length === 1 && editors[0];
+        const uri = node && node.getAttribute('data-uri');
+        return uri && uri.startsWith('file:') && uri.endsWith(`/${prompt[2]}/app.js`) ? node : null;
+    };
+    const editor = findEditor();
+    if (!editor) {
         return {ok:false,retry:true,error:'Waiting for the app.js editor.'};
     }
+    const editorInput = editor.querySelector<HTMLTextAreaElement>('textarea.inputarea');
     const renderedCode = editor.querySelector('.view-lines');
-    if (!renderedCode || renderedCode.textContent.trim()) return {ok:false,error:'app.js already contains code. Review the prepared result before replacing it.'};
-    const bytes = new TextEncoder().encode(source);
-    const encoded = btoa(Array.from(bytes, byte=>String.fromCharCode(byte)).join(''));
-    const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),byte=>byte.toString(16).padStart(2,'0')).join('');
-    const writer = [
-        'const fs = require("node:fs")',
-        'const [encoded, digest, folder] = process.argv.slice(1)',
-        'const code = Buffer.from(encoded, "base64")',
-        'if (require("node:crypto").createHash("sha256").update(code).digest("hex") !== digest) throw Error("Incomplete source received")',
-        'if (!process.cwd().endsWith("/nodejs/coding-practices/" + folder)) throw Error("Unexpected project directory")',
-        'const stat = fs.lstatSync("app.js")',
-        'if (!stat.isFile() || fs.readFileSync("app.js", "utf8").trim()) throw Error("app.js is not an empty regular file")',
-        'const check = require("node:child_process").spawnSync(process.execPath, ["--check"], {input: code})',
-        'if (check.status !== 0) throw Error(String(check.stderr || "JavaScript syntax check failed"))',
-        'fs.writeFileSync("app.js", code)',
-        'if (!fs.readFileSync("app.js").equals(code)) throw Error("Could not verify the saved file")',
-    ].join('; ');
-    // All arguments are restricted to letters, digits, or base64 by construction.
+    if (!editorInput || !renderedCode?.querySelector('.view-line')) return {ok:false,retry:true,error:'Waiting for the app.js editor input.'};
+    const model = window.monaco?.editor?.getEditors?.().find(instance => instance.getDomNode() === editor)?.getModel();
+    const isEmpty = () => {
+        if (model) return model.getValue() === '';
+        // The portal bundles Monaco without a global editor API. Require the
+        // visible first and only row to be blank; never select or replace text.
+        const lineNumbers = editor.querySelectorAll('.margin-view-overlays .line-numbers');
+        return lineNumbers.length === 1 && lineNumbers[0].textContent.trim() === '1'
+            && renderedCode.querySelectorAll('.view-line').length === 1 && !renderedCode.textContent.trim();
+    };
+    if (!isEmpty()) return {ok:false,error:'app.js is not empty or its contents could not be checked. Review the code in the editor.'};
+    const code = source.replace(/\r\n?/g, '\n');
+    const bytes = new TextEncoder().encode(code);
+    const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('');
+    if (document.visibilityState !== 'visible' || findEditor() !== editor || !isEmpty()) {
+        return {ok:false,error:'The app.js editor changed before pasting.'};
+    }
+    editorInput.focus();
+    if (document.activeElement !== editorInput || editorInput.readOnly || editorInput.disabled) {
+        return {ok:false,error:'The app.js editor is not available for editing.'};
+    }
+    const pasteData = new DataTransfer();
+    pasteData.setData('text/plain', code);
+    editorInput.dispatchEvent(new ClipboardEvent('paste', {clipboardData:pasteData,bubbles:true,cancelable:true,composed:true}));
+    const pasteDeadline = Date.now() + 1500;
+    const didPaste = () => model ? model.getValue() === code : Boolean(renderedCode.textContent.trim());
+    while (!didPaste() && Date.now() < pasteDeadline && document.activeElement === editorInput && findEditor() === editor) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    if (!didPaste() || findEditor() !== editor || document.activeElement !== editorInput || document.visibilityState !== 'visible') {
+        return {ok:false,error:'The IDE did not confirm the paste into app.js. Check the editor before trying again.'};
+    }
+    // Check exact saved bytes before grading; allow time for the IDE's autosave.
+    // All interpolated values have restricted alphabets.
+    const saved = `printf '%s  app.js\\n' '${digest}' | sha256sum --check --status`;
     const echoMarker = `BA_COMMAND_${token}`;
-    const command = `node -e '${writer}' '${encoded}' '${digest}' '${prompt[2]}' && ccbp submit ${workspace}; printf '\\n${finishMarker}:%s\\n' "$?" #${echoMarker}`;
-    if (rows().at(-1) !== before.at(-1)) return {ok:false,error:'The IDE terminal changed before submission.'};
+    const command = `( for ba_try in 1 2 3 4 5 6 7 8 9 10; do ${saved} && break; sleep 0.5; done; if ${saved}; then node --check app.js && ccbp submit ${workspace}; else printf '%s\\n' ${saveMarker}; false; fi ); printf '\\n${finishMarker}:%s\\n' "$?" #${echoMarker}`;
+    if (rows().at(-1) !== before.at(-1)) return {ok:false,error:'Code is in app.js, but the IDE terminal changed before grading.'};
     input.focus();
     if (document.activeElement !== input) return {ok:false,error:'The IDE terminal could not be focused.'};
     const data = new DataTransfer();
@@ -163,7 +187,7 @@ async function browserAssistantOnlineIdeTerminal(action, workspace, questionId, 
 // recycles viewport rows when scrolling, so rendered text is not an option ID.
 var browserAssistantMcqSnippetCache = new WeakMap();
 function browserAssistantCacheMcqSnippets(snapshot) {
-    const nodes = [...document.querySelectorAll('.ace_editor,.monaco-editor,.CodeMirror')]
+    const nodes = [...document.querySelectorAll<AssistantEditorElement>('.ace_editor,.monaco-editor,.CodeMirror')]
         .filter(node => node.getClientRects().length && !node.closest('#assistant-root'));
     if (!Array.isArray(snapshot.editorSources) || nodes.length !== snapshot.editorSources.length
         || snapshot.editorSources.some(value => typeof value !== 'string')) return;
@@ -189,7 +213,7 @@ function browserAssistantReadMcqSnippets() {
             if (!(rowHeight > 0 && totalHeight > 0) || totalHeight > rowHeight*lines.length+1) return null;
             return lines.map(line=>line.textContent || '').join('\n');
         };
-        const nodes = [...document.querySelectorAll('.ace_editor,.monaco-editor,.CodeMirror')]
+        const nodes = [...document.querySelectorAll<AssistantEditorElement>('.ace_editor,.monaco-editor,.CodeMirror')]
             // MCQ pages sometimes reuse the coding editor's ID for a read-only
             // pseudocode panel. This function only reads; the background origin
             // check limits it to the learning portal, including SPA routes.
@@ -219,7 +243,7 @@ function browserAssistantReadMcqSnippets() {
 
 // Runs in the page's main world. CCBP's React drag listeners receive the
 // native DataTransfer object only when these events originate in this world.
-async function browserAssistantOrderingDrag(prompt, optionTexts, from, to) {
+async function browserAssistantOrderingDrag(prompt: string, optionTexts: string[], from: number, to: number) {
     try {
         const normalize = value => (value || '').replace(/\s+/g, ' ').trim();
         const question = document.querySelector('#generic-question-container');
