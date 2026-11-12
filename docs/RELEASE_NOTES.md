@@ -1,4 +1,8 @@
-# Browser Assistant 2.9.13
+# Browser Assistant 2.9.14
+
+- Alt+A starts Batch Coding directly on the CCBP Coding Problem Set and leaves a closed floating panel closed.
+
+## Browser Assistant 2.9.13
 
 - On the CCBP course instructions page, Alt+A uses the visible Start Practice button and continues when the questions load. The shortcut does not open a confirmation dialog or the floating panel.
 

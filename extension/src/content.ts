@@ -2112,6 +2112,7 @@ function mountJournalCountdown(signal: AbortSignal) {
         if (!type) { showAutomationNotice('Automation is unavailable on this page.'); return; }
         const coursePractice = /^\/course\/?$/.test(location.pathname) && Boolean(startPractice);
         const startDirectly = context.target.id === 'local-practice'
+            || type === 'Batch Coding'
             || (type === 'MCQ' && context.target.id === 'ccbp-learning-practice'
                 && (coursePractice || /^\/(?:default-question|primitive-coding(?:-review)?)\/practice\//.test(location.pathname)));
         if (!startDirectly

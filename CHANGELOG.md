@@ -1,3 +1,7 @@
+# 2.9.14
+
+- Start Batch Coding with Alt+A from the CCBP Coding Problem Set without a confirmation dialog or startup banner.
+
 # 2.9.13
 
 - Use Alt+A to open the selected CCBP course practice and continue on the question page without a startup prompt.

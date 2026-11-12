@@ -58,6 +58,23 @@ async function insideViewport(page) {
     }), 'The full floating panel should fit inside the viewport');
 }
 
+async function observeShortcutStartup(page) {
+    const dialogs = [];
+    page.on('dialog', async dialog => {
+        dialogs.push(dialog.message());
+        await dialog.dismiss();
+    });
+    await page.addInitScript(() => {
+        new MutationObserver(() => {
+            const notice = document.querySelector('#assistant-automation-notice');
+            if (notice?.textContent.includes('automation started')) {
+                sessionStorage.setItem('test-startup-banner', 'shown');
+            }
+        }).observe(document, {subtree: true, childList: true});
+    });
+    return dialogs;
+}
+
 test('floating and separate panels in Chromium', {timeout: 120_000}, async t => {
     const profile = await mkdtemp(path.join(tmpdir(), 'browser-assistant-panel-'));
     const launchOptions = {
@@ -289,20 +306,8 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
         for (const [screen, url] of [['practice review', shortcutReview], ['course instructions', shortcutCourse]]) {
             await t.test(`Alt+A starts CCBP ${screen} without a popup or startup banner`, async () => {
                 const page = await context.newPage();
-                const dialogs = [];
-                page.on('dialog', async dialog => {
-                    dialogs.push(dialog.message());
-                    await dialog.dismiss();
-                });
                 try {
-                    await page.addInitScript(() => {
-                        new MutationObserver(() => {
-                            const notice = document.querySelector('#assistant-automation-notice');
-                            if (notice?.textContent.includes('automation started')) {
-                                sessionStorage.setItem('test-startup-banner', 'shown');
-                            }
-                        }).observe(document, {subtree: true, childList: true});
-                    });
+                    const dialogs = await observeShortcutStartup(page);
                     await page.goto(url);
                     await page.locator('#assistant-trigger').waitFor();
                     await page.keyboard.press('Alt+a');
@@ -316,6 +321,34 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
                 } finally { await page.close(); }
             });
         }
+
+        await t.test('Alt+A starts the filtered CCBP coding batch with the panel closed', async () => {
+            const page = await context.newPage();
+            const listUrl = 'https://learning.ccbp.in/problems-set';
+            const questionUrl = 'https://learning.ccbp.in/question/shortcut-batch-test';
+            try {
+                const dialogs = await observeShortcutStartup(page);
+                await page.route(listUrl, route => route.fulfill({contentType: 'text/html', body: `<!doctype html>
+                    <h1>Coding Problem Set</h1>
+                    <div><span>Completed problem</span><span>Solved</span><button>Open</button></div>
+                    <div><span>Next problem</span><span>Not Attempted</span><a href="${questionUrl}">Open</a></div>
+                    <label><input type="checkbox" checked>Programming Foundations</label>
+                    <label><input type="checkbox">Data Structures &amp; Algorithms</label>
+                    <p>1 TO 2 OF 2</p>`}));
+                await page.route(questionUrl, route => route.fulfill({contentType: 'text/html', body:
+                    '<!doctype html><h1>Next problem</h1>',
+                }));
+                await page.goto(listUrl);
+                await page.locator('#assistant-trigger').waitFor();
+                await page.keyboard.press('Alt+a');
+                assert.deepEqual(dialogs, []);
+                await page.waitForURL(questionUrl);
+                await page.locator('#assistant-trigger').waitFor();
+                assert.equal(await page.locator('#assistant-panel').isVisible(), false);
+                assert.equal(await page.evaluate(() => sessionStorage.getItem('test-startup-banner')), null);
+                assert.deepEqual(dialogs, []);
+            } finally { await page.close(); }
+        });
 
         await t.test('reorders all six linked-list steps through native drag before submitting', async () => {
             const ordering = await context.newPage();

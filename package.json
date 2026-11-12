@@ -1,6 +1,6 @@
 {
   "name": "browser-assistant",
-  "version": "2.9.13",
+  "version": "2.9.14",
   "description": "Chrome extension and local Python backend for exploring webpage questions and coding exercises",
   "license": "MIT",
   "repository": {
