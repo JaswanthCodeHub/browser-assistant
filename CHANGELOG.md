@@ -1,3 +1,7 @@
+# 2.9.16
+
+- Include the backend launcher module in the Docker image so the service starts and passes its health checks.
+
 # 2.9.15
 
 - Start supported automation from Alt+A without a confirmation popup or startup banner, including Aurora Reflective Journal.

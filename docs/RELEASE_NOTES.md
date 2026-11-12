@@ -1,4 +1,8 @@
-# Browser Assistant 2.9.15
+# Browser Assistant 2.9.16
+
+- The Docker image includes the backend launcher required by its startup command.
+
+## Browser Assistant 2.9.15
 
 - Alt+A starts supported automation directly, including Aurora Reflective Journal. When there is one identifiable ongoing journal, the shortcut opens it from Assessments with the floating panel closed.
 
