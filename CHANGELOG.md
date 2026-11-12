@@ -1,3 +1,8 @@
+# 2.9.15
+
+- Start supported automation from Alt+A without a confirmation popup or startup banner, including Aurora Reflective Journal.
+- Keep the floating panel closed when a journal opens from the Assessments shortcut.
+
 # 2.9.14
 
 - Start Batch Coding with Alt+A from the CCBP Coding Problem Set without a confirmation dialog or startup banner.

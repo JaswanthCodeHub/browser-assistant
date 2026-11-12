@@ -1,4 +1,8 @@
-# Browser Assistant 2.9.14
+# Browser Assistant 2.9.15
+
+- Alt+A starts supported automation directly, including Aurora Reflective Journal. When there is one identifiable ongoing journal, the shortcut opens it from Assessments with the floating panel closed.
+
+## Browser Assistant 2.9.14
 
 - Alt+A starts Batch Coding directly on the CCBP Coding Problem Set and leaves a closed floating panel closed.
 

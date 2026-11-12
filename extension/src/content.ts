@@ -369,7 +369,7 @@ function mountJournalCountdown(signal: AbortSignal) {
     document.addEventListener('assistant-journal-ready', () => {
         if (!window.BrowserAssistantJournal?.matches()) return;
         selectedTab = 'qa';
-        openPanel();
+        openPanel('journal-ready');
     }, {signal:lifecycle.signal});
 
     function getAutomationContext() {
@@ -2016,7 +2016,8 @@ function mountJournalCountdown(signal: AbortSignal) {
      * OPEN the panel. Idempotent: if already open, does nothing.
      * Does NOT trigger a scan — just shows the UI.
      */
-    function openPanel() {
+    function openPanel(source?: 'journal-ready') {
+        if (source === 'journal-ready' && directRun?.type === 'Journal') return;
         if (!isCollapsed && !isHidden) return; // already open — no-op
         isHidden = false;
         isCollapsed = false;
@@ -2110,20 +2111,12 @@ function mountJournalCountdown(signal: AbortSignal) {
             : question || startPractice ? (/quiz/i.test(location.pathname) ? 'Quiz' : 'MCQ')
             : null;
         if (!type) { showAutomationNotice('Automation is unavailable on this page.'); return; }
-        const coursePractice = /^\/course\/?$/.test(location.pathname) && Boolean(startPractice);
-        const startDirectly = context.target.id === 'local-practice'
-            || type === 'Batch Coding'
-            || (type === 'MCQ' && context.target.id === 'ccbp-learning-practice'
-                && (coursePractice || /^\/(?:default-question|primitive-coding(?:-review)?)\/practice\//.test(location.pathname)));
-        if (!startDirectly
-            && !window.confirm('Start ' + type + ' automation on this page? It can enter and submit answers as it runs.')) return;
         const progress = document.querySelector('[data-practice-quiz] #progress')?.textContent;
         const total = type === 'Journal' || type === 'Coding' ? 1 : Number(progress?.match(/\bof\s+(\d+)/i)?.[1]) || null;
         directRun = {id: crypto.randomUUID(), type, url: location.origin + location.pathname,
             started_at: new Date().toISOString(), ended_at: null, total, completed: 0, failed: 0, status: 'Running', revision: 0};
         directRunStarting = true;
         saveDirectRun();
-        if (!startDirectly) showAutomationNotice(type + ' automation started.');
         const started = startPracticeAutomation();
         directRunStarting = false;
         updateDirectRun();

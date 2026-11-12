@@ -103,6 +103,12 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
                 if (url.pathname === '/health') return Response.json({status: 'ok', version: globalThis.testBackendVersion});
                 if (url.pathname === '/history') return Response.json([]);
                 if (url.pathname === '/extension-release') return Response.json({version: '2.9.1'});
+                if (url.pathname === '/journal') {
+                    const draft = Array(80).fill('word').join(' ');
+                    const sections = Object.fromEntries(['experience', 'feelings', 'learning', 'application', 'conclusion']
+                        .map(section => [section, draft]));
+                    return Response.json({sections});
+                }
                 if (url.pathname === '/solve' && body.url === 'https://learning.ccbp.in/primitive-coding/practice/ordering/test') {
                     if (!body.verify_answer || !body.text.includes('Reorder ALL items.')
                         || !body.text.includes('6. Append remaining nodes of either list to the merged list')) {
@@ -344,6 +350,34 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
                 assert.deepEqual(dialogs, []);
                 await page.waitForURL(questionUrl);
                 await page.locator('#assistant-trigger').waitFor();
+                assert.equal(await page.locator('#assistant-panel').isVisible(), false);
+                assert.equal(await page.evaluate(() => sessionStorage.getItem('test-startup-banner')), null);
+                assert.deepEqual(dialogs, []);
+            } finally { await page.close(); }
+        });
+
+        await t.test('Alt+A opens an ongoing Aurora journal and keeps the panel closed', async () => {
+            const page = await context.newPage();
+            const listUrl = 'https://admissions.aurora.edu.in/modules/assessments/assessments';
+            const journalUrl = 'https://admissions.aurora.edu.in/modules/reflective-journal/shortcut-test';
+            try {
+                const dialogs = await observeShortcutStartup(page);
+                await page.route(listUrl, route => route.fulfill({contentType: 'text/html', body: `<!doctype html>
+                    <table><tr><td>Reflective Journal 1</td><td><span>Ongoing</span></td>
+                    <td><a href="${journalUrl}">Open journal</a></td></tr></table>`}));
+                await page.route(journalUrl, route => route.fulfill({contentType: 'text/html', body: `<!doctype html>
+                    <main><h1>Reflective Journal 1</h1><p>Subject: Advanced Data Structures Description: Test journal</p>
+                    <span role="timer">45:00</span>
+                    ${['Experience', 'Feelings', 'Learning', 'Application', 'Conclusion'].map(label =>
+                        `<section><h2>${label}</h2><textarea></textarea></section>`).join('')}
+                    <button>Submit Journal</button></main>`}));
+                await page.goto(listUrl);
+                await page.locator('#assistant-trigger').waitFor();
+                await page.keyboard.press('Alt+a');
+                assert.deepEqual(dialogs, []);
+                await page.waitForURL(journalUrl);
+                await eventually(() => page.locator('main textarea').first().inputValue().then(value => value.startsWith('word ')),
+                    'The journal should start after the assessment-list navigation');
                 assert.equal(await page.locator('#assistant-panel').isVisible(), false);
                 assert.equal(await page.evaluate(() => sessionStorage.getItem('test-startup-banner')), null);
                 assert.deepEqual(dialogs, []);
