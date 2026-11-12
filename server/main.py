@@ -1,5 +1,4 @@
 import os
-import uvicorn
 import json
 import asyncio
 import ast
@@ -7,7 +6,10 @@ import math
 import re
 import time
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
+from typing import Literal
+from uuid import UUID
+from urllib.parse import urlsplit
 from dotenv import load_dotenv
 from groq import Groq
 import ollama
@@ -25,6 +27,7 @@ from local_security import install_local_guards, redact, sanitize_data
 from vision_images import (compress_image_base64, unique_image_blocks, collect_image_evidence,
                            cross_check_visual_answers, relative_percentage_question, RELATIVE_PERCENTAGE_INSTRUCTION,
                            answer_permutation, cross_check_text_answers, solve_matrix_choice, solve_row_parallel_choice,
+                           ordering_question, solve_sorted_list_merge_order, solve_pseudocode_choice, reading_response_constraints,
                            VisionRateLimitError, VisionUnconfirmedError)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -55,21 +58,9 @@ _groq_key_index = 0  # current active key index
 
 def get_groq_client():
     """Get the current Groq client. Returns None if no keys configured."""
-    global _groq_key_index
     if not _groq_clients:
         return None
     return _groq_clients[_groq_key_index % len(_groq_clients)]
-
-def rotate_groq_key(reason="rate limit"):
-    """Rotate to the next API key."""
-    global _groq_key_index
-    if len(_groq_clients) <= 1:
-        return False
-    old_idx = _groq_key_index % len(_groq_clients)
-    _groq_key_index += 1
-    new_idx = _groq_key_index % len(_groq_clients)
-    logger.warning(f"Rotating API key ({reason}): key #{old_idx+1} → key #{new_idx+1} (of {len(_groq_clients)})")
-    return True
 
 logger.info(f"Loaded {len(_groq_clients)} Groq API key(s)")
 
@@ -179,6 +170,15 @@ def initialize_history_database() -> None:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_scan_history_created_at ON scan_history(created_at DESC)"
         )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS automation_history (
+                id TEXT PRIMARY KEY,
+                started_at TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                record TEXT NOT NULL
+            )"""
+        )
 
 
 @asynccontextmanager
@@ -191,7 +191,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.9.1", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.9.16", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)
@@ -209,6 +209,7 @@ class PageContent(BaseModel):
     repair_attempt: int = 0
     review_before_submit: bool = False
     verify_answer: bool = False
+    require_answer_agreement: bool = False
     starter_code: str | None = None
 
     @field_validator('starter_code')
@@ -280,14 +281,41 @@ class HistoryEntry(BaseModel):
         return value
 
 
+class AutomationHistoryEntry(BaseModel):
+    id: UUID
+    type: Literal["MCQ", "Quiz", "Coding", "Batch Coding", "Journal"]
+    url: str = Field(max_length=2048)
+    started_at: datetime
+    ended_at: datetime | None = None
+    total: int | None = Field(default=None, ge=0)
+    completed: int = Field(ge=0)
+    failed: int = Field(ge=0)
+    status: Literal["Running", "Completed", "Failed", "Stopped"]
+    revision: int = Field(ge=1)
+
+    @field_validator("url")
+    @classmethod
+    def validate_page_url(cls, value):
+        parsed = urlsplit(value)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError("Provide a webpage URL without credentials, a query or a fragment")
+        return value
+
+
 # ── Health check ──────────────────────────────────────────────────────────────
 
 @app.get("/health")
 async def health():
+    try:
+        journal_subjects = list(load_syllabus())
+    except HTTPException:
+        # The journal route reports its own configuration error. Other
+        # backend capabilities remain available while the file is repaired.
+        journal_subjects = []
     return {
         "status": "ok",
         "version": app.version,
-        "journal_syllabus_subjects": list(load_syllabus()),
+        "journal_syllabus_subjects": journal_subjects,
         "journal_syllabus_live_reload": True,
         "code_review_before_submit": True,
         "compact_code_review": True,
@@ -366,16 +394,43 @@ def clear_history():
         connection.execute("DELETE FROM scan_history")
 
 
+@app.get("/automation-history")
+def list_automation_history(limit: int = Query(default=20, ge=1, le=HISTORY_MAX_ITEMS)):
+    with get_history_connection() as connection:
+        rows = connection.execute(
+            "SELECT record FROM automation_history ORDER BY started_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+    return {"items": [json.loads(row["record"]) for row in rows]}
+
+
+@app.put("/automation-history")
+def save_automation_history(entry: AutomationHistoryEntry):
+    if (entry.status == "Running") != (entry.ended_at is None):
+        raise HTTPException(422, "Only a finished run has an end time.")
+    with get_history_connection() as connection:
+        connection.execute(
+            """INSERT INTO automation_history (id, started_at, revision, status, record)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   revision=excluded.revision, status=excluded.status, record=excluded.record
+               WHERE automation_history.status='Running'
+                   AND excluded.revision > automation_history.revision
+                   AND excluded.started_at=automation_history.started_at""",
+            (str(entry.id), entry.started_at.isoformat(), entry.revision, entry.status, entry.model_dump_json()),
+        )
+    return {"id": str(entry.id)}
+
+
 # ── AI providers ──────────────────────────────────────────────────────────────
 
 async def try_groq(messages: list, model: str = None, temperature: float = 0.0, _token_limit: int = GROQ_COMPLETION_TOKEN_LIMIT, _review: bool = False) -> str:
     """Call Groq with automatic API key rotation on rate limit (429)."""
-    global _groq_disabled_until
+    global _groq_disabled_until, _groq_key_index
     if time.monotonic() < _groq_disabled_until:
         remaining = max(1, round(_groq_disabled_until - time.monotonic()))
         raise RuntimeError(f"Groq temporarily disabled after an access failure ({remaining}s remaining)")
-    client = get_groq_client()
-    if not client:
+    clients = tuple(_groq_clients)
+    if not clients:
         raise Exception("Groq client not configured — set GROQ_API_KEY in .env")
     use_model = model or GROQ_TEXT_MODEL
     loop = asyncio.get_running_loop()
@@ -387,9 +442,13 @@ async def try_groq(messages: list, model: str = None, temperature: float = 0.0, 
         if use_model in {'openai/gpt-oss-20b', 'openai/gpt-oss-120b'}:
             review_options['reasoning_effort'] = 'low'
 
-    # Try up to len(_groq_clients) keys on rate limit
-    attempts = len(_groq_clients)
+    # Use a request-local order so another request cannot skip a backup key
+    # by advancing the preferred index while this call is in flight.
+    first_key = _groq_key_index % len(clients)
+    attempts = len(clients)
     for attempt in range(attempts):
+        key_index = (first_key + attempt) % attempts
+        client = clients[key_index]
         try:
             response = await asyncio.wait_for(
                 loop.run_in_executor(
@@ -424,9 +483,11 @@ async def try_groq(messages: list, model: str = None, temperature: float = 0.0, 
                 raise
             # Check for rate limit (429) error
             if "429" in err_str or "rate_limit" in err_str.lower() or "401" in err_str or "invalid_api_key" in err_str.lower():
-                if attempt + 1 < attempts and rotate_groq_key(reason=f"provider rejection on {use_model}"):
-                    client = get_groq_client()
-                    logger.info(f"Retrying {use_model} with new API key (attempt {attempt+2}/{attempts})...")
+                if attempt + 1 < attempts:
+                    if _groq_key_index % attempts == key_index:
+                        _groq_key_index += 1
+                    next_key = (key_index + 1) % attempts
+                    logger.info("Retrying %s with API key #%s (attempt %s/%s)", use_model, next_key + 1, attempt + 2, attempts)
                     continue
             # Not a rate limit error or no more keys — re-raise
             raise
@@ -1197,6 +1258,9 @@ def local_choice_result(text, language):
     if item is None:
         item = solve_row_parallel_choice(text)
         provider = "local tensor dimension check"
+    if item is None:
+        item = solve_pseudocode_choice(text)
+        provider = "local pseudocode check"
     if item is not None:
         return {"results": json.dumps([item], ensure_ascii=False), "provider": f"{provider} [verified]",
                 "language": language, "answer_verified": True, "code_reviewed": False}
@@ -1217,6 +1281,25 @@ async def solve_questions(content: PageContent):
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     system_prompt = build_system_prompt(content.practice_type, language)
+    ordering = ordering_question(trimmed_text)
+    reading_constraints = reading_response_constraints(trimmed_text) if content.require_answer_agreement else None
+    if ordering:
+        system_prompt = (
+            'Arrange all steps in the order required by the problem. Check prerequisites and use each displayed '
+            'step number once. Return exactly one JSON array item with type "mcq", the question, a brief '
+            'reasoning string, and an answer array of the original step numbers in their new order.'
+        )
+    elif reading_constraints:
+        _, _, keyword = reading_constraints
+        rule = (f'Use two to five words including the unchanged word {keyword}. Preserve the meaning of the original sentence. '
+                if keyword else 'Use exactly one word. ')
+        system_prompt = (
+            'Read the entire passage and fill only the numbered blank asked about. '
+            + rule +
+            'Return one JSON array item with type "mcq", the exact question, a brief reasoning string, '
+            'and an answer string containing only the words that belong in the gap. Use no option label, quotation marks '
+            'inside the answer value, surrounding punctuation, or Markdown. If the blank is unclear, return [].'
+        )
     if content.repair_attempt > 0:
         system_prompt += """
 
@@ -1243,8 +1326,13 @@ REPAIR MODE:
         detect_requested_language(content.text) is not None or content.language is not None,
     )
     strict_code_review = require_code and (content.review_before_submit or not FAST_CODE_MODE or STRICT_REPAIR_REVIEW)
-    verify_answers = not require_code and (content.verify_answer or not FAST_SCAN_MODE)
-    if not require_code and content.practice_type in {'auto', 'mcq', 'math', 'aptitude'}:
+    verify_answers = not require_code and (content.verify_answer or content.require_answer_agreement or not FAST_SCAN_MODE)
+    if ordering and not require_code:
+        item = solve_sorted_list_merge_order(ordering)
+        if item is not None:
+            return {"results": json.dumps([item], ensure_ascii=False), "provider": "local merge-step check [verified]",
+                    "language": language, "answer_verified": True, "code_reviewed": False}
+    if not require_code and not content.require_answer_agreement and content.practice_type in {'auto', 'mcq', 'math', 'aptitude'}:
         local_result = local_choice_result(trimmed_text, language)
         if local_result is not None:
             return local_result
@@ -1265,7 +1353,10 @@ REPAIR MODE:
             return await try_groq(prompt_messages, model=source_model, temperature=0.0)
 
         try:
-            checked = await cross_check_text_answers(messages, cleaned, independent_solve, question_text=trimmed_text)
+            checked = await cross_check_text_answers(
+                messages, cleaned, independent_solve, question_text=trimmed_text,
+                require_agreement=content.require_answer_agreement,
+            )
         except Exception as exc:
             if isinstance(exc, VisionUnconfirmedError):
                 message = str(exc)
@@ -1301,6 +1392,7 @@ REPAIR MODE:
                 cleaned, verified = await confirm_answers(cleaned, model_id)
                 return {"results": cleaned, "provider": f"groq ({model_id})" + (' [cross-checked]' if verified else ''),
                         "language": language, "answer_verified": verified,
+                        "answer_agreement": verified and content.require_answer_agreement,
                         "code_reviewed": strict_code_review and language != 'web'}
             else:
                 errors.append(f"{model_id}: returned empty/unparseable results")
@@ -1339,6 +1431,7 @@ REPAIR MODE:
                 "results": cleaned,
                 "provider": f"ollama ({OLLAMA_MODEL})" + (' [cross-checked]' if verified else ''),
                 "answer_verified": verified,
+                "answer_agreement": verified and content.require_answer_agreement,
                 "language": language,
                 "code_reviewed": strict_code_review and language != 'web',
             }
@@ -1849,4 +1942,7 @@ if __name__ == "__main__":
     # loopback keeps direct local runs unavailable to other network devices.
     # Docker overrides SERVER_HOST because its published port is already bound
     # to the host loopback interface in docker-compose.yml.
-    uvicorn.run(app, host=os.getenv("SERVER_HOST", "127.0.0.1"), port=8000)
+    from workspace_server import run_workspace_server
+    raise SystemExit(run_workspace_server(
+        os.getenv("SERVER_HOST", "127.0.0.1"), int(os.getenv("SERVER_PORT", "8000")), app.version,
+    ))

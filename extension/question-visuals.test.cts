@@ -74,3 +74,14 @@ test('illustrations in options are included; excessive images are never silently
     for(let i=0;i<4;i++)f.question.visualRegion.appendChild(f.document.createElement('img')).setAttribute('src',`https://charts.example/${i}.png`);
     await assert.rejects(f.visuals.capture(f.question,async()=>{}),/more than five/);
 });
+test('recognized answer buttons contribute images while unrelated buttons are ignored',()=>{
+    const f=setup();
+    const button=f.document.createElement('button');
+    button.innerHTML='<img id="answer-illustration" src="/answer.png" width="100" height="100">';
+    f.question.options[0].node.replaceWith(button);
+    f.question.options[0].node=button;
+    const toolbarButton=f.document.createElement('button');
+    toolbarButton.innerHTML='<img id="toolbar-icon" src="/icon.png" width="100" height="100">';
+    f.question.visualRegion.appendChild(toolbarButton);
+    assert.deepEqual(Array.from(f.visuals.nodes(f.question),node=>node.id),['chart','answer-illustration']);
+});

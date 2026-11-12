@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Browser Assistant — Separate Panel</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="detached-panel">
+    <header class="detached-toolbar">
+        <div id="detached-status" role="status">Connecting to the selected tab…</div>
+        <button type="button" id="detached-return">Return to floating panel</button>
+    </header>
+    <p id="detached-countdown" role="timer" hidden></p>
+    <main id="assistant-root"></main>
+    <script src="detached-panel.js"></script>
+</body>
+</html>
