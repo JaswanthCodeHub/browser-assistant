@@ -164,7 +164,9 @@ for (const pass of [true, false]) {
         const automation = { runId: 0 };
         const location = { origin: 'https://learning.ccbp.in', href: 'https://learning.ccbp.in/problems-set', pathname: '/problems-set', assign: url => { navigated = url; } };
         const context = vm.createContext({
-            URL, Date, location, automation, document: {}, isCollapsed: true, selectedTab: 'qa',
+            URL, Date, location, automation, document: {}, isCollapsed: true, isHidden: true, selectedTab: 'auto',
+            directRun: null,
+            root: {style: {}},
             sessionStorage: { setItem: (key, value) => store.set(key, value), getItem: key => store.get(key), removeItem: key => store.delete(key) },
             getAutomationContext: () => ({ mode: 'FULL', target: { id: 'ccbp-learning-practice' } }),
             automationPolicy: { canExecute: () => true }, render() {}, updateAutomationUI() {},
@@ -182,6 +184,9 @@ for (const pass of [true, false]) {
         });
         vm.runInContext(code, context);
         await context.startCodingBatch();
+        assert.equal(context.selectedTab, 'qa');
+        assert.equal(context.isCollapsed, false);
+        assert.equal(context.root.style.display, 'block');
         const saved = JSON.parse(store.get('browserAssistantCodingBatch'));
         assert.equal(navigated, null);
         assert.equal(backClicks, pass ? 1 : 0);

@@ -1,3 +1,83 @@
+# 2.9.16
+
+- Include the backend launcher module in the Docker image so the service starts and passes its health checks.
+
+# 2.9.15
+
+- Start supported automation from Alt+A without a confirmation popup or startup banner, including Aurora Reflective Journal.
+- Keep the floating panel closed when a journal opens from the Assessments shortcut.
+
+# 2.9.14
+
+- Start Batch Coding with Alt+A from the CCBP Coding Problem Set without a confirmation dialog or startup banner.
+
+# 2.9.13
+
+- Use Alt+A to open the selected CCBP course practice and continue on the question page without a startup prompt.
+
+# 2.9.12
+
+- Start MCQ automation directly with Alt+A on CCBP practice and practice review pages, without a confirmation popup or startup banner.
+
+# 2.9.11
+
+- Reload the locally built Chrome extension as soon as the current panel is idle and a complete new build is available.
+- Show the actual running build in the panel and identify older backends before starting drag-and-drop.
+- Keep the backend launcher running across workspace builds and drain active requests before loading the new version.
+- Read the full code on practice and review routes and check recognizable linked-list pseudocode against the displayed choices.
+
+# 2.9.10
+
+- Solve the six-step sorted linked-list merge exercise locally against the displayed order.
+- Retry verification when ordering answers disagree and require a complete sequence with each displayed number used once.
+
+# 2.9.9
+
+- Detect sentence transformations when directions and passage are rendered separately or keywords are split across inline elements.
+- Use the active MCQ prompt and its matching code context. Ignore stale question wrappers.
+- Match Big-O options across display backticks and spacing without changing operators or option letters.
+
+# 2.9.8
+
+- Recognize grouped passage comprehension, person matching, and sentence gaps with a shared Submit.
+- Verify two-to-five-word sentence transformations, including the unchanged given word, before filling the set.
+
+# 2.9.7
+
+- Continue from reading passages with multiple-choice options to passages with one text box per blank.
+- Verify one word for each blank against its passage, fill every field, and check the complete set before the shared Submit.
+
+# 2.9.6
+
+- Recognize linked reading blanks from their numbered prompts, including layouts without named radio groups or associated labels.
+- Verify every blank against its own options, check that all selections are still present, and use the shared Submit once per set.
+- Wait for the next passage after submission, including when it reuses the same question and option text.
+
+# 2.9.5
+
+- Accept the primary answer when the independent verification solver returns unparseable responses instead of blocking automation with a 422 error.
+- Accept multi-answer questions (fill-in-the-blank) when the majority of individual answers agree with the independent solve.
+
+# 2.9.4
+
+- Run Alt+A automation directly without opening, expanding, or moving either assistant panel; ignore the shortcut while a text or code editor has focus.
+- Record direct automation runs independently from scan history in the existing local SQLite database.
+- Detect linked multi-blank questions with one shared Submit action, verify each blank separately, and select every answer before submission.
+
+# 2.9.3
+
+- Restyle the floating panel, popup, journal controls, countdown, and practice quiz with frosted surfaces and opaque, high-contrast text.
+- Add visible keyboard focus, readable disabled states, and compact layouts for narrow viewports.
+
+# 2.9.2
+
+- Reconnect Text Scan after the backend starts without requiring a page reload.
+- Keep option letters from appearing twice in the local practice quiz scan.
+- Include illustrations in answer buttons in Vision Scan.
+- Keep Groq fallback keys available to each request during concurrent retries.
+- Keep the backend available if the journal syllabus or prompt is missing.
+- Clarify which Python environment to use to install and start the backend on Windows.
+
 # 2.9.1
 
 - Roll back the v2.9.0 feature set and restore the v2.8.26 implementation.

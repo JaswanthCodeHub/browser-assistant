@@ -10,6 +10,8 @@ interface AssistantJournalTimerData {
 
 interface AssistantMessage {
     action: string;
+    targetTabId?: number;
+    panelControl?: string;
     url?: string;
     path?: string;
     method?: string;
@@ -50,6 +52,8 @@ interface AssistantMessageResponse {
         language?: string;
         code_reviewed?: boolean;
         answer_verified?: boolean;
+        version?: string;
+        answer_agreement?: boolean;
         items?: unknown[];
         groq_configured?: boolean;
         vision_question_context?: boolean;
@@ -121,6 +125,7 @@ interface AssistantJournal extends Omit<AssistantJournalSession, 'path'> {
     opening: boolean;
     matches(): boolean;
     active?(): AssistantJournalSession;
+    getStartLink?(): HTMLAnchorElement | null;
 }
 interface AssistantAceEditor {
     getValue(): string;

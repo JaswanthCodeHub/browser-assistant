@@ -1,32 +1,43 @@
 // Background script for Browser Assistant
-importScripts('editor-bridge.js');
-// Local unpacked development updates: only reload when the files in Chrome's
-// own extension folder match the workspace release, and every running task is idle.
+importScripts('editor-bridge.js', 'detached-panel-background.js');
+// A local build writes its release marker after all the scripts are ready.
+// Read the files from Chrome's own extension folder, independently of FastAPI.
 let updateCheckRunning = false;
+let lastWorkspaceCheck = -Infinity;
+async function workspaceVersionFile(file: string) {
+    const response = await fetch(`${chrome.runtime.getURL(file)}?workspace=${Date.now()}`, {
+        cache: 'no-store', signal: AbortSignal.timeout(4000),
+    });
+    return response.ok ? (await response.json()).version : null;
+}
 async function checkWorkspaceUpdate() {
-    if (updateCheckRunning) return;
+    if (updateCheckRunning || Date.now() - lastWorkspaceCheck < 2500) return;
     updateCheckRunning = true;
+    lastWorkspaceCheck = Date.now();
+    let preparedAny = false;
     try {
-        const release = await fetch('http://127.0.0.1:8000/extension-release', {cache:'no-store',signal:AbortSignal.timeout(4000)}).then(r=>r.ok?r.json():null);
         const current = chrome.runtime.getManifest().version;
-        if (!release?.version || release.version === current) return;
-        const disk = await fetch(chrome.runtime.getURL('manifest.json'), {cache:'no-store'}).then(r=>r.json());
-        // Never loop reloading an old ZIP extraction. Load the workspace's
-        // extension directory once to enable local file updates.
-        if (disk.version !== release.version) return;
+        const ready = await workspaceVersionFile('workspace-release.json');
+        if (typeof ready !== 'string' || !/^\d+(?:\.\d+){1,3}$/.test(ready) || ready === current) return;
+        if (await workspaceVersionFile('manifest.json') !== ready) return;
         const tabs = (await chrome.tabs.query({})).filter(tab=>/^https?:\/\//.test(tab.url || ''));
         const states = await Promise.all(tabs.map(async tab=>{
-            try {return {tab,state:await chrome.tabs.sendMessage(tab.id,{action:'assistantUpdateStatus'})};}
+            try {return {tab,state:await chrome.tabs.sendMessage(tab.id,{action:'assistantUpdateStatus'},{frameId:0})};}
             catch {return {tab,state:null};}
         }));
         if (states.some(item=>item.state?.busy)) return;
         for (const {tab,state} of states) {
             if (!state) continue;
-            const prepared = await chrome.tabs.sendMessage(tab.id,{action:'assistantPrepareUpdate'});
+            const prepared = await chrome.tabs.sendMessage(tab.id,{action:'assistantPrepareUpdate'},{frameId:0});
             if (!prepared?.ready) {await attachUpdatedPanels();return;}
+            preparedAny = true;
         }
+        await rememberDetachedPanelForUpdate(ready);
         chrome.runtime.reload();
-    } catch { /* Offline server or restricted tab: retry on the next alarm. */ }
+    } catch {
+        // A tab can navigate between the idle and prepare checks.
+        if (preparedAny) await attachUpdatedPanels();
+    }
     finally {updateCheckRunning=false;}
 }
 async function attachUpdatedPanels() {
@@ -43,14 +54,14 @@ async function attachUpdatedPanels() {
         } catch { /* Chrome may restrict particular sites; leave them alone. */ }
     }
 }
-chrome.alarms.create('assistant-workspace-update',{periodInMinutes:1});
+chrome.alarms.create('assistant-workspace-update',{periodInMinutes:0.5});
 chrome.alarms.onAlarm.addListener(alarm => {
     if (alarm.name !== 'assistant-workspace-update') return;
     void checkWorkspaceUpdate();
     void updateJournalBadge();
 });
 chrome.runtime.onInstalled.addListener(details => {
-    void attachUpdatedPanels();
+    void attachUpdatedPanels().then(() => restoreDetachedPanelAfterUpdate()).catch(() => {});
     if (details.reason === 'update') void clearRetiredReminderSettings();
 });
 
@@ -108,6 +119,15 @@ void updateJournalBadge();
 chrome.runtime.onMessage.addListener((request: AssistantMessage, sender, sendResponse) => {
     if (!request || typeof request.action !== 'string') {
         sendResponse({error:'Invalid extension message'}); return false;
+    }
+    if (request.action === 'checkWorkspaceUpdate' && sender.id === chrome.runtime.id) {
+        sendResponse({ok:true});
+        void checkWorkspaceUpdate();
+        return false;
+    }
+    if (['panel:open', 'panel:snapshot', 'panel:action', 'panel:return', 'panel:target-status'].includes(request.action)) {
+        if (request.action === 'panel:snapshot' && sender.id === chrome.runtime.id) void checkWorkspaceUpdate();
+        return browserAssistantDetachedMessage(request, sender, sendResponse);
     }
     if (request.action === 'journalCountdowns' && sender.id === chrome.runtime.id) {
         chrome.storage.local.get<AssistantJournalTimerData>().then(data => sendResponse(activeJournalTimers(data)))
@@ -229,8 +249,11 @@ chrome.runtime.onMessage.addListener((request: AssistantMessage, sender, sendRes
         }
         // A tab can lose focus while capture is queued. Never capture another
         // tab/window and send that screenshot with the requesting page's URL.
-        chrome.tabs.query({active:true,windowId:sender.tab.windowId}).then(active => {
-            if (active.length !== 1 || active[0].id !== sender.tab.id) {
+        const activeTab = () => chrome.tabs.query({active:true,windowId:sender.tab.windowId});
+        const isTarget = active => active.length === 1 && active[0].id === sender.tab.id
+            && (!request.url || active[0].url === request.url);
+        activeTab().then(active => {
+            if (!isTarget(active)) {
                 sendResponse({error:'The requesting tab is no longer active. Focus it and try Vision Scan again.'}); return;
             }
             chrome.tabs.captureVisibleTab(sender.tab.windowId, { format: "png" }, (dataUrl) => {
@@ -238,7 +261,9 @@ chrome.runtime.onMessage.addListener((request: AssistantMessage, sender, sendRes
                 console.error("Capture failed:", chrome.runtime.lastError.message);
                 sendResponse({ error: chrome.runtime.lastError.message });
             } else {
-                sendResponse({ dataUrl: dataUrl });
+                void activeTab().then(current => sendResponse(isTarget(current) ? {dataUrl}
+                    : {error:'The selected tab changed during capture. Try Vision Scan again.'}))
+                    .catch(() => sendResponse({error:'Could not verify the active screenshot tab.'}));
             }
             });
         }).catch(()=>sendResponse({error:'Could not verify the active screenshot tab.'}));
@@ -247,7 +272,7 @@ chrome.runtime.onMessage.addListener((request: AssistantMessage, sender, sendRes
 
     if (request.action === "apiRequest") {
         const allowedMethods = {'/health':['GET'],'/solve':['POST'],'/solve-vision':['POST'],
-            '/history':['GET','POST','DELETE'],'/journal':['POST']};
+            '/history':['GET','POST','DELETE'],'/automation-history':['GET','PUT'],'/journal':['POST']};
         const method = request.method || 'POST';
         if (sender.id !== chrome.runtime.id || !allowedMethods[request.path]?.includes(method)) {
             sendResponse({ error: "Blocked API sender, path or method" });
@@ -274,7 +299,7 @@ chrome.runtime.onMessage.addListener((request: AssistantMessage, sender, sendRes
                 catch { data = { detail: text || "Unexpected server response" }; }
                 sendResponse({ ok: response.ok, status: response.status, data });
             })
-            .catch(error => sendResponse({ error: error.name === 'TimeoutError' ? 'Local server request timed out.' : 'Local server is offline. Start it with: python main.py' }))
+            .catch(error => sendResponse({ error: error.name === 'TimeoutError' ? 'Local server request timed out.' : 'Local server is offline. Start it with the project virtual environment.' }))
             .finally(()=>{if(keepAlive !== null)clearInterval(keepAlive);});
         return true;
     }
