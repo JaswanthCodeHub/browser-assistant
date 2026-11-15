@@ -27,7 +27,8 @@ from local_security import install_local_guards, redact, sanitize_data
 from vision_images import (compress_image_base64, unique_image_blocks, collect_image_evidence,
                            cross_check_visual_answers, relative_percentage_question, RELATIVE_PERCENTAGE_INSTRUCTION,
                            answer_permutation, cross_check_text_answers, solve_matrix_choice, solve_row_parallel_choice,
-                           ordering_question, solve_sorted_list_merge_order, solve_pseudocode_choice, reading_response_constraints,
+                           ordering_question, solve_sorted_list_merge_order, solve_stack_empty_order, solve_pseudocode_choice,
+                           reading_response_constraints,
                            VisionRateLimitError, VisionUnconfirmedError)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -191,7 +192,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.9.16", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.9.17", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)
@@ -1329,8 +1330,12 @@ REPAIR MODE:
     verify_answers = not require_code and (content.verify_answer or content.require_answer_agreement or not FAST_SCAN_MODE)
     if ordering and not require_code:
         item = solve_sorted_list_merge_order(ordering)
+        provider = 'local merge-step check'
+        if item is None:
+            item = solve_stack_empty_order(ordering)
+            provider = 'local stack empty check'
         if item is not None:
-            return {"results": json.dumps([item], ensure_ascii=False), "provider": "local merge-step check [verified]",
+            return {"results": json.dumps([item], ensure_ascii=False), "provider": f"{provider} [verified]",
                     "language": language, "answer_verified": True, "code_reviewed": False}
     if not require_code and not content.require_answer_agreement and content.practice_type in {'auto', 'mcq', 'math', 'aptitude'}:
         local_result = local_choice_result(trimmed_text, language)

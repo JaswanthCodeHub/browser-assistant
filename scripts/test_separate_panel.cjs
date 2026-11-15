@@ -11,6 +11,12 @@ const practice = 'http://127.0.0.1:8000/practice';
 const secondUrl = 'http://127.0.0.1:8000/panel-test';
 const readingUrl = 'https://learning.ccbp.in/test-reading';
 const orderingUrl = 'https://learning.ccbp.in/primitive-coding/practice/ordering/test';
+const stackOrderUrl = 'https://learning.ccbp.in/primitive-coding/practice/ordering/stack-empty';
+const stackSteps = [
+    'Check if the top pointer is equal to -1',
+    'Return true if the top pointer is -1',
+    'Return false otherwise',
+];
 const readingFormats = [
     {
         passage: 'Complete the second sentence using the given word so it means the same.\n1. Tom is not old enough to drive a car.\nTOO\nTom is ____ a car.\n2. I have never visited Mumbai before.\nFIRST\nThis is ____ visited Mumbai.\n3. The red dress is more expensive than the blue dress.\nCHEAPER\nThe blue dress ____ the red dress.',
@@ -116,6 +122,10 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
                     }
                     return Response.json({answer_verified: true, results: JSON.stringify([{type: 'mcq', answer: [4, 1, 2, 3, 6, 5]}])});
                 }
+                if (url.pathname === '/solve' && body.url?.includes('/ordering/stack-empty')) {
+                    const answer = body.url.endsWith('?shuffled') ? [3, 1, 2] : [1, 2, 3];
+                    return Response.json({answer_verified: true, results: JSON.stringify([{type: 'mcq', answer}])});
+                }
                 if (url.pathname === '/solve' && /^https:\/\/learning\.ccbp\.in\/test-reading(?:\?written)?$/.test(body.url || '')) {
                         const format = formats.find(item => item.keywords
                             ? body.text.includes('Tom is not old enough') && body.text.includes('I have never visited Mumbai before')
@@ -188,6 +198,30 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
                     document.querySelector('main').innerHTML = '<p>Quiz completed</p>';
                 });
             </script>`}));
+        await context.route(url => url.origin + url.pathname === stackOrderUrl, route => {
+            const positions = new URL(route.request().url()).search ? [1, 2, 0] : [0, 1, 2];
+            return route.fulfill({contentType: 'text/html', body: `<!doctype html>
+                <main id="generic-question-container">
+                    <p id="generic-question-wrapper-id">Arrange the steps in the correct order for the empty() operation.</p>
+                    <div id="steps">${positions.map(index => `<div data-step="${index + 1}">
+                        <span class="drag-icon-container" draggable="true">Move</span>
+                        <span class="drag-and-drop-option-label">${stackSteps[index]}</span></div>`).join('')}</div>
+                    <button disabled>Loading</button>
+                </main>
+                <script>
+                    const steps = document.querySelector('#steps');
+                    const button = document.querySelector('button');
+                    window.drags = 0;
+                    let moving;
+                    steps.addEventListener('dragstart', event => { window.drags++; moving = event.target.parentElement; });
+                    steps.addEventListener('drop', event => { if (moving) steps.insertBefore(moving, event.target.parentElement); });
+                    setTimeout(() => { button.disabled = false; button.textContent = 'Submit'; }, 700);
+                    button.onclick = () => {
+                        window.stackSubmission = [...steps.children].map(row => Number(row.dataset.step));
+                        document.querySelector('main').innerHTML = '<p>Quiz completed</p>';
+                    };
+                </script>`});
+        });
         await context.route(url => url.origin + url.pathname === readingUrl, route => route.fulfill({contentType: 'text/html', body: `<!doctype html>
             <meta charset="utf-8">
             <header>PRIVATE HEADER</header>
@@ -358,8 +392,8 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
 
         await t.test('Alt+A opens an ongoing Aurora journal and keeps the panel closed', async () => {
             const page = await context.newPage();
-            const listUrl = 'https://admissions.aurora.edu.in/modules/assessments/assessments';
-            const journalUrl = 'https://admissions.aurora.edu.in/modules/reflective-journal/shortcut-test';
+            const listUrl = 'https://sidus.net/modules/assessments/assessments';
+            const journalUrl = 'https://sidus.net/modules/reflective-journal/shortcut-test';
             try {
                 const dialogs = await observeShortcutStartup(page);
                 await page.route(listUrl, route => route.fulfill({contentType: 'text/html', body: `<!doctype html>
@@ -406,6 +440,20 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
                 await ordering.close();
             }
         });
+
+        for (const query of ['', '?shuffled']) {
+            await t.test(`submits the verified stack order ${query ? 'after dragging' : 'without dragging an already ordered list'}`, async () => {
+                const page = await context.newPage();
+                try {
+                    await page.goto(stackOrderUrl + query);
+                    await page.locator('#assistant-trigger').waitFor();
+                    await page.keyboard.press('Alt+a');
+                    await page.getByText('Quiz completed', {exact: true}).waitFor();
+                    assert.deepEqual(await page.evaluate(() => window.stackSubmission), [1, 2, 3]);
+                    assert.equal(await page.evaluate(() => window.drags), query ? 1 : 0);
+                } finally { await page.close(); }
+            });
+        }
 
         for (const {name, query, secondAnswers} of [
             {name: 'continues to the next multiple-choice passage', query: '', secondAnswers: ['stand', 'answer', 'shop']},

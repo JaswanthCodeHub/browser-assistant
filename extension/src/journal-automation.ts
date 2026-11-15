@@ -93,7 +93,7 @@ function browserAssistantJournal(global) {
     }
     const api = {validate, metadata, fields, pageText, readField, writeField, remainingSeconds};
     if (typeof module !== 'undefined') module.exports = api;
-    if (!global.document || global.location?.origin !== 'https://admissions.aurora.edu.in') return;
+    if (!global.document || global.location?.origin !== 'https://sidus.net') return;
     if (!/^\/modules\/reflective-journal\//.test(global.location.pathname)) return;
     const existing = document.getElementById('assistant-journal');
     const journalBuild = global.chrome?.runtime?.getManifest?.().version || 'development';
@@ -439,7 +439,7 @@ function browserAssistantJournal(global) {
         document.removeEventListener('keydown', shortcutListener, true);
     }
 }
-if (typeof window !== 'undefined' && location.origin === 'https://admissions.aurora.edu.in') {
+if (typeof window !== 'undefined' && location.origin === 'https://sidus.net') {
     const ongoingJournalStartLink = (): HTMLAnchorElement | null => {
         const links = [...document.querySelectorAll<HTMLAnchorElement>('a[href*="/modules/reflective-journal/"]')].filter(link =>
             [...(link.closest('tr,[role="row"]')?.querySelectorAll('*') || [])].some(node => /^Ongoing$/i.test(node.textContent.trim())) && link.getClientRects().length
@@ -485,7 +485,7 @@ if (typeof window !== 'undefined' && location.origin === 'https://admissions.aur
     }
 }
 browserAssistantJournal(typeof window === 'undefined' ? globalThis : window);
-if (typeof window !== 'undefined' && location.origin === 'https://admissions.aurora.edu.in' && !window.BrowserAssistantJournalBoot) {
+if (typeof window !== 'undefined' && location.origin === 'https://sidus.net' && !window.BrowserAssistantJournalBoot) {
     window.BrowserAssistantJournalBoot = true;
     let lastDeadline: number | undefined;
     const storage = window.chrome?.storage?.local;

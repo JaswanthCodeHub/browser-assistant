@@ -1,3 +1,9 @@
+# 2.9.17
+
+- Move the Aurora Journal launcher, shortcuts, and countdown to sidus.net.
+- Solve array-stack empty() step ordering locally, regardless of how the steps are shuffled.
+- Verify other ordering questions using renumbered steps and preserve any complete code snippet with the question.
+
 # 2.9.16
 
 - Include the backend launcher module in the Docker image so the service starts and passes its health checks.

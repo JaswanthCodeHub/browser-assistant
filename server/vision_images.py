@@ -207,6 +207,27 @@ def solve_sorted_list_merge_order(ordering):
     }
 
 
+def solve_stack_empty_order(ordering):
+    if not ordering:
+        return None
+    prompt, options = ordering
+    if not re.fullmatch(r'arrange the steps in the correct order for the (?:stack )?(?:is)?empty\s*\(\s*\) operation[.:]?',
+                        ' '.join(prompt.split()), re.I):
+        return None
+    empty_test = r'(?:the )?top(?: pointer| index)?\s*(?:is equal to|equals|is|==)\s*-\s*1'
+    steps = (rf'check (?:if|whether) {empty_test}', rf'return true if {empty_test}', r'return false otherwise')
+    if len(options) != len(steps):
+        return None
+    normalized = [' '.join(option.split()).lower().replace('−', '-').replace('`', '').rstrip('.') for option in options]
+    matches = [[number for number, option in enumerate(normalized, 1) if re.fullmatch(step, option)] for step in steps]
+    if any(len(numbers) != 1 for numbers in matches):
+        return None
+    return {
+        'type': 'mcq', 'question': prompt, 'answer': [numbers[0] for numbers in matches],
+        'reasoning': 'Check whether top is -1. Return true if it is and return false otherwise.',
+    }
+
+
 def ordering_key(value, size):
     if isinstance(value, str):
         try:
@@ -554,9 +575,9 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
         raise VisionUnconfirmedError('Expected one linked answer with displayed options or a reading response format.')
     if step_count:
         check_messages[0]['content'] = (
-            'Independently order the displayed steps. Use every original item number once, check all prerequisite '
+            'Independently order the displayed steps. Use every displayed item number once, check all prerequisite '
             f'relationships, and return only JSON with readable=true and one answers entry with id=1. '
-            f'The answer value must be a JSON array of all {step_count} original item numbers in the correct order.'
+            f'The answer value must be a JSON array of all {step_count} numbers from the list in this message.'
         )
     elif constraints:
         _, _, keyword = constraints
@@ -586,10 +607,21 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
     first = answer_key(items)
     previous = None
     for attempt in range(2):
+        if step_count:
+            # A second view with different numbering tests the step order
+            # independently of the order in which the page lists the steps.
+            prompt, options = ordering
+            numbers = (*range(step_count, 0, -1),) if attempt == 0 else (*range(2, step_count + 1), 1)
+            if step_count == 2 and attempt == 1:
+                numbers = (1, 2)
+            rows = '\n'.join(f'{index}. {options[number - 1]}' for index, number in enumerate(numbers, 1))
+            check_messages = [check_messages[0], {'role': 'user', 'content': f'{prompt}\n\nNumbered steps:\n{rows}'}]
         raw = await complete(check_messages)
         try:
             verified = parse_answer_check(raw, len(items))
             current = answer_key(verified)
+            if step_count and current is not None:
+                current = tuple(numbers[index - 1] for index in current)
         except ValueError:
             current = None
         if current is not None and (current == first or current == previous):
@@ -613,10 +645,11 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
             break
         if not attempt:
             previous = current
-            check_messages = [*check_messages, {
-                'role': 'user',
-                'content': 'Solve again using the original question and its context. Return the full verification JSON with the required ids.',
-            }]
+            if not step_count:
+                check_messages = [*check_messages, {
+                    'role': 'user',
+                    'content': 'Solve again using the original question and its context. Return the full verification JSON with the required ids.',
+                }]
     # When both independent verifications failed to parse, prefer delivering the
     # primary answer over blocking the automation entirely. The primary solve was
     # validated and the verification provider returned unusable JSON — a parsing

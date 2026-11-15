@@ -1,4 +1,9 @@
-# Browser Assistant 2.9.16
+# Browser Assistant 2.9.17
+
+- Aurora Journal now uses sidus.net for the launcher, shortcuts, and countdown.
+- Stack empty() ordering is solved locally from the displayed steps. Other ordering questions are cross-checked with different step numbering, and the resulting sequence is mapped back to the page.
+
+## Browser Assistant 2.9.16
 
 - The Docker image includes the backend launcher required by its startup command.
 

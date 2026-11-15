@@ -1,4 +1,5 @@
 import json
+from itertools import permutations
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -220,15 +221,34 @@ class MatrixVerificationTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(result['answer_verified'])
             groq.assert_not_awaited()
 
+    async def test_stack_empty_solves_every_display_order_without_a_provider(self):
+        steps = ('Check if the top pointer is equal to -1',
+                 'Return true if the top pointer is -1', 'Return false otherwise')
+        with patch.object(main, 'try_groq', new_callable=AsyncMock) as groq, \
+             patch.object(main, 'try_ollama', new_callable=AsyncMock) as ollama:
+            for displayed in permutations(steps):
+                text = 'Arrange the steps in the correct order for the empty() operation.\nReorder ALL items.\n'
+                text += '\n'.join(f'{index}. {step}' for index, step in enumerate(displayed, 1))
+                with self.subTest(displayed=displayed):
+                    result = await main.solve_questions(main.PageContent(
+                        text=text, url='https://example.test', practice_type='mcq', verify_answer=True))
+                    self.assertTrue(result['answer_verified'])
+                    self.assertEqual(json.loads(result['results'])[0]['answer'], [displayed.index(step) + 1 for step in steps])
+            groq.assert_not_awaited()
+            ollama.assert_not_awaited()
+
     async def test_ordering_retries_disagreement_and_requires_every_displayed_step(self):
         text = 'Arrange the tasks.\nReorder ALL items. Return a permutation.\n1. Build\n2. Design\n3. Check'
         primary = json.dumps([{'type': 'mcq', 'answer': [1, 2, 3]}])
-        complete = AsyncMock(side_effect=[self.response([2, 1, 3]), self.response('[2, 1, 3]')])
+        complete = AsyncMock(side_effect=[self.response([2, 3, 1]), self.response('[1, 3, 2]')])
         result = await cross_check_text_answers([], primary, complete, question_text=text)
         self.assertEqual(json.loads(result)[0]['answer'], [2, 1, 3])
         self.assertEqual(complete.await_count, 2)
+        self.assertIn('1. Check\n2. Design\n3. Build', complete.await_args_list[0].args[0][1]['content'])
+        self.assertIn('1. Design\n2. Check\n3. Build', complete.await_args_list[1].args[0][1]['content'])
 
-        for answers in [([1, 2], [1, 2]), ([2, 1, 1], [2, 1, 1]), ([2, 1, 3], [3, 2, 1])]:
+        for answers in [([1, 2], [1, 2]), ([2, 1, 1], [2, 1, 1]), ([2, 1, 3], [3, 2, 1]),
+                        ([1, 2, 3], [1, 2, 3])]:
             with self.subTest(answers=answers), self.assertRaises(VisionUnconfirmedError):
                 await cross_check_text_answers([], primary, AsyncMock(side_effect=list(map(self.response, answers))),
                                                question_text=text)

@@ -14,7 +14,7 @@ function mountJournalCountdown(signal: AbortSignal) {
     function getCountdownLabel() {
         const now = Date.now();
         const path = location.pathname.replace(/\/$/, '');
-        const aurora = location.origin === 'https://admissions.aurora.edu.in';
+        const aurora = location.origin === 'https://sidus.net';
         const visible = timers.filter(timer => timer.deadline > now
             && (!aurora || (path.startsWith('/modules/reflective-journal/') && timer.path !== path)));
         if (!visible.length) return '';
@@ -1596,7 +1596,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                 }
                 const requestBody = {
                     text: `${requestText}\nQuestion format: ${question.type === 'short-answer' ? 'Free response. Return only the exact value to enter in the JSON answer field, without an option label, explanation, or Markdown.' : question.selectionType === 'multiple' ? 'select all that apply; return every correct option as "Option A: ...; Option B: ...".' : 'select one answer.'}\n${question.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option.text}`).join('\n')}`,
-                    ...(question.type === 'ordering' ? { text: `${question.text}\nReorder ALL items. Return the complete permutation as a JSON array of 1-based item numbers in the answer field (example: [2,1,3]). Check every item appears exactly once.\n${question.options.map((option, index) => `${index + 1}. ${option.text}`).join('\n')}` } : {}),
+                    ...(question.type === 'ordering' ? { text: `${requestText}\nReorder ALL items. Return the complete permutation as a JSON array of 1-based item numbers in the answer field (example: [2,1,3]). Check every item appears exactly once.\n${question.options.map((option, index) => `${index + 1}. ${option.text}`).join('\n')}` } : {}),
                     url: window.location.href, practice_type: 'mcq', verify_answer: true,
                 };
                 const visuals = window.BrowserAssistantQuestionVisuals;
