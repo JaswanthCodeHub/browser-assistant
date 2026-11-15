@@ -14,7 +14,7 @@ function mountJournalCountdown(signal: AbortSignal) {
     function getCountdownLabel() {
         const now = Date.now();
         const path = location.pathname.replace(/\/$/, '');
-        const aurora = location.origin === 'https://sidus.net';
+        const aurora = location.origin === 'https://sidus.net' || location.origin === 'https://www.sidus.net';
         const visible = timers.filter(timer => timer.deadline > now
             && (!aurora || (path.startsWith('/modules/reflective-journal/') && timer.path !== path)));
         if (!visible.length) return '';

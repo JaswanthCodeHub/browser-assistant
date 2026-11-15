@@ -390,10 +390,10 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
             } finally { await page.close(); }
         });
 
-        await t.test('Alt+A opens an ongoing Aurora journal and keeps the panel closed', async () => {
+        await t.test('Alt+A opens an ongoing Aurora journal on www.sidus.net and keeps the panel closed', async () => {
             const page = await context.newPage();
-            const listUrl = 'https://sidus.net/modules/assessments/assessments';
-            const journalUrl = 'https://sidus.net/modules/reflective-journal/shortcut-test';
+            const listUrl = 'https://www.sidus.net/modules/assessments/assessments';
+            const journalUrl = 'https://www.sidus.net/modules/reflective-journal/shortcut-test';
             try {
                 const dialogs = await observeShortcutStartup(page);
                 await page.route(listUrl, route => route.fulfill({contentType: 'text/html', body: `<!doctype html>
@@ -407,11 +407,16 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
                     <button>Submit Journal</button></main>`}));
                 await page.goto(listUrl);
                 await page.locator('#assistant-trigger').waitFor();
+                await page.locator('#assistant-trigger').click();
+                await page.locator('#mode-qa').click();
+                await page.locator('#assistant-automation-page').getByText('Aurora · Reflective Journal').waitFor();
+                await page.keyboard.press('BracketRight');
                 await page.keyboard.press('Alt+a');
                 assert.deepEqual(dialogs, []);
                 await page.waitForURL(journalUrl);
-                await eventually(() => page.locator('main textarea').first().inputValue().then(value => value.startsWith('word ')),
-                    'The journal should start after the assessment-list navigation');
+                await eventually(() => page.locator('main textarea').evaluateAll(fields =>
+                    fields.length === 5 && fields.every(field => field.value.startsWith('word '))),
+                'The journal should fill all five sections after the assessment-list navigation');
                 assert.equal(await page.locator('#assistant-panel').isVisible(), false);
                 assert.equal(await page.evaluate(() => sessionStorage.getItem('test-startup-banner')), null);
                 assert.deepEqual(dialogs, []);

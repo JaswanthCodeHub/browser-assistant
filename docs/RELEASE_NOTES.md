@@ -1,4 +1,8 @@
-# Browser Assistant 2.9.17
+# Browser Assistant 2.9.18
+
+- QA Control recognizes Reflective Journal pages on www.sidus.net. The launcher opens the portal on that address.
+
+## Browser Assistant 2.9.17
 
 - Aurora Journal now uses sidus.net for the launcher, shortcuts, and countdown.
 - Stack empty() ordering is solved locally from the displayed steps. Other ordering questions are cross-checked with different step numbering, and the resulting sequence is mapped back to the page.

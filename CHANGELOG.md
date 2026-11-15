@@ -1,3 +1,7 @@
+# 2.9.18
+
+- Recognize Reflective Journals and their countdown on www.sidus.net as well as sidus.net.
+
 # 2.9.17
 
 - Move the Aurora Journal launcher, shortcuts, and countdown to sidus.net.

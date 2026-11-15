@@ -29,7 +29,7 @@ try {
         if (-not $backendReady) { throw "Backend could not start. See the journal-launch logs in $logPath." }
     }
     $chromePath = Join-Path $env:ProgramFiles 'Google\Chrome\Application\chrome.exe'
-    $pageUrl = 'https://sidus.net/modules/assessments/assessments'
+    $pageUrl = 'https://www.sidus.net/modules/assessments/assessments'
     if (Test-Path -LiteralPath $chromePath) {
         Start-Process -FilePath $chromePath -ArgumentList $pageUrl | Out-Null
     } else {
