@@ -59,6 +59,23 @@
       "10": "Singular Value Decomposition and Applications Singular Value Decomposition – need for SVD, definition and properties, computation of SVD, relationship between SVD and matrices, dimensionality reduction, image compression, implementation using NumPy."
     }
   },
+  "data_science": {
+    "name": "Foundation of Data Science",
+    "aliases": ["Foundations of Data Science"],
+    "source": "Foundation of Data Science_year_2_term_2.pdf",
+    "modules": {
+      "1": "Basics of Data Science. Introduction to AI, machine learning and data science, data science classification and process, data types, data collection and preprocessing. Lab: NumPy array creation, attributes, data types, indexing and slicing.",
+      "2": "Tool Boxes for Data Scientist. Python libraries SciPy, scikit-learn, Matplotlib, Seaborn, PyBrain and Pylearn2. Read, select, filter, manipulate, sort, group, rank and plot data. Normalization. Lab: NumPy operations and mathematical functions, Pandas loading, selecting, filtering, sorting, grouping and aggregation, and basic Matplotlib and Seaborn visualizations.",
+      "3": "Data Analysis and Data Analytics. Descriptive analysis of variables, frequency distributions, centrality and dispersion. Correlations for diagnostic analytics. Predictive, prescriptive, exploratory and mechanistic analysis. Lab: dataset preprocessing, feature engineering with Pandas, statistical analysis, performance visualization and an analytics dashboard.",
+      "4": "Dimensionality Reduction and Feature Engineering. Principal component analysis (PCA), linear discriminant analysis (LDA), t-SNE and singular value decomposition (SVD). Feature extraction, selection and transformation, and creation of interaction features. Lab: feature selection and engineering, data transformation through melting and cleaning.",
+      "5": "Data Models. Regression, classification and clustering. Multiple, ridge and lasso regression, logistic regression and decision trees, and k-means and hierarchical clustering. Lab: dataset merging and comparative and pattern analysis.",
+      "6": "Model Evaluation. Evaluation metric types, training versus validation versus testing, regression, classification and clustering metrics, cross-validation, overfitting and underfitting. Lab: descriptive statistics, correlation analysis and exploratory data analysis with Python.",
+      "7": "Recommendation Systems. Collaborative filtering, content-based filtering, advanced collaborative filtering techniques, hybrid recommendation systems, evaluation and real-world applications.",
+      "8": "Data Visualization. Types of visualizations, basic plotting in Matplotlib, advanced Seaborn visualizations, interactive visualization, exploratory data analysis visualizations and geospatial data. Lab: time series visualization, return analysis and volume analysis.",
+      "9": "Advanced Data Visualization Techniques. 3D plotting, complex subplot layouts, facet grids, heatmaps with hierarchical clustering, interactive Plotly dashboards, visualization for big data, and an introduction to Tableau and Power BI. Lab: scikit-learn evaluation metrics, cross-validation experiments and a collaborative-filtering movie recommendation system.",
+      "10": "Ethics and Data Science. Responsible data science, data ownership, the Five Cs and their implementation, ethics and security training, guiding principles, ethics in a data-driven culture, regulation, future directions and a case study. Lab: interactive Plotly dashboard, Tableau or Power BI dashboard, geospatial visualization and an ethical data science case study."
+    }
+  },
   "ai": {
     "name": "Fundamentals of Artificial Intelligence",
     "aliases": ["Fundamentals of Artificial Intelligence", "Fundamentals of AI", "Artificial Intelligence Fundamentals"],

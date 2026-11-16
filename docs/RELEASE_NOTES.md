@@ -1,4 +1,8 @@
-# Browser Assistant 2.9.18
+# Browser Assistant 2.9.19
+
+- Foundation of Data Science is available for Reflective Journal, with all ten modules from the supplied syllabus and a manual subject option.
+
+## Browser Assistant 2.9.18
 
 - QA Control recognizes Reflective Journal pages on www.sidus.net. The launcher opens the portal on that address.
 

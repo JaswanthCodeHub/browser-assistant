@@ -1,3 +1,7 @@
+# 2.9.19
+
+- Add all ten Foundation of Data Science modules to Reflective Journal, including the listed labs.
+
 # 2.9.18
 
 - Recognize Reflective Journals and their countdown on www.sidus.net as well as sidus.net.
