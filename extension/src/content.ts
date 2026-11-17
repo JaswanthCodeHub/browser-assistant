@@ -177,6 +177,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             // Pointer capture retargets the eventual click to the root, so a
             // stationary badge press must open here rather than lose its click.
             if (event.type === 'pointerup' && !dragState.moved && dragState.collapsedBadge) openPanel();
+            scheduleSurfaceTones();
         };
         root.addEventListener('pointerup', stopDragging);
         root.addEventListener('pointercancel', stopDragging);
@@ -194,6 +195,71 @@ function mountJournalCountdown(signal: AbortSignal) {
 
     initDrag();
     restorePanelPosition();
+
+    // ── Backdrop tone ────────────────────────────────────────────────────────
+    // Surfaces are transparent, so the ink follows whatever sits behind them:
+    // dark text on light pages, light text on dark pages.
+    function parseLuminance(color: string) {
+        const match = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)/.exec(color);
+        if (!match) return null;
+        let alpha = match[4] === undefined ? 1 : parseFloat(match[4]);
+        if (match[4]?.endsWith('%')) alpha /= 100;
+        if (alpha < 0.4) return null;
+        const channel = (value: string) => {
+            const v = Number(value) / 255;
+            return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+        };
+        return 0.2126 * channel(match[1]) + 0.7152 * channel(match[2]) + 0.0722 * channel(match[3]);
+    }
+
+    function backdropLuminance(x: number, y: number) {
+        const stack = document.elementsFromPoint(x, y).filter(element =>
+            !element.closest?.('#assistant-root, #assistant-journal, #assistant-journal-countdown-badge, #assistant-automation-notice'));
+        for (const element of stack) {
+            let node: Element | null = element;
+            while (node) {
+                const style = getComputedStyle(node);
+                const luminance = parseLuminance(style.backgroundColor);
+                if (luminance !== null) return luminance;
+                // Photographic or painted backgrounds cannot be sampled safely.
+                if (style.backgroundImage && style.backgroundImage !== 'none') return null;
+                if (node === document.body || node === document.documentElement) break;
+                node = node.parentElement;
+            }
+        }
+        return null;
+    }
+
+    function applySurfaceTone(element: HTMLElement) {
+        const rect = element.getBoundingClientRect();
+        if (rect.width < 24 || rect.height < 24) return;
+        const samples: number[] = [];
+        for (const fx of [0.25, 0.5, 0.75]) {
+            for (const fy of [0.25, 0.5, 0.75]) {
+                const luminance = backdropLuminance(rect.left + rect.width * fx, rect.top + rect.height * fy);
+                if (luminance !== null) samples.push(luminance);
+            }
+        }
+        // Without a readable backdrop assume a light page, the common case here.
+        const luminance = samples.length ? samples.reduce((sum, value) => sum + value, 0) / samples.length : 1;
+        element.dataset.tone = luminance < 0.18 ? 'dark' : 'light';
+    }
+
+    let toneTimer: number | undefined;
+    function scheduleSurfaceTones() {
+        if (toneTimer !== undefined) return;
+        // Coalesce scroll bursts, then measure once the page settles.
+        toneTimer = window.setTimeout(() => {
+            toneTimer = undefined;
+            document.querySelectorAll<HTMLElement>('#assistant-root, #assistant-journal, #assistant-journal-countdown-badge')
+                .forEach(applySurfaceTone);
+        }, 120);
+    }
+
+    window.addEventListener('scroll', scheduleSurfaceTones, {capture: true, passive: true, signal: lifecycle.signal});
+    window.addEventListener('resize', scheduleSurfaceTones, {signal: lifecycle.signal});
+    scheduleSurfaceTones();
+
     const panelResizeObserver = new ResizeObserver(() => {
         if (!root.style.left || !root.offsetWidth || dragState.dragging) return;
         const { left, top } = root.getBoundingClientRect();
@@ -2158,6 +2224,63 @@ function mountJournalCountdown(signal: AbortSignal) {
         return true;
     }
 
+    // ⌃⇧ chords: Control + Shift. Control never rewrites the typed character,
+    // so the physical key code arrives intact on every macOS keyboard layout.
+    function isControlShiftChord(e: KeyboardEvent, letter: string) {
+        return !e.repeat && !e.isComposing && !e.defaultPrevented
+            && e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey
+            && (e.code === `Key${letter}` || String(e.key).toUpperCase() === letter);
+    }
+
+    const panelActions = ['open', 'close', 'vision', 'minimal'] as const;
+    let lastPanelGesture = {action: '', source: '', at: -Infinity};
+
+    /** Shared by the page chords, the popup buttons and the browser commands. */
+    function panelCommand(action: string, source: 'keyboard' | 'command' | 'popup' = 'keyboard') {
+        if (!(panelActions as readonly string[]).includes(action)) return false;
+        // A registered Chrome command can arrive alongside the same keydown that
+        // triggered it. Run the gesture once, but never swallow a repeat from the
+        // same source, so pressing the key twice still toggles twice.
+        const now = performance.now();
+        if (action === lastPanelGesture.action && source !== lastPanelGesture.source
+            && now - lastPanelGesture.at < 300) {
+            // Consume the echo so an intentional repeat from the same source
+            // still runs the action.
+            lastPanelGesture = {action, source, at: now};
+            return true;
+        }
+        lastPanelGesture = {action, source, at: now};
+        if (action === 'open') openPanel();
+        else if (action === 'close') closePanel();
+        else if (action === 'vision') {openPanel(); void visionScan();}
+        else {isMinimalMode = !isMinimalMode; render();}
+        return true;
+    }
+
+    /** ⌃⇧O open · ⌃⇧X close · ⌃⇧S vision scan · ⌃⇧M minimal mode. */
+    function handlePanelShortcut(e: KeyboardEvent) {
+        if (panelToken) return false; // the detached panel window owns its shortcuts
+        // Resolve the chord once: preventDefault() below would make a second
+        // match fail, because the matcher ignores already-prevented events.
+        const letter = (['O', 'X', 'S', 'M'] as const).find(key => isControlShiftChord(e, key));
+        if (!letter) return false;
+        e.preventDefault();
+        e.stopPropagation();
+        return panelCommand({O: 'open', X: 'close', S: 'vision', M: 'minimal'}[letter], 'keyboard');
+    }
+
+    // Browser commands (chrome://extensions/shortcuts) and the popup buttons
+    // reach the page even when a site swallows keydown events or focus is in an
+    // iframe. Only this extension can send them.
+    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+        const action = typeof request?.action === 'string' ? request.action : '';
+        if (!action.startsWith('panel:')) return false;
+        if (sender.id !== chrome.runtime.id || panelToken) return false;
+        if (!panelCommand(action.slice(6), 'command')) return false;
+        sendResponse({ok: true});
+        return false;
+    });
+
     // ── Keyboard shortcuts ────────────────────────────────────────────────────
     document.addEventListener('keydown', (e) => {
         // Block held-key auto-repeat to prevent rapid-fire race conditions
@@ -2175,8 +2298,11 @@ function mountJournalCountdown(signal: AbortSignal) {
             || Boolean((active as Element | null)?.closest?.(editorSelector))
             || e.composedPath().some(node => node instanceof Element && node.matches(editorSelector));
         if (handleAutomationShortcut(e, shortcutTyping)) return;
+        if (handlePanelShortcut(e)) return;
 
         if (isTyping) return;
+        // Bare keys are unmodified only: ⌘[ / ⌘] must keep navigating history.
+        if (e.altKey || e.ctrlKey || e.metaKey) return;
 
         switch (e.key) {
             // ── ` = OPEN panel ──
@@ -2688,6 +2814,7 @@ function mountJournalCountdown(signal: AbortSignal) {
     function render() {
         if (disposed) return;
         window.BrowserAssistantJournal?.detach();
+        scheduleSurfaceTones();
         if (isCollapsed) {
             const content = lastResultSummary || "";
             // Escape for safe attribute injection (B7)

@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "Browser Assistant",
-    "version": "2.9.20",
+    "version": "2.9.21",
     "description": "Scans webpages for MCQs and coding problems. Powered by Groq (cloud) and Ollama (local fallback).",
     "permissions": [
         "activeTab",
@@ -41,5 +41,23 @@
         "http://localhost:8000/*",
         "http://127.0.0.1:8000/*",
         "<all_urls>"
-    ]
+    ],
+    "commands": {
+        "panel-open": {
+            "suggested_key": {"default": "Ctrl+Shift+O", "mac": "MacCtrl+Shift+O"},
+            "description": "Open the Browser Assistant panel (Control+Shift+O)"
+        },
+        "panel-close": {
+            "suggested_key": {"default": "Ctrl+Shift+X", "mac": "MacCtrl+Shift+X"},
+            "description": "Close the Browser Assistant panel (Control+Shift+X)"
+        },
+        "panel-vision": {
+            "suggested_key": {"default": "Ctrl+Shift+S", "mac": "MacCtrl+Shift+S"},
+            "description": "Run a Vision scan (Control+Shift+S)"
+        },
+        "panel-minimal": {
+            "suggested_key": {"default": "Ctrl+Shift+M", "mac": "MacCtrl+Shift+M"},
+            "description": "Toggle minimal mode (Control+Shift+M)"
+        }
+    }
 }

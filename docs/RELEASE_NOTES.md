@@ -1,4 +1,11 @@
-# Browser Assistant 2.9.20
+# Browser Assistant 2.9.21
+
+- The interface is transparent and monochrome: every surface lost its fill, gradient, blur, shadow and colour, so the page shows through and borders, type and spacing carry the structure.
+- The panel reads the page behind it and switches between black text on light pages and white text on dark pages.
+- Correct answers are highlighted in green, with a lighter green on dark pages.
+- Panel shortcuts are now Control + Shift (⌃⇧O/X/S/M) and also work as Chrome commands; reassign them at `chrome://extensions/shortcuts`.
+
+## Browser Assistant 2.9.20
 
 - Alt+A can start a waiting run on the CCBP classroom quiz lobby. The extension waits for the instructor and continues when the first question appears.
 

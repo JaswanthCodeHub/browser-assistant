@@ -27,8 +27,9 @@ has been verified. The final audit report records executed verification separate
 | [x] | History, SQLite schema/retention and clear-history UI | /history, content.js history rendering |
 | [x] | Existing settings and site-local preferences | content.js localStorage/sessionStorage |
 | [x] | Backtick / ] / backslash / [ shortcuts | content.js keyboard handler, popup hints |
-| [x] | Alt+Shift+A Start/Pause/Resume | automation-shortcut tests |
-| [x] | Alt+Shift+J journal workflow | journal-automation.js and tests |
+| [x] | Backtick / ] / backslash / [ shortcuts, ⌃⇧O/X/S/M chords, and matching browser commands | content.js keyboard handler, background command forwarding, panel-shortcuts tests, scripts/test_keyboard_shortcuts.cjs |
+| [x] | ⌥A Start/Pause/Resume, ⌥⇧A still supported | automation-shortcut tests |
+| [x] | ⌥⇧J journal workflow | journal-automation.js and tests |
 | [x] | Errors, notifications, request retry/cancellation | answer-requests.js and tests |
 | [x] | Saving-to-Saved wait and final quiz confirmation | quiz-final and transition tests |
 | [x] | Submitted-question Next and expired-attempt handling | submitted-practice tests |

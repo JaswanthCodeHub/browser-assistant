@@ -103,7 +103,7 @@ async function updateJournalBadge() {
         const text = active ? (remaining < 60000 ? '<1m' : minutes > 999 ? '999+' : `${minutes}m`) : '';
         await Promise.all([
             chrome.action.setBadgeText({text}),
-            chrome.action.setBadgeBackgroundColor({color: '#5b39db'}),
+            chrome.action.setBadgeBackgroundColor({color: '#111315'}),
             chrome.action.setTitle({title: active ? `Browser Assistant · ${timers.length > 1 ? 'Next journal' : 'Journal'}: about ${minutes} min left` : 'Browser Assistant'}),
         ]);
     } catch { /* Retry when the timer changes or on the next alarm. */ }
@@ -115,6 +115,17 @@ chrome.storage?.local.onChanged?.addListener(changes => {
     }
 });
 void updateJournalBadge();
+
+// Browser-level shortcuts from manifest.commands. They still work when a site
+// swallows keydown events or focus sits in a subframe.
+chrome.commands?.onCommand.addListener(async (command: string) => {
+    const match = /^panel-(open|close|vision|minimal)$/.exec(command);
+    if (!match) return;
+    const [tab] = await chrome.tabs.query({active: true, lastFocusedWindow: true});
+    if (!tab?.id) return;
+    try { await chrome.tabs.sendMessage(tab.id, {action: `panel:${match[1]}`}, {frameId: 0}); }
+    catch { /* Not a page the assistant can run on. */ }
+});
 
 chrome.runtime.onMessage.addListener((request: AssistantMessage, sender, sendResponse) => {
     if (!request || typeof request.action !== 'string') {

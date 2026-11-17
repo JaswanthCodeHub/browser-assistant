@@ -10,7 +10,7 @@ A Chrome Manifest V3 extension with a local Python backend for exploring multipl
 - Displays results in an in-page panel, offers code copying, and saves successful scans in local SQLite history.
 - Includes a local practice page and automation for selecting answers, filling editors, and submitting supported forms after starting a run.
 - Resumes CCBP practice from an already submitted answer through its submitted-question Next control, without generating or submitting that answer again. Delayed Submit controls are awaited for up to 15 seconds while the question and selected answer remain unchanged.
-- Press **Alt + A** on the webpage to start automation, then press it again to pause or resume. The previous **Alt + Shift + A** shortcut also works. It also works with the code editor focused and opens QA Control. Journal automation uses the same toggle; its existing **Alt + Shift + J** shortcut remains available.
+- Press **⌥A** (Alt + A) on the webpage to start automation, then press it again to pause or resume. The previous **⌥⇧A** (Alt + Shift + A) shortcut also works, including with the code editor focused, and opens QA Control. Journal automation uses the same toggle; its **⌥⇧J** shortcut remains available. Panel chords are **⌃⇧O** (open), **⌃⇧X** (close), **⌃⇧S** (vision scan) and **⌃⇧M** (minimal mode).
 
 AI answers can be wrong. Automation can change or submit page content: use it only where authorized, review results, and avoid restricted assessments. Site detection is heuristic; custom controls, frames, editors, and navigation can fail. The policy includes a general HTTP/HTTPS fallback, so it is not a strict site allowlist.
 
@@ -91,7 +91,7 @@ For local text inference, install [Ollama](https://github.com/ollama/ollama), ru
 4. Open `http://127.0.0.1:8000/practice`, then use the floating panel's Text Scan. Review the answer before trying automation with Start.
 5. For a local source checkout, run `npm run build` after updating the project. When the build version changes, Chrome reloads the unpacked extension once Browser Assistant is idle. A backend started with `server/main.py` also switches to the new version in the same terminal. Start it once with the updated launcher if an older backend is still running. For ZIP and npm installs, reload the extension manually after upgrading.
 
-The toolbar popup reports backend status. In-page shortcuts are backtick (open), `]` (close), `\` (vision scan), and `[` (minimal mode). They are hardcoded page listeners, not configurable Chrome extension commands.
+The toolbar popup reports backend status. In-page shortcuts are backtick (open), `]` (close), `\` (vision scan), and `[` (minimal mode), plus the Control + Shift chords **⌃⇧O / ⌃⇧X / ⌃⇧S / ⌃⇧M** for the same four actions. The same four actions are also registered as browser-level Chrome commands, so they keep working on pages that swallow key events or when focus is inside an iframe; reassign them at `chrome://extensions/shortcuts`.
 
 ## Data and permissions
 
@@ -102,6 +102,10 @@ The manifest requests `activeTab`, `tabs`, `scripting`, and `clipboardWrite`, pl
 Text scans send extracted text and the current URL to the backend. Groq receives model prompts containing question text; vision scans capture the entire visible tab, compress the image, and send it to Groq. Sensitive content visible in a tab may therefore leave your machine. There is no screenshot redaction step. The application does not explicitly save raw screenshots to disk; request data exists in memory, and providers have their own retention policies.
 
 Successful scans are saved by the extension through `/history`: URL, timestamp, scan type, provider, language, and answer JSON are kept in `server/scan_history.db`, capped at 100 entries. Clear History deletes rows, not a forensic secure erase. Stop the backend and remove the database and its `-wal`/`-shm` companions for file-level removal; backups may still contain data. Panel position uses the page's localStorage, and automation resume state uses its sessionStorage. Clear site data to remove those settings. Minimal/stealth controls change presentation; they do not guarantee invisibility or privacy.
+
+## Interface design
+
+The extension UI is transparent and monochrome. The floating panel, its cards, buttons, inputs, journal card, popup and separate window use no background fills, gradients, blur, shadows or coloured accents; the page stays visible through them, and structure comes from typography, spacing and 1px neutral rules. Theme tokens live at the top of `extension/styles.css` (`--ink`, `--muted`, `--line`, `--line-strong`). Each in-page surface reads the page behind it and switches between dark ink on light backgrounds and light ink on dark backgrounds (`data-tone`); the popup and separate window stay dark-on-white. Correct answers are green in both tones (`--correct`). Surfaces placed over photos or painted `background-image` areas cannot be sampled, so they keep the light-page default.
 
 ## Development and Docker
 
