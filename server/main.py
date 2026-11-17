@@ -27,6 +27,7 @@ from local_security import install_local_guards, redact, sanitize_data
 from vision_images import (compress_image_base64, unique_image_blocks, collect_image_evidence,
                            cross_check_visual_answers, relative_percentage_question, RELATIVE_PERCENTAGE_INSTRUCTION,
                            answer_permutation, cross_check_text_answers, solve_matrix_choice, solve_row_parallel_choice,
+                           solve_relu_parallel_choice,
                            ordering_question, solve_sorted_list_merge_order, solve_stack_empty_order, solve_pseudocode_choice,
                            reading_response_constraints,
                            VisionRateLimitError, VisionUnconfirmedError)
@@ -192,7 +193,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.9.21", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.9.22", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)
@@ -227,6 +228,7 @@ class VisionContent(BaseModel):
     language: str | None = None
     text: str = ""
     verify_answer: bool = False
+    allow_overview: bool = False
     images: list[str] = []  # Additional complete question/option illustrations.
 
     @field_validator("text")
@@ -731,7 +733,14 @@ def normalize_web_response(parsed):
     return parsed
 
 
-def validate_code_results(results_json: str, language: str, require_code: bool = False, starter_code: str | None = None) -> str:
+def is_displayable_overview(item: dict) -> bool:
+    return item.get('type') == 'overview' and all(
+        isinstance(item.get(field), str) and item[field].strip() for field in ('title', 'summary')
+    )
+
+
+def validate_code_results(results_json: str, language: str, require_code: bool = False,
+                          starter_code: str | None = None, *, allow_overview: bool = False) -> str:
     """Validate generated code and ensure response metadata matches the locked language."""
     parsed = json.loads(results_json)
     if language == 'web':
@@ -749,6 +758,9 @@ def validate_code_results(results_json: str, language: str, require_code: bool =
                        else item for item in parsed]
     if not isinstance(parsed, list):
         raise ValueError('Expected a JSON array of solution objects')
+    if (allow_overview and not require_code and len(parsed) == 1
+            and isinstance(parsed[0], dict) and is_displayable_overview(parsed[0])):
+        return json.dumps(parsed)
     code_items = [item for item in parsed if isinstance(item, dict) and item.get('type') == 'code']
     if require_code and not code_items:
         raise ValueError('Code mode response did not contain a code solution')
@@ -987,11 +999,20 @@ def build_ollama_code_messages(text: str, url: str, language: str) -> list:
     ]
 
 
-def build_vision_system_prompt(language: str | None = None) -> str:
+def build_vision_system_prompt(language: str | None = None, *, allow_overview: bool = False) -> str:
     """Build a vision prompt with the requested language locked for code output."""
     language = normalize_language(language) or CODE_DEFAULT_LANGUAGE
     language_name = LANGUAGE_NAMES[language]
+    overview_instructions = (
+        '\nFor a readable assignment overview or instruction page without a specific question or '
+        'standalone coding problem, return one overview object: '
+        '[{"type":"overview","title":"visible topic","summary":"concise summary of the visible requirements and next steps"}]. '
+        'Describe only what is visible. Ignore unrelated navigation and do not invent missing content. '
+        'An unreadable or incomplete question still requires [].\n'
+        if allow_overview else ''
+    )
     return f"""Analyze a screenshot using only readable visual evidence and the supplied question context.
+{overview_instructions}
 
 CRITICAL REASONING RULES — FOLLOW EXACTLY:
 
@@ -1067,6 +1088,8 @@ async def generate_validated_result(
     reviewer=None,
     review_code: bool = True,
     starter_code: str | None = None,
+    *,
+    allow_overview: bool = False,
 ) -> str:
     """Generate, repair syntax/language/completeness errors, independently review, then return."""
     raw_result = await generator(messages)
@@ -1074,7 +1097,8 @@ async def generate_validated_result(
     if cleaned == "[]" and not require_code:
         return cleaned
     try:
-        validated = validate_code_results(cleaned, language, require_code=require_code, starter_code=starter_code)
+        validated = validate_code_results(cleaned, language, require_code=require_code, starter_code=starter_code,
+                                          allow_overview=allow_overview)
         for item in json.loads(validated):
             if isinstance(item, dict) and item.get('type') == 'code':
                 validate_starter_interface(item['code'], starter_code, language)
@@ -1085,8 +1109,9 @@ async def generate_validated_result(
                 "role": "user",
                 "content": (
                     f"The previous response failed validation: {validation_error}. "
-                    f"Regenerate the complete solution in {LANGUAGE_NAMES[language]} only. "
-                    f"Set every code result's language field to {language!r}. Return JSON only."
+                    + ("Regenerate a result matching the screenshot and the allowed response formats. "
+                       if allow_overview else f"Regenerate the complete solution in {LANGUAGE_NAMES[language]} only. ")
+                    + f"Set every code result's language field to {language!r}. Return JSON only."
                     + (build_system_prompt('code', 'web') if require_code and language == 'web' else
                        f' Required schema: [{{"type":"code","language":"{language}","title":"Solution","code":"complete solution","approach":"brief algorithm","time_complexity":"O(...)","space_complexity":"O(...)"}}]. Do not return MCQ answers or a review verdict.' if require_code else '')
                     + starter_interface_instructions(starter_code, language)
@@ -1098,7 +1123,8 @@ async def generate_validated_result(
         if retry_cleaned == "[]":
             raise ValueError(f"Language correction retry returned no usable result: {validation_error}")
         try:
-            validated = validate_code_results(retry_cleaned, language, require_code=require_code, starter_code=starter_code)
+            validated = validate_code_results(retry_cleaned, language, require_code=require_code, starter_code=starter_code,
+                                              allow_overview=allow_overview)
             for item in json.loads(validated):
                 if isinstance(item, dict) and item.get('type') == 'code':
                     validate_starter_interface(item['code'], starter_code, language)
@@ -1259,6 +1285,9 @@ def local_choice_result(text, language):
     if item is None:
         item = solve_row_parallel_choice(text)
         provider = "local tensor dimension check"
+    if item is None:
+        item = solve_relu_parallel_choice(text)
+        provider = "local ReLU shard check"
     if item is None:
         item = solve_pseudocode_choice(text)
         provider = "local pseudocode check"
@@ -1510,6 +1539,7 @@ async def _solve_vision(content: VisionContent):
         except ValueError as exc:
             raise HTTPException(422, f'Image {index}: {exc}') from exc
     is_code_scan = content.practice_type == "code" or (content.practice_type == "auto" and bool(content.language))
+    allow_overview = content.allow_overview and content.practice_type == 'auto' and not is_code_scan and not content.text.strip()
     if not is_code_scan and content.practice_type in {'auto', 'mcq', 'math', 'aptitude'}:
         local_result = local_choice_result(content.text, content.language or CODE_DEFAULT_LANGUAGE)
         if local_result is not None:
@@ -1622,7 +1652,7 @@ async def _solve_vision(content: VisionContent):
                 extracted_text = ocr_payload["text"]
                 language = resolve_language(extracted_text)
             logger.info(f"Locked requested code language to {language}")
-            system_prompt = build_vision_system_prompt(language)
+            system_prompt = build_vision_system_prompt(language, allow_overview=allow_overview)
             if is_code_scan and language == 'web':
                 system_prompt = build_system_prompt('code', 'web') + (
                     '\nUse the attached screenshots and supplied context as the original problem. '
@@ -1631,13 +1661,15 @@ async def _solve_vision(content: VisionContent):
             if comparison:
                 system_prompt += '\n' + RELATIVE_PERCENTAGE_INSTRUCTION
             vision_prompt = "Identify and solve all visible questions using readable evidence."
+            if allow_overview:
+                vision_prompt += " If the screenshot instead shows an assignment overview or instructions, summarize the visible requirements."
             if is_code_scan:
                 vision_prompt += (
                     f" The locked code language is {LANGUAGE_NAMES[language]} ({language}); "
                     f"generate code in that language only. "
                     f"Text transcribed from the screenshot: {extracted_text or '[language supplied by caller]'}"
                 )
-            if content.text:
+            if content.text.strip():
                 vision_prompt += ("\nSolve exactly the following question using the attached complete illustrations. "
                                   "Use this ordered option list for the answer letter. The image may contain only the chart.\n"
                                   + content.text)
@@ -1676,6 +1708,7 @@ async def _solve_vision(content: VisionContent):
                 require_code=is_code_scan,
                 reviewer=vision_reviewer,
                 review_code=not content.verify_answer,
+                allow_overview=allow_overview,
             )
             if cleaned != "[]":
                 items = json.loads(cleaned)
@@ -1910,6 +1943,8 @@ def has_usable_results(results_json: str) -> bool:
                 code = item.get("code") or item.get("answer")
                 if not isinstance(code, str) or not code.strip():
                     return False
+            elif is_displayable_overview(item):
+                continue
             else:
                 return False
             answer = str(item.get("answer", "")).lower()

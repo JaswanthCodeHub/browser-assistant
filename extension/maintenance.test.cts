@@ -66,6 +66,19 @@ test('answer rendering escapes untrusted markup and code copy preserves the exac
     assert.ok(document.querySelector('#results').textContent.includes(source));
     await document.querySelector('#copy-btn-1').onclick();assert.equal(copied,source);
 });
+test('Vision overviews render as readable instructions without an answer indicator',()=>{
+    const {document}=parseHTML('<div id="results"></div>');
+    const container=document.querySelector('#results');
+    const ctx=vm.createContext({document});
+    const start=content.indexOf('    function renderFullResults(');
+    vm.runInContext(content.slice(start,content.indexOf('    function formatLanguageName(',start)),ctx);
+    ctx.renderFullResults(container,[{
+        type:'overview',title:'Model Parallelism Challenge',summary:'Choose the split.\nBuild a <notebook>.',
+    }],'groq-vision');
+    assert.equal(container.querySelector('.assistant-question-text').textContent,'Model Parallelism Challenge');
+    assert.equal(container.querySelector('.assistant-reasoning-text').textContent,'Choose the split.\nBuild a <notebook>.');
+    assert.equal(container.querySelector('notebook,.assistant-answer-text'),null);
+});
 test('Text Scan keeps long coding statements and excludes hidden executable data from its fallback',()=>{
     const {document,window}=parseHTML(`<html><head><title>Coding</title></head><body><main>CODING PRACTICE ${'x'.repeat(13000)} FINAL_INPUT_SENTINEL</main><script>PRIVATE_SCRIPT_SENTINEL</script><style>PRIVATE_STYLE_SENTINEL</style><div id="assistant-root">PRIVATE_ASSISTANT_SENTINEL</div></body></html>`);
     const ctx=vm.createContext({document,window,selectedMode:'code',console});

@@ -4,7 +4,10 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 import main
-from vision_images import cross_check_text_answers, cross_check_visual_answers, solve_matrix_choice, VisionUnconfirmedError
+from vision_images import (
+    cross_check_text_answers, cross_check_visual_answers, solve_matrix_choice,
+    solve_relu_parallel_choice, VisionUnconfirmedError,
+)
 
 
 INVERSE = r'For $A=\begin{bmatrix}2&1\\5&3\end{bmatrix}$, what is $A^{-1}$ computed using the adjugate method?'
@@ -16,6 +19,30 @@ PIVOT_OPTIONS = '\nA. 1\nB. 2\nC. 3\nD. 0'
 
 
 class MatrixChoiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_relu_tensor_parallelism_matches_the_displayed_option_order(self):
+        prompt = ('An MLP has a ReLU between two matrix multiplications. Why does Tensor Parallelism still work here?'
+                  '\nQuestion format: select one answer.\n')
+        correct = 'ReLU works element by element, so shards apply it.'
+        distractors = [
+            'ReLU is applied after the shard outputs are joined.',
+            'ReLU is replaced by a linear function in the setup.',
+            'ReLU is computed once and then shared between GPUs.',
+        ]
+        with patch.object(main, 'try_groq', new_callable=AsyncMock) as groq, \
+             patch.object(main, 'try_ollama', new_callable=AsyncMock) as ollama:
+            for position in range(4):
+                choices = distractors.copy()
+                choices.insert(position, correct)
+                labels = 'ABCD'
+                text = prompt + '\n'.join(f'{label}. {option}' for label, option in zip(labels, choices))
+                result = await main.solve_questions(main.PageContent(
+                    text=text, url='https://example.test', practice_type='mcq', verify_answer=True))
+                self.assertTrue(result['answer_verified'])
+                self.assertEqual(json.loads(result['results'])[0]['answer'], f'Option {labels[position]}: {correct}')
+            groq.assert_not_awaited()
+            ollama.assert_not_awaited()
+        self.assertIsNone(solve_relu_parallel_choice(text.replace(distractors[0], correct)))
+
     async def test_row_parallel_question_uses_inner_dimension_without_a_model(self):
         question = ('In Row Parallelism, why must the input also be split, not just the weights?\n'
                     'Question format: select one answer.\n'

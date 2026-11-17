@@ -1,3 +1,8 @@
+# 2.9.22
+
+- In AUTO mode, Vision Scan summarizes readable assignment overviews and instructions while retaining verification for questions.
+- Verify ReLU tensor-parallelism questions locally and match the answer to its displayed option.
+
 # 2.9.21
 
 - Replace the glass theme with a transparent, monochrome interface: no background fills, gradients, blur, shadows or coloured accents. The page stays visible through the panel, popup, journal card and separate window, and hierarchy comes from typography, spacing and 1px neutral rules.

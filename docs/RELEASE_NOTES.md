@@ -1,4 +1,9 @@
-# Browser Assistant 2.9.21
+# Browser Assistant 2.9.22
+
+- In AUTO mode, Vision Scan summarizes the visible requirements on readable assignment overview pages. Questions still use the answer verification flow.
+- The ReLU tensor-parallelism question is checked locally. ReLU operates on each activation independently, so each shard can apply it to its own activations.
+
+## Browser Assistant 2.9.21
 
 - The interface is transparent and monochrome: every surface lost its fill, gradient, blur, shadow and colour, so the page shows through and borders, type and spacing carry the structure.
 - The panel reads the page behind it and switches between black text on light pages and white text on dark pages.

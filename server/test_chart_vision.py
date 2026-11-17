@@ -26,6 +26,38 @@ class ChartVisionTests(unittest.IsolatedAsyncioTestCase):
         self.enterContext(patch.object(main, '_vision_key_cooldowns', {}))
         self.enterContext(patch.object(main, '_groq_key_index', 0))
 
+    async def test_auto_vision_displays_a_readable_assignment_overview(self):
+        overview = {'type': 'overview', 'title': 'Model Parallelism Challenge',
+                    'summary': 'Choose the parallelism degrees and build a notebook.'}
+        create = Mock(side_effect=[
+            provider_response([{**overview, 'summary': ''}]),
+            provider_response([overview]),
+        ])
+        client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+        with patch.object(main, '_groq_clients', [client]), \
+             patch.object(main, 'VISION_MODELS', ['test-vision']), \
+             patch.object(main, 'compress_image_base64', return_value='assignment'):
+            result = await main.solve_vision(main.VisionContent(
+                image='assignment', url='https://example.test', verify_answer=True, allow_overview=True))
+        self.assertEqual(json.loads(result['results']), [overview])
+        self.assertFalse(result['answer_verified'])
+        self.assertTrue(main.has_usable_results(result['results']))
+        self.assertEqual(create.call_count, 2)
+        self.assertIn('"type":"overview"', create.call_args_list[0].kwargs['messages'][0]['content'])
+
+    async def test_overview_permission_does_not_override_a_question_scan(self):
+        create = Mock(return_value=provider_response([]))
+        client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+        with patch.object(main, '_groq_clients', [client]), \
+             patch.object(main, 'VISION_MODELS', ['test-vision']), \
+             patch.object(main, 'compress_image_base64', return_value='question'):
+            for context in ({'practice_type': 'mcq'}, {'text': 'A specific question.'}):
+                with self.subTest(context=context), self.assertRaises(HTTPException) as error:
+                    await main.solve_vision(main.VisionContent(
+                        image='question', url='https://example.test', allow_overview=True, **context))
+                self.assertEqual(error.exception.detail['code'], 'vision_unconfirmed')
+                self.assertNotIn('"type":"overview"', create.call_args.kwargs['messages'][0]['content'])
+
     async def test_relative_percentage_is_calculated_from_agreed_chart_values(self):
         text = ('By how much amount the formatting of the book is a lesser amount for editing the book?\n'
                 'Question format: select one answer.\nA. 20 %\nB. 16.67 %\nC. 13.33 %\nD. 22.56 %')

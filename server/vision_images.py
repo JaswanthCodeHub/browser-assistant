@@ -530,6 +530,33 @@ def solve_row_parallel_choice(text):
     }
 
 
+def solve_relu_parallel_choice(text):
+    """Verify why ReLU can be applied to sharded intermediate activations."""
+    choices = displayed_single_choices(text)
+    if not choices:
+        return None
+    question = re.split(r'\n(?:Question format: )?Select one answer\.', text.strip(), maxsplit=1, flags=re.I)[0]
+    prompt = ' '.join(question.replace('\x60', '').split())
+    if not re.fullmatch(
+        r'(?:an? |the )?MLP (?:has|uses) (?:a )?ReLU between (?:two )?matrix multiplications\. '
+        r'Why (?:does|can) tensor parallelism (?:still )?work(?: here)?\?', prompt, re.I,
+    ):
+        return None
+    elementwise = r'(?:element[- ]?wise|element by element|pointwise|independently on each element)'
+    matches = [(letter, option) for letter, option in choices.items() if re.fullmatch(
+        rf'ReLU (?:works|operates|acts) {elementwise}(?:,? so (?:each shard can apply it(?: independently)?|shards (?:can )?apply it))?\.?',
+        ' '.join(option.replace('\x60', '').split()), re.I,
+    )]
+    if len(matches) != 1:
+        return None
+    letter, option = matches[0]
+    return {
+        'type': 'mcq', 'question': question, 'answer': f'Option {letter}: {option}',
+        'reasoning': 'ReLU computes max(0, x) for each activation independently. Each shard can apply it to its '
+                     'own intermediate activations before the second multiplication.',
+    }
+
+
 def bind_displayed_choice(value, choices, *, matrix_math):
     if type(value) not in (str, int, float):
         return None

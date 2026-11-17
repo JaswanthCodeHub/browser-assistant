@@ -2379,6 +2379,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                 practice_type: context.question ? 'mcq' : practiceType,
                 language: context.question ? undefined : requestedLanguage,
                 verify_answer: true,
+                allow_overview: !context.question && practiceType === 'auto' && !requestedLanguage,
             });
 
             if (!res.ok) {
@@ -2971,6 +2972,14 @@ function mountJournalCountdown(signal: AbortSignal) {
                 `;
                 container.appendChild(codeBox);
                 document.getElementById(`copy-btn-${index}`).onclick = () => copyToClipboard(codeContent, `copy-btn-${index}`);
+            } else if (res.type === 'overview') {
+                const item = document.createElement('div');
+                item.className = 'assistant-answer';
+                item.innerHTML = `
+                    <div class="assistant-question-text">${escapeHtml(res.title || 'Visible instructions')}</div>
+                    <div class="assistant-reasoning-text">${escapeHtml(res.summary)}</div>
+                `;
+                container.appendChild(item);
             } else {
                 const item = document.createElement('div');
                 item.className = 'assistant-answer';
