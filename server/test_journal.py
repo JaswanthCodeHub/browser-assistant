@@ -21,6 +21,8 @@ class JournalTests(unittest.TestCase):
         self.assertEqual(subject_key('Fundamentals of AI'), 'ai')
         self.assertEqual(subject_key('Fundamentals of Artificial Intelligence ( AI201 )'), 'ai')
         self.assertEqual(subject_key('AI201'), 'ai')
+        self.assertEqual(subject_key('Foundation of Data Science'), 'data_science')
+        self.assertEqual(subject_key('Foundations of Data Science'), 'data_science')
         with self.assertRaises(HTTPException):
             subject_key('Advanced Data Structures (AI201)')
         for subject in load_syllabus().values():
@@ -48,6 +50,22 @@ class JournalTests(unittest.TestCase):
         self.assertIn('Clinical Decision Support Agent',calls[0]['module_syllabus'])
         self.assertEqual(len(calls[0]['complete_syllabus']),10)
         self.assertNotIn('State Space Planning',calls[0]['module_syllabus'])
+
+    def test_data_science_journal_uses_the_requested_module_and_lab(self):
+        calls = []
+
+        async def generate(messages, **_kwargs):
+            calls.append(json.loads(messages[1]['content']))
+            return json.dumps(sample())
+
+        app = FastAPI()
+        register_journal(app, generate, generate)
+        endpoint = next(route.endpoint for route in app.routes if route.path == '/journal')
+        response = asyncio.run(endpoint(JournalRequest(subject='Foundation of Data Science', number=4)))
+        self.assertEqual(response['module'], 4)
+        self.assertIn('PCA', calls[0]['module_syllabus'])
+        self.assertIn('melting and cleaning', calls[0]['module_syllabus'])
+        self.assertEqual(len(calls[0]['complete_syllabus']), 10)
 
     def test_syllabus_and_alias_updates_are_loaded_without_restarting_the_registered_app(self):
         calls=[]

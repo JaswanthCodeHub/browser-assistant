@@ -34,7 +34,7 @@ test('journal clock keeps counting after navigation and reload without starting 
         window.Element.prototype.getClientRects = () => [{}];
         const globals = {
             document: window.document, Event: window.Event, Date: {now: () => now},
-            location: {origin: 'https://admissions.aurora.edu.in', pathname: `/modules/reflective-journal/${path}`},
+            location: {origin: 'https://sidus.net', pathname: `/modules/reflective-journal/${path}`},
             chrome: {storage: {local: storage}, runtime: {sendMessage: () => assert.fail('Unexpected journal request')}},
             sessionStorage: {getItem: () => null}, setInterval: () => 1,
         };
@@ -55,7 +55,7 @@ test('journal clock keeps counting after navigation and reload without starting 
     const list = parseHTML('<html><body><div id="assistant-journal-list-clock" hidden></div></body></html>').document;
     const listGlobals = {
         document: list, Date: {now: () => now}, setInterval: () => 1,
-        location: {origin: 'https://admissions.aurora.edu.in', pathname: '/modules/assessments/assessments'},
+        location: {origin: 'https://sidus.net', pathname: '/modules/assessments/assessments'},
         chrome: {storage: {local: storage}},
     };
     listGlobals.window = listGlobals;
@@ -104,7 +104,7 @@ test('a newly rendered clock survives an immediate same-tab reload while extensi
         let observe;
         const globals = {
             document: window.document, Event: window.Event, Date: {now: () => now},
-            location: {origin: 'https://admissions.aurora.edu.in', pathname: '/modules/reflective-journal/reload'},
+            location: {origin: 'https://sidus.net', pathname: '/modules/reflective-journal/reload'},
             sessionStorage: {getItem: key => session.get(key), setItem: (key, value) => session.set(key, value)},
             setInterval: () => 1,
             MutationObserver: class { constructor(callback) { observe = callback; } observe() {} },
@@ -145,6 +145,7 @@ test('an extension update clears retired reminder settings while retaining journ
             onInstalled: {addListener(listener) { onInstalled = listener; }},
             onMessage: {addListener() {}},
             getManifest: () => ({version: '2.8.26'}),
+            getURL: file => 'chrome-extension://test/' + file,
         },
         tabs: {query: async () => []},
         storage: {local: {
@@ -158,7 +159,7 @@ test('an extension update clears retired reminder settings while retaining journ
     vm.runInContext(fs.readFileSync(`${__dirname}/background.js`, 'utf8'), ctx);
     onAlarm({name: 'assistant-workspace-update'});
     await new Promise(resolve => setImmediate(resolve));
-    assert.deepEqual(requests, ['http://127.0.0.1:8000/extension-release']);
+    assert.match(requests[0], /^chrome-extension:\/\/test\/workspace-release\.json\?workspace=/);
     onInstalled({reason: 'update'});
     await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(data, {[timerKey]: deadline, [confirmationKey]: true});
@@ -240,7 +241,7 @@ test('the website overlay shows the saved countdown with the panel closed and re
     assert.equal(badge.textContent, '');
     assert.match(shadow.querySelector('[role="timer"]').textContent, /42:51 · 50:00$/);
     assert.equal(getCountdownLabel(), shadow.querySelector('[role="timer"]').textContent);
-    location.origin = 'https://admissions.aurora.edu.in';
+    location.origin = 'https://sidus.net';
     location.pathname = secondPath;
     now += 1000;
     tick();
@@ -279,7 +280,7 @@ async function runJournal(changePage=false, shortcut=false, integrated=false, st
     const {window}=parseHTML('<html><body><h1>Reflective Journal 1</h1><div>Subject: Advanced Data Structures Description: Reflective Journal 1</div><div>Time <span>29:59</span></div>'+keys.map(k=>`<section><h3>${k}</h3><textarea></textarea></section>`).join('')+'<button id="submit">Submit Journal</button></body></html>');
     const {document}=window;
     window.Element.prototype.getClientRects=()=>[{}];
-    const location={origin:'https://admissions.aurora.edu.in',pathname:'/modules/reflective-journal/example'};
+    const location={origin:'https://sidus.net',pathname:'/modules/reflective-journal/example'};
     let clicks=0;
     document.querySelector('#submit').addEventListener('click',()=>{
         clicks++;
@@ -384,7 +385,7 @@ test('assessment-list shortcut opens the ongoing pencil once and ignores missed/
     const clicks=[];
     for(const link of document.querySelectorAll('a')) link.addEventListener('click',()=>clicks.push(link.getAttribute('href')));
     const stored=new Map();
-    const globals={document,location:{origin:'https://admissions.aurora.edu.in',pathname:'/modules/assessments/assessments'},Event:window.Event,URL,
+    const globals={document,location:{origin:'https://sidus.net',pathname:'/modules/assessments/assessments'},Event:window.Event,URL,
         sessionStorage:{setItem:(k,v)=>stored.set(k,v),getItem:k=>stored.get(k)||null,removeItem:k=>stored.delete(k)},setInterval:()=>1};
     globals.window=globals;
     vm.runInNewContext(fs.readFileSync(`${__dirname}/journal-automation.js`,'utf8'),globals);

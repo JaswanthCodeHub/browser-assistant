@@ -40,6 +40,15 @@ test('Alt A starts once without changing the closed panel, then pauses and resum
 test('automation shortcut ignores a code editor focus',()=>{
     const h=harness({isContentEditable:true});h.key();assert.equal(h.starts(),0);
 });
+test('Alt+A starts a supported website without a confirmation dialog or startup notice',()=>{
+    const h=harness();
+    h.ctx.getAutomationContext=()=>({mode:'FULL',target:{id:'website:https://example.test'}});
+    h.ctx.getAuthorizedQuestion=()=>({type:'mcq'});
+    h.ctx.window.confirm=()=>assert.fail('Alt+A must not display a confirmation dialog');
+    h.ctx.showAutomationNotice=()=>assert.fail('Alt+A must not display a startup notice');
+    h.key();
+    assert.equal(h.starts(),1);
+});
 test('held keys, composition and extra or missing modifiers do not toggle automation',()=>{
     const h=harness();
     for(const event of [{repeat:true},{isComposing:true},{ctrlKey:true},{metaKey:true},{altKey:false},

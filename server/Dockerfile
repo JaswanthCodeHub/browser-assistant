@@ -8,7 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 COPY requirements.txt requirements.lock.txt ./
 RUN pip install --no-cache-dir --require-hashes -r requirements.lock.txt
 
-COPY main.py code_contract.py local_security.py vision_images.py journal.py journal_prompt.md journal_syllabus.json practice_quiz.html ./
+COPY main.py workspace_server.py code_contract.py local_security.py vision_images.py journal.py journal_prompt.md journal_syllabus.json practice_quiz.html ./
 
 EXPOSE 8000
 

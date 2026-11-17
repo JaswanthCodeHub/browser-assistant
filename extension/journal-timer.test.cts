@@ -19,7 +19,7 @@ function fixture(time='56:15',prefilled=false) {
     });
     if(prefilled){const data=sections();for(const [i,field] of [...document.querySelectorAll('section textarea')].entries())field.value=data[keys[i]];}
     const storage=new Map();
-    const globals={document,location:{origin:'https://admissions.aurora.edu.in',pathname:'/modules/reflective-journal/timer-test'},
+    const globals={document,location:{origin:'https://sidus.net',pathname:'/modules/reflective-journal/timer-test'},
         Event:window.Event,sessionStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
         setInterval:fn=>{polls.push(fn);return polls.length;},clearInterval(){},setTimeout:fn=>{queueMicrotask(fn);return 1;},
         chrome:{runtime:{getManifest:()=>({version:'2.6.68'}),sendMessage:async()=>{requests++;return {ok:true,data:{sections:sections()}};}}}};

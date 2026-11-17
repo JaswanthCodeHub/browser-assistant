@@ -89,7 +89,7 @@ For local text inference, install [Ollama](https://github.com/ollama/ollama), ru
 2. Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select the prepared folder containing `manifest.json`.
 3. Open `http://127.0.0.1:8000/health`. A JSON `status: "ok"` confirms the backend is running; it does not test model access.
 4. Open `http://127.0.0.1:8000/practice`, then use the floating panel's Text Scan. Review the answer before trying automation with Start.
-5. After changing extension files, reload it in the extensions page and refresh the practice tab.
+5. For a local source checkout, run `npm run build` after updating the project. When the build version changes, Chrome reloads the unpacked extension once Browser Assistant is idle. A backend started with `server/main.py` also switches to the new version in the same terminal. Start it once with the updated launcher if an older backend is still running. For ZIP and npm installs, reload the extension manually after upgrading.
 
 The toolbar popup reports backend status. In-page shortcuts are backtick (open), `]` (close), `\` (vision scan), and `[` (minimal mode). They are hardcoded page listeners, not configurable Chrome extension commands.
 

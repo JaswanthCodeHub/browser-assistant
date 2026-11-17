@@ -144,6 +144,12 @@
     font: 720 15px/1.2 var(--ui-font);
     letter-spacing: -.02em;
 }
+#assistant-root .assistant-build {
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 650;
+    white-space: nowrap;
+}
 #assistant-root .assistant-title-row .status-dot {
     width: 8px;
     height: 8px;

@@ -1,32 +1,43 @@
 // Background script for Browser Assistant
 importScripts('editor-bridge.js', 'detached-panel-background.js');
-// Local unpacked development updates: only reload when the files in Chrome's
-// own extension folder match the workspace release, and every running task is idle.
+// A local build writes its release marker after all the scripts are ready.
+// Read the files from Chrome's own extension folder, independently of FastAPI.
 let updateCheckRunning = false;
+let lastWorkspaceCheck = -Infinity;
+async function workspaceVersionFile(file: string) {
+    const response = await fetch(`${chrome.runtime.getURL(file)}?workspace=${Date.now()}`, {
+        cache: 'no-store', signal: AbortSignal.timeout(4000),
+    });
+    return response.ok ? (await response.json()).version : null;
+}
 async function checkWorkspaceUpdate() {
-    if (updateCheckRunning) return;
+    if (updateCheckRunning || Date.now() - lastWorkspaceCheck < 2500) return;
     updateCheckRunning = true;
+    lastWorkspaceCheck = Date.now();
+    let preparedAny = false;
     try {
-        const release = await fetch('http://127.0.0.1:8000/extension-release', {cache:'no-store',signal:AbortSignal.timeout(4000)}).then(r=>r.ok?r.json():null);
         const current = chrome.runtime.getManifest().version;
-        if (!release?.version || release.version === current) return;
-        const disk = await fetch(chrome.runtime.getURL('manifest.json'), {cache:'no-store'}).then(r=>r.json());
-        // Never loop reloading an old ZIP extraction. Load the workspace's
-        // extension directory once to enable local file updates.
-        if (disk.version !== release.version) return;
+        const ready = await workspaceVersionFile('workspace-release.json');
+        if (typeof ready !== 'string' || !/^\d+(?:\.\d+){1,3}$/.test(ready) || ready === current) return;
+        if (await workspaceVersionFile('manifest.json') !== ready) return;
         const tabs = (await chrome.tabs.query({})).filter(tab=>/^https?:\/\//.test(tab.url || ''));
         const states = await Promise.all(tabs.map(async tab=>{
-            try {return {tab,state:await chrome.tabs.sendMessage(tab.id,{action:'assistantUpdateStatus'})};}
+            try {return {tab,state:await chrome.tabs.sendMessage(tab.id,{action:'assistantUpdateStatus'},{frameId:0})};}
             catch {return {tab,state:null};}
         }));
         if (states.some(item=>item.state?.busy)) return;
         for (const {tab,state} of states) {
             if (!state) continue;
-            const prepared = await chrome.tabs.sendMessage(tab.id,{action:'assistantPrepareUpdate'});
+            const prepared = await chrome.tabs.sendMessage(tab.id,{action:'assistantPrepareUpdate'},{frameId:0});
             if (!prepared?.ready) {await attachUpdatedPanels();return;}
+            preparedAny = true;
         }
+        await rememberDetachedPanelForUpdate(ready);
         chrome.runtime.reload();
-    } catch { /* Offline server or restricted tab: retry on the next alarm. */ }
+    } catch {
+        // A tab can navigate between the idle and prepare checks.
+        if (preparedAny) await attachUpdatedPanels();
+    }
     finally {updateCheckRunning=false;}
 }
 async function attachUpdatedPanels() {
@@ -43,14 +54,14 @@ async function attachUpdatedPanels() {
         } catch { /* Chrome may restrict particular sites; leave them alone. */ }
     }
 }
-chrome.alarms.create('assistant-workspace-update',{periodInMinutes:1});
+chrome.alarms.create('assistant-workspace-update',{periodInMinutes:0.5});
 chrome.alarms.onAlarm.addListener(alarm => {
     if (alarm.name !== 'assistant-workspace-update') return;
     void checkWorkspaceUpdate();
     void updateJournalBadge();
 });
 chrome.runtime.onInstalled.addListener(details => {
-    void attachUpdatedPanels();
+    void attachUpdatedPanels().then(() => restoreDetachedPanelAfterUpdate()).catch(() => {});
     if (details.reason === 'update') void clearRetiredReminderSettings();
 });
 
@@ -109,7 +120,13 @@ chrome.runtime.onMessage.addListener((request: AssistantMessage, sender, sendRes
     if (!request || typeof request.action !== 'string') {
         sendResponse({error:'Invalid extension message'}); return false;
     }
+    if (request.action === 'checkWorkspaceUpdate' && sender.id === chrome.runtime.id) {
+        sendResponse({ok:true});
+        void checkWorkspaceUpdate();
+        return false;
+    }
     if (['panel:open', 'panel:snapshot', 'panel:action', 'panel:return', 'panel:target-status'].includes(request.action)) {
+        if (request.action === 'panel:snapshot' && sender.id === chrome.runtime.id) void checkWorkspaceUpdate();
         return browserAssistantDetachedMessage(request, sender, sendResponse);
     }
     if (request.action === 'journalCountdowns' && sender.id === chrome.runtime.id) {

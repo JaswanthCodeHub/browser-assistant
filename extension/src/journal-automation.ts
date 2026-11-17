@@ -2,6 +2,10 @@ function formatJournalTime(seconds: number) {
     return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
+function isSidusJournalOrigin(origin: string) {
+    return origin === 'https://sidus.net' || origin === 'https://www.sidus.net';
+}
+
 function browserAssistantJournal(global) {
     'use strict';
     const keys = ['experience', 'feelings', 'learning', 'application', 'conclusion'];
@@ -93,7 +97,7 @@ function browserAssistantJournal(global) {
     }
     const api = {validate, metadata, fields, pageText, readField, writeField, remainingSeconds};
     if (typeof module !== 'undefined') module.exports = api;
-    if (!global.document || global.location?.origin !== 'https://admissions.aurora.edu.in') return;
+    if (!global.document || !isSidusJournalOrigin(global.location?.origin)) return;
     if (!/^\/modules\/reflective-journal\//.test(global.location.pathname)) return;
     const existing = document.getElementById('assistant-journal');
     const journalBuild = global.chrome?.runtime?.getManifest?.().version || 'development';
@@ -110,7 +114,7 @@ function browserAssistantJournal(global) {
     panel.innerHTML = '<strong>Reflective Journal</strong><p data-info></p><p data-countdown></p><textarea aria-label="Your class experience and feelings" placeholder="Your actual class experience / feelings (optional)" rows="3"></textarea><button type="button">Fill &amp; Submit Journal</button><p role="status" aria-live="polite"></p>';
     document.body.appendChild(panel);
     const controls = document.createElement('div');
-    controls.innerHTML = '<label>Subject <select data-subject aria-label="Journal subject"><option value="">Detect from page</option><option>Backend Development Fundamentals</option><option>Computer Organization and Architecture</option><option>Advanced Data Structures</option><option>Linear Algebra Essentials</option><option>Fundamentals of Artificial Intelligence</option></select></label><label>Module / Journal <select data-number aria-label="Journal number"><option value="">Detect from page</option>' + Array.from({length:10},(_,i)=>`<option value="${i+1}">${i+1}</option>`).join('') + '</select></label>';
+    controls.innerHTML = '<label>Subject <select data-subject aria-label="Journal subject"><option value="">Detect from page</option><option>Backend Development Fundamentals</option><option>Computer Organization and Architecture</option><option>Advanced Data Structures</option><option>Linear Algebra Essentials</option><option>Fundamentals of Artificial Intelligence</option><option>Foundation of Data Science</option></select></label><label>Module / Journal <select data-number aria-label="Journal number"><option value="">Detect from page</option>' + Array.from({length:10},(_,i)=>`<option value="${i+1}">${i+1}</option>`).join('') + '</select></label>';
     panel.insertBefore(controls, panel.querySelector('textarea'));
     const status = panel.querySelector('[role=status]'), button = panel.querySelector('button');
     const countdown = panel.querySelector<HTMLElement>('[data-countdown]');
@@ -439,7 +443,7 @@ function browserAssistantJournal(global) {
         document.removeEventListener('keydown', shortcutListener, true);
     }
 }
-if (typeof window !== 'undefined' && location.origin === 'https://admissions.aurora.edu.in') {
+if (typeof window !== 'undefined' && isSidusJournalOrigin(location.origin)) {
     const ongoingJournalStartLink = (): HTMLAnchorElement | null => {
         const links = [...document.querySelectorAll<HTMLAnchorElement>('a[href*="/modules/reflective-journal/"]')].filter(link =>
             [...(link.closest('tr,[role="row"]')?.querySelectorAll('*') || [])].some(node => /^Ongoing$/i.test(node.textContent.trim())) && link.getClientRects().length
@@ -485,7 +489,7 @@ if (typeof window !== 'undefined' && location.origin === 'https://admissions.aur
     }
 }
 browserAssistantJournal(typeof window === 'undefined' ? globalThis : window);
-if (typeof window !== 'undefined' && location.origin === 'https://admissions.aurora.edu.in' && !window.BrowserAssistantJournalBoot) {
+if (typeof window !== 'undefined' && isSidusJournalOrigin(location.origin) && !window.BrowserAssistantJournalBoot) {
     window.BrowserAssistantJournalBoot = true;
     let lastDeadline: number | undefined;
     const storage = window.chrome?.storage?.local;
