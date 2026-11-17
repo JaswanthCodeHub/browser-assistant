@@ -1,3 +1,7 @@
+# 2.9.20
+
+- Keep CCBP classroom quiz automation waiting while the instructor start dialog is visible, then resume when the first question loads.
+
 # 2.9.19
 
 - Add all ten Foundation of Data Science modules to Reflective Journal, including the listed labs.

@@ -1,4 +1,8 @@
-# Browser Assistant 2.9.19
+# Browser Assistant 2.9.20
+
+- Alt+A can start a waiting run on the CCBP classroom quiz lobby. The extension waits for the instructor and continues when the first question appears.
+
+## Browser Assistant 2.9.19
 
 - Foundation of Data Science is available for Reflective Journal, with all ten modules from the supplied syllabus and a manual subject option.
 

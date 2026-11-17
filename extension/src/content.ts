@@ -450,19 +450,30 @@ function mountJournalCountdown(signal: AbortSignal) {
     }
 
     async function waitForReadableQuestion(runId, timeoutMs = 15000) {
-        let deadline = Date.now() + timeoutMs;
-        while (Date.now() < deadline && automation.running && automation.runId === runId) {
+        let deadline: number | null = Date.now() + timeoutMs;
+        while (automation.running && automation.runId === runId) {
             const pausedAt = Date.now();
             if (!(await waitWhilePaused(runId))) return null;
-            deadline += Date.now() - pausedAt;
+            if (deadline !== null) deadline += Date.now() - pausedAt;
             const context = getAutomationContext();
             if (context.mode !== 'FULL' || context.target.id !== automation.targetId) return null;
+            if (context.target.id === 'ccbp-learning-practice' && getAutomationAdapter(context)?.isWaitingForInstructor?.(document)) {
+                deadline = null;
+                automation.state = 'WAITING_FOR_INSTRUCTOR'; updateAutomationUI();
+                await new Promise(resolve => setTimeout(resolve, 250));
+                continue;
+            }
+            deadline ??= Date.now() + timeoutMs;
+            if (Date.now() >= deadline) return null;
             const question = getAuthorizedQuestion(context);
             if (question) return question;
             automation.state = 'WAITING_FOR_QUESTION'; updateAutomationUI();
             await new Promise(resolve => setTimeout(resolve, 100));
         }
         return null;
+    }
+    function isClassQuizRoute(pathname: string) {
+        return /\/(?:[\w]+-)*quiz(?:\/|$)/i.test(pathname);
     }
     let lastObservedAutomationUrl = window.location.href;
     function revalidateAutomationAfterNavigation() {
@@ -471,7 +482,9 @@ function mountJournalCountdown(signal: AbortSignal) {
         lastObservedAutomationUrl = currentUrl;
         if (navigated && automation.running) {
             const context = getAutomationContext();
-            if (automation.pendingNavigation && context.mode === 'FULL' && context.target.id === automation.targetId) {
+            const instructorOpenedQuiz = automation.targetId === 'ccbp-learning-practice'
+                && automation.state === 'WAITING_FOR_INSTRUCTOR' && isClassQuizRoute(window.location.pathname);
+            if ((automation.pendingNavigation || instructorOpenedQuiz) && context.mode === 'FULL' && context.target.id === automation.targetId) {
                 automation.pendingNavigation = false;
                 updateAutomationUI();
                 return;
@@ -1443,7 +1456,9 @@ function mountJournalCountdown(signal: AbortSignal) {
         }
         // Course instruction pages have no options yet. Start the selected
         // practice first, then resume when its first question is available.
-        if (!getAuthorizedQuestion(initialContext)) {
+        const waitingForInstructor = initialContext.target.id === 'ccbp-learning-practice'
+            && adapter.isWaitingForInstructor?.(document);
+        if (!waitingForInstructor && !getAuthorizedQuestion(initialContext)) {
             const startPractice = adapter.getStartPractice?.(document);
             if (startPractice && automationPolicy.canExecute('navigate', initialContext)) {
                 automation.state = 'STARTING_PRACTICE';
@@ -1473,6 +1488,12 @@ function mountJournalCountdown(signal: AbortSignal) {
             const context = getAutomationContext();
             const currentAdapter = getAutomationAdapter(context);
             if (context.mode !== 'FULL' || currentAdapter?.id !== adapter.id) { stopAutomation('UNAUTHORIZED'); break; }
+            if (context.target.id === 'ccbp-learning-practice' && currentAdapter.isWaitingForInstructor?.(document)) {
+                if (await waitForReadableQuestion(runId)) continue;
+                if (!automation.running || automation.runId !== runId) break;
+                automation.error = questionDetectionError();
+                stopAutomation('PAUSED'); break;
+            }
             const blocked = currentAdapter.getBlockingReason?.(document);
             if (blocked) { automation.error = blocked; stopAutomation('PAUSED'); break; }
             if (currentAdapter.isSaving?.(document)) {
@@ -2106,8 +2127,10 @@ function mountJournalCountdown(signal: AbortSignal) {
         const journalPage = Boolean(journal?.matches());
         const canNavigate = automationPolicy?.canExecute('navigate', context);
         const startPractice = !question && canNavigate && adapter?.getStartPractice?.(document);
+        const waitingForInstructor = context.target.id === 'ccbp-learning-practice' && adapter?.isWaitingForInstructor?.(document);
         const type = journalPage ? 'Journal' : batch && canNavigate ? 'Batch Coding'
             : question?.type === 'code' || (ide && canNavigate) ? 'Coding'
+            : waitingForInstructor ? 'Quiz'
             : question || startPractice ? (/quiz/i.test(location.pathname) ? 'Quiz' : 'MCQ')
             : null;
         if (!type) { showAutomationNotice('Automation is unavailable on this page.'); return; }
@@ -2892,6 +2915,8 @@ function mountJournalCountdown(signal: AbortSignal) {
         const context = getAutomationContext();
         const isFresh = Number.isFinite(resume?.createdAt) && Date.now() - resume.createdAt < 120000;
         if (!isFresh || resume.targetId !== context.target?.id || context.mode !== 'FULL') return;
+        if (resume.stage === 'instructor' && (resume.targetId !== 'ccbp-learning-practice'
+            || (location.href !== resume.fromUrl && !isClassQuizRoute(location.pathname)))) return;
         if (!directRun) { isCollapsed = false; render(); }
         const adapter = getAutomationAdapter(context);
         if (!adapter) return;
@@ -2918,8 +2943,9 @@ function mountJournalCountdown(signal: AbortSignal) {
         }
 
         if (resume.stage === 'solve') {
-            const question = await waitForCourseAction(() => getAuthorizedQuestion(context));
-            if (!question) { automation.state = 'PAUSED'; automation.error = 'New MCQ question did not load.'; updateAutomationUI(); return; }
+            const ready = await waitForCourseAction(() => getAuthorizedQuestion(context)
+                || (context.target.id === 'ccbp-learning-practice' && adapter.isWaitingForInstructor?.(document)));
+            if (!ready) { automation.state = 'PAUSED'; automation.error = 'New MCQ question did not load.'; updateAutomationUI(); return; }
         }
         void startPracticeAutomation();
     }
@@ -2950,6 +2976,10 @@ function mountJournalCountdown(signal: AbortSignal) {
     }
     if (directRun && !hasDirectRunContinuation()) finishDirectRun('Stopped');
     window.addEventListener('pagehide', () => {
+        if (automation.running && !automation.paused && automation.state === 'WAITING_FOR_INSTRUCTOR'
+            && automation.targetId === 'ccbp-learning-practice') {
+            saveCourseResume('instructor', getAutomationContext(), {fromUrl: location.href});
+        }
         if (!hasDirectRunContinuation()) finishDirectRun('Stopped');
     }, {signal:lifecycle.signal});
     if (!reopenedAfterUpdate) void resumeCodingBatch().then(resumed => {

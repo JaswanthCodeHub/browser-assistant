@@ -362,6 +362,48 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
             });
         }
 
+        await t.test('Alt+A waits in the CCBP instructor lobby and continues after the quiz opens', async () => {
+            const page = await context.newPage();
+            const lobbyUrl = 'https://learning.ccbp.in/course?s_id=instructor-wait-test';
+            const quizPath = '/classroom-quiz/instructor-wait-test';
+            try {
+                await page.route(lobbyUrl, route => route.fulfill({contentType: 'text/html', body: `<!doctype html>
+                    <main><h1>In class Quiz</h1><button id="join">Join Quiz</button></main>
+                    <div role="dialog"><h2>Waiting for Instructor to start the Quiz...</h2>
+                    <p>If the instructor has already started the quiz, please reload the page.</p></div>
+                    <script>
+                        window.joinClicks = 0;
+                        document.querySelector('#join').onclick = () => { window.joinClicks++; };
+                    </script>`}));
+                await page.goto(lobbyUrl);
+                await page.locator('#assistant-trigger').waitFor();
+                await page.keyboard.press('Alt+a');
+                await page.keyboard.press('Backquote');
+                await page.locator('#mode-qa').click();
+                await page.locator('#assistant-automation-state').getByText('WAITING_FOR_INSTRUCTOR', {exact: true}).waitFor();
+                assert.equal(await worker.evaluate(() => testRequests.filter(request => request.url?.includes('instructor-wait-test')
+                    && request.path.startsWith('/solve')).length), 0);
+                await page.evaluate(path => {
+                    history.pushState({}, '', path);
+                    document.querySelector('[role="dialog"]').remove();
+                    document.querySelector('main').outerHTML = `
+                        <main id="generic-question-container">
+                            <p id="generic-question-wrapper-id">What is 6 + 7?</p>
+                            <label><input type="radio" name="answer" value="11">11</label>
+                            <label><input type="radio" name="answer" value="12">12</label>
+                            <label><input type="radio" name="answer" value="13">13</label>
+                            <button>Submit</button>
+                        </main>`;
+                    document.querySelector('main button').onclick = () => {
+                        window.submittedAnswer = document.querySelector('input:checked')?.value;
+                        document.querySelector('main').innerHTML = '<p>Quiz completed</p>';
+                    };
+                }, quizPath);
+                await page.getByText('Quiz completed', {exact: true}).waitFor();
+                assert.deepEqual(await page.evaluate(() => [window.submittedAnswer, window.joinClicks]), ['13', 0]);
+            } finally { await page.close(); }
+        });
+
         await t.test('Alt+A starts the filtered CCBP coding batch with the panel closed', async () => {
             const page = await context.newPage();
             const listUrl = 'https://learning.ccbp.in/problems-set';

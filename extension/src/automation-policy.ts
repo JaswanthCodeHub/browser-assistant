@@ -727,6 +727,12 @@
             const next = buttons.filter((button) => /^(next|continue)$/i.test((button.innerText || button.getAttribute('aria-label') || '').trim()));
             return next.length === 1 ? next[0] : null;
         },
+        isWaitingForInstructor(doc) {
+            return [...doc.querySelectorAll('p,span,div,h1,h2,h3,h4,h5,h6,[role="status"]')].some(node =>
+                node.getClientRects().length && !node.closest('#assistant-root,[hidden],[aria-hidden="true"]')
+                && /^waiting for (?:the )?instructor to start the quiz[.!…\s]*$/i.test(
+                    (node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim()));
+        },
         isWaitingForParticipants(doc) {
             const labels = [...doc.querySelectorAll('p,span,div,h1,h2,h3,h4')]
                 .filter(node => node.getClientRects().length && !node.closest('#assistant-root') && !node.children.length)

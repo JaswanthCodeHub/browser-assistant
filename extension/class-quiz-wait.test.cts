@@ -14,7 +14,41 @@ test('class waiting modal is detected separately from quiz completion', () => {
     document.querySelector('[role="dialog"]').innerHTML = '<h2>Quiz Completed</h2>';
     assert.equal(adapter.isWaitingForParticipants(document), false);
     assert.equal(adapter.isComplete(document), true);
+    document.querySelector('[role="dialog"]').innerHTML =
+        '<h2 hidden>Waiting for Instructor to start the Quiz...</h2><p>If the instructor has already started the quiz, please reload the page.</p>';
+    assert.equal(adapter.isWaitingForInstructor(document), false);
+    document.querySelector('h2').removeAttribute('hidden');
+    assert.equal(adapter.isWaitingForInstructor(document), true);
+    assert.equal(adapter.isComplete(document), false);
 });
+
+for (const cancel of [false, true]) {
+    test(`the instructor lobby ${cancel ? 'can be stopped' : 'waits past 15 seconds and allows the question to load'}`, async () => {
+        let now = 0;
+        const automation = {running: true, runId: 1, targetId: 'ccbp-learning-practice'};
+        const question = {signature: 'first-question'};
+        const adapter = {isWaitingForInstructor: () => now < 45_000};
+        const source = fs.readFileSync(`${__dirname}/content.js`, 'utf8');
+        const context = vm.createContext({
+            automation, document: {}, Date: {now: () => now},
+            getAutomationContext: () => ({mode: 'FULL', target: {id: automation.targetId}}),
+            getAutomationAdapter: () => adapter,
+            waitWhilePaused: async () => automation.running,
+            getAuthorizedQuestion: () => now >= 49_000 ? question : null,
+            updateAutomationUI() {},
+            setTimeout: (fn, ms) => {
+                now += ms;
+                if (cancel && now >= 20_000) automation.running = false;
+                fn();
+            },
+        });
+        vm.runInContext(source.slice(source.indexOf('    async function waitForReadableQuestion('),
+            source.indexOf('    function isClassQuizRoute(')), context);
+        const result = await context.waitForReadableQuestion(1);
+        assert.equal(result, cancel ? null : question);
+        assert.equal(now, cancel ? 20_000 : 49_000);
+    });
+}
 
 for (const method of ['waitForPracticeTransition', 'waitForAdvanceOrTransition']) {
     test(`${method} waits through a 12-second class hold and resumes without clicking`, async () => {
