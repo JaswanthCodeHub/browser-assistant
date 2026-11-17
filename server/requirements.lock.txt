@@ -380,13 +380,14 @@ tree-sitter-embedded-template==0.25.0 \
     --hash=sha256:fa0d06467199aeb33fb3d6fa0665bf9b7d5a32621ffdaf37fd8249f8a8050649 \
     --hash=sha256:fc7aacbc2985a5d7e7fe7334f44dffe24c38fb0a8295c4188a04cf21a3d64a73
     # via tree-sitter-language-pack
-tree-sitter-language-pack==0.13.0 \
-    --hash=sha256:032034c5e27b1f6e00730b9e7c2dbc8203b4700d0c681fd019d6defcf61183ec \
-    --hash=sha256:0d4f261fce387ae040dae7e4d1c1aca63d84c88320afcc0961c123bec0be8377 \
-    --hash=sha256:0e7eae812b40a2dc8a12eb2f5c55e130eb892706a0bee06215dd76affeb00d07 \
-    --hash=sha256:1cdbc88a03dacd47bec69e56cc20c48eace1fbb6f01371e89c3ee6a2e8f34db1 \
-    --hash=sha256:78f369dc4d456c5b08d659939e662c2f9b9fba8c0ec5538a1f973e01edfcf04d \
-    --hash=sha256:7fdacf383418a845b20772118fcb53ad245f9c5d409bd07dae16acec65151756
+tree-sitter-language-pack==1.22.1 \
+    --hash=sha256:34e4e7a77d02d102abf95c7b088962fcd56825bd48eabbe80f93e1d43665e7ad \
+    --hash=sha256:624d90afb8b210584bdcb871935385035872eeb12b26e41f487c0c8e1cab350b \
+    --hash=sha256:852a0129463a94f898dda2aa9616fb19e598d9a0a9d3024ec9dc2bffb3fa7945 \
+    --hash=sha256:8a476b71c2f6c71f23b0b63f5ff6f72a8ba2c11901db63c360ebcaf1fc51af5c \
+    --hash=sha256:b85116c8a8d7bbdca2e1be8068d6c3d4f0ac66e95b3310a6dbdd21fc87332323 \
+    --hash=sha256:d34a528bdd845d024c42da3fa43495c5d51c66151597ea6e46a1e9d79d863e89 \
+    --hash=sha256:e0cba16312890fc7747da5fb5edb7aabfc68aac7db0ebab5212986a67cd01ed4
     # via -r server/requirements.txt
 tree-sitter-yaml==0.7.2 \
     --hash=sha256:0807b7966e23ddf7dddc4545216e28b5a58cdadedcecca86b8d8c74271a07870 \
