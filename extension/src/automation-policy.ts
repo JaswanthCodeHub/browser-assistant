@@ -73,10 +73,14 @@
             const question = doc.querySelector('[data-practice-question-text]');
             const optionNodes = [...doc.querySelectorAll('[data-practice-option]')];
             if (!question || optionNodes.length < 2) return null;
-            const options = optionNodes.map((node, index) => ({
-                index, text: (node.textContent || '').replace(/\s+/g, ' ').trim(), node,
-                input: node.querySelector('input:not(:disabled)'),
-            }));
+            const options = optionNodes.map((node, index) => {
+                const text = (node.textContent || '').replace(/\s+/g, ' ').trim();
+                const label = String.fromCharCode(65 + index) + '. ';
+                return {
+                    index, text: text.startsWith(label) ? text.slice(label.length) : text, node,
+                    input: node.querySelector('input:not(:disabled)'),
+                };
+            });
             if (options.some((option) => !option.input) || !question.textContent.trim()) return null;
             return { text: question.textContent.replace(/\s+/g, ' ').trim(), options, form: question.closest('form') || doc.querySelector('form') };
         },
@@ -179,6 +183,7 @@
                 if (!groups.has(key)) groups.set(key, []);
                 groups.get(key).push(control);
             }
+            const radioCandidates = [];
             for (const group of groups.values()) {
                 if (group.length < 2) continue;
                 const container = group[0].closest('fieldset,[role="radiogroup"],form')
@@ -189,6 +194,7 @@
                     const input = control.matches('input[type="radio"],input[type="checkbox"]') ? control : control.querySelector('input[type="radio"],input[type="checkbox"]');
                     const label = input?.labels?.[0]
                         || (input?.id ? doc.querySelector(`[for="${CSS.escape(input.id)}"]`) : null)
+                        || input?.closest('label')
                         || (control.matches('label') ? control : null);
                     const optionControl = label && input ? label : control;
                     const optionText = textOf(label) || textOf(control) || control.getAttribute('aria-label') || control.getAttribute('value') || '';
@@ -206,6 +212,9 @@
                 const heading = fieldset?.querySelector('legend')
                     || radioGroup?.querySelector('h1,h2,h3,h4,[role="heading"]')
                     || container.querySelector?.('h1,h2,h3,h4,[role="heading"]');
+                const localPrompt = [...optionScope.querySelectorAll('p,h1,h2,h3,h4,[role="heading"],div,span')]
+                    .find(node => !node.querySelector('input[type="radio"],input[type="checkbox"],[role="radio"],[role="checkbox"]')
+                        && textOf(node).length >= 12 && textOf(node).length <= 1200);
                 let nearbyPrompt = '';
                 let branch = optionScope;
                 for (let ancestor = optionScope; ancestor && ancestor !== doc.body && !nearbyPrompt; ancestor = ancestor.parentElement) {
@@ -221,7 +230,7 @@
                     branch = ancestor;
                     if (ancestor === doc.body) break;
                 }
-                const text = textOf(heading) || labelledText(radioGroup) || labelledText(container)
+                const text = textOf(heading) || textOf(localPrompt) || labelledText(radioGroup) || labelledText(container)
                     || radioGroup?.getAttribute('aria-label') || container.getAttribute('aria-label') || nearbyPrompt;
                 if (!text.trim()) continue;
                 // Coding MCQs often render the code separately from the prose
@@ -259,10 +268,23 @@
                 const identityRegion = promptRegion?.cloneNode(true);
                 identityRegion?.querySelectorAll('pre,code,.ace_editor,.CodeMirror,.monaco-editor,button,input,textarea,script,style').forEach(node => node.remove());
                 const identityText = identityRegion ? textOf(identityRegion) : text.trim();
-                return {
+                radioCandidates.push({
                     text: questionText, identityText: identityText || text.trim(), options, visualRegion: sourceRegion,
                     selectionType: group[0].matches('input[type="checkbox"],[role="checkbox"]') ? 'multiple' : 'single',
                     form: container.matches('form') ? container : container.closest('form'), container: optionScope,
+                });
+            }
+            if (radioCandidates.length === 1) return radioCandidates[0];
+            if (radioCandidates.length > 1) {
+                const unanswered = radioCandidates.find(candidate => !candidate.options.some(option => option.isSelected?.() || option.input?.checked));
+                const active = unanswered || radioCandidates[0];
+                const pageCopy = doc.body.cloneNode(true);
+                pageCopy.querySelectorAll('#assistant-root,input,button,[role="button"],script,style').forEach(node => node.remove());
+                return {
+                    ...active,
+                    type: 'compound-mcq',
+                    compoundQuestions: radioCandidates,
+                    compoundContext: textOf(pageCopy).slice(0, 12000),
                 };
             }
             // Letter-badge cards (A, B, C...) do not always expose native

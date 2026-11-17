@@ -1,3 +1,23 @@
+# 2.9.4
+
+- Run Alt+A automation directly without opening, expanding, or moving either assistant panel; ignore the shortcut while a text or code editor has focus.
+- Record direct automation runs independently from scan history in the existing local SQLite database.
+- Detect linked multi-blank questions with one shared Submit action, verify each blank separately, and select every answer before submission.
+
+# 2.9.3
+
+- Restyle the floating panel, popup, journal controls, countdown, and practice quiz with frosted surfaces and opaque, high-contrast text.
+- Add visible keyboard focus, readable disabled states, and compact layouts for narrow viewports.
+
+# 2.9.2
+
+- Reconnect Text Scan after the backend starts without requiring a page reload.
+- Keep option letters from appearing twice in the local practice quiz scan.
+- Include illustrations in answer buttons in Vision Scan.
+- Keep Groq fallback keys available to each request during concurrent retries.
+- Keep the backend available if the journal syllabus or prompt is missing.
+- Clarify which Python environment to use to install and start the backend on Windows.
+
 # 2.9.1
 
 - Roll back the v2.9.0 feature set and restore the v2.8.26 implementation.

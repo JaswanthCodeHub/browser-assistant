@@ -59,7 +59,7 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
                 return Response.json({
                     answer_verified: true,
                     provider: 'local test',
-                    results: JSON.stringify([{type: 'mcq', question: 'What is 6 + 7?', answer: 'Option C: C. 13'}]),
+                    results: JSON.stringify([{type: 'mcq', question: 'What is 6 + 7?', answer: 'Option C: 13'}]),
                 });
             };
         });
@@ -166,9 +166,11 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
             await second.reload();
             await second.locator('#assistant-root.assistant-detached').waitFor({state: 'attached'});
             await detached.locator('#assistant-scan-btn').waitFor();
+            const modeBeforeShortcut = await detached.locator('#mode-qa').getAttribute('aria-selected');
             await detached.keyboard.press('Alt+a');
-            await eventually(() => detached.locator('#mode-qa').getAttribute('aria-selected').then(value => value === 'true'),
-                'Alt+A should reach QA Control in the selected tab');
+            await sleep(250);
+            assert.equal(await detached.locator('#mode-qa').getAttribute('aria-selected'), modeBeforeShortcut,
+                'Alt+A must run directly without changing the panel tab or opening its controls');
             await detached.close();
             await second.locator('#assistant-root').waitFor();
             await popup.reload();
@@ -190,7 +192,7 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
             const openedBeforeRestart = context.waitForEvent('page');
             assert.deepEqual(await openFromToolbar(secondId), {ok: true});
             const reopenedPanel = await openedBeforeRestart;
-            await reopenedPanel.locator('#mode-qa[aria-selected="true"]').waitFor();
+            await reopenedPanel.locator('#assistant-root').waitFor();
         });
 
         await t.test('remembers the separate mode after Chromium restarts', async () => {

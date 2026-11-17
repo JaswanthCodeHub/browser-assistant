@@ -5,12 +5,85 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Browser Assistant Local Practice Quiz</title>
   <style>
-    body { font-family: system-ui, sans-serif; background: #f5f7fb; color: #172033; margin: 0; padding: 32px 16px; }
-    main { max-width: 700px; margin: auto; background: #fff; padding: 28px; border-radius: 16px; box-shadow: 0 8px 28px #1d2d5030; }
-    .tag { color:#3654c5; font-weight:700; font-size:.8rem; letter-spacing:.08em; text-transform:uppercase; }
-    h1 { margin:.2rem 0 1.2rem; } .option { display:block; padding:13px; margin:9px 0; border:1px solid #d8deef; border-radius:9px; cursor:pointer; }
-    .option:has(input:checked) { border-color:#4f6ee8; background:#edf1ff; } button { margin-top:16px; padding:11px 18px; border:0; border-radius:8px; background:#425ed9; color:#fff; font-weight:700; cursor:pointer; }
-    #feedback { min-height:1.5em; font-weight:600; } .done { color:#168152; font-size:1.15rem; }
+    body {
+      box-sizing: border-box;
+      min-height: 100vh;
+      margin: 0;
+      padding: clamp(52px, 9vh, 100px) 16px 32px;
+      color-scheme: dark;
+      font: 16px/1.5 Inter, system-ui, sans-serif;
+      color: #f7fbff;
+      background: radial-gradient(ellipse at 0% 0%, #283f85, transparent 63%),
+        radial-gradient(ellipse at 95% 100%, #146263, transparent 62%),
+        linear-gradient(145deg, #101831, #080f20 62%);
+    }
+    body > main {
+      box-sizing: border-box;
+      max-width: 640px;
+      margin: auto;
+      padding: clamp(18px, 5vw, 36px);
+      border: 1px solid rgb(191 215 255 / 34%);
+      border-radius: 25px;
+      background: rgb(8 15 33 / 65%);
+      backdrop-filter: blur(24px) saturate(135%);
+      box-shadow: 0 22px 60px rgb(4 10 26 / 40%), inset 0 1px rgb(224 238 255 / 16%);
+    }
+    .tag { color: #acd6ff; font-size: .81rem; font-weight: 720; letter-spacing: .07em; text-transform: uppercase; }
+    h1 { margin: 4px 0 12px; font-size: clamp(2rem, 6vw, 3.15rem); line-height: 1.07; letter-spacing: -.045em; }
+    #progress { margin: 0 0 16px; color: #c7d4eb; font-size: .875rem; font-weight: 650; }
+    #question-card {
+      padding: clamp(13px, 3vw, 22px);
+      border: 1px solid rgb(191 215 255 / 30%);
+      border-radius: 16px;
+      background: rgb(26 40 66 / 60%);
+      backdrop-filter: blur(16px);
+      box-shadow: 0 8px 24px rgb(4 10 26 / 24%);
+    }
+    #question-card h2 { margin: 0 0 14px; font-size: clamp(1.1rem, 3vw, 1.45rem); line-height: 1.3; }
+    .option {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 8px 0;
+      padding: 10px 12px;
+      border: 1px solid rgb(191 215 255 / 60%);
+      border-radius: 10px;
+      background: rgb(4 11 27 / 64%);
+      backdrop-filter: blur(12px);
+      cursor: pointer;
+    }
+    .option input { margin: 0; accent-color: #a5f6da; }
+    .option:hover { border-color: #acd6ff; }
+    .option:has(input:checked) { border-color: #a5f6da; background: rgb(20 67 66 / 82%); }
+    [data-practice-submit] {
+      margin-top: 10px;
+      padding: 10px 16px;
+      border: 1px solid transparent;
+      border-radius: 9px;
+      background: linear-gradient(125deg, #a5e8ff, #c2bbff);
+      color: #111b33;
+      font: inherit;
+      font-weight: 750;
+      cursor: pointer;
+    }
+    [data-practice-submit]:hover:not(:disabled) { background: linear-gradient(125deg, #c0f1ff, #d3ccff); }
+    [data-practice-submit]:disabled {
+      background: rgb(4 11 27 / 64%);
+      border: 1px dashed rgb(191 215 255 / 60%);
+      color: #c7d4eb;
+      cursor: not-allowed;
+    }
+    .option:has(input:focus-visible), [data-practice-submit]:focus-visible { outline: 2px solid #acd6ff; outline-offset: 2px; }
+    #feedback { margin: 12px 0 0; min-height: 1.5em; color: #f7fbff; font-weight: 650; }
+    .done { color: #a5f6da; font-weight: 700; }
+    @supports not (backdrop-filter: blur(12px)) {
+      body > main { background: #13213a; }
+      #question-card { background: #202e47; }
+    }
+    @media (forced-colors: active) {
+      .option:has(input:checked) { border-color: Highlight; }
+      .option:has(input:focus-visible), [data-practice-submit]:focus-visible { outline-color: Highlight; }
+    }
   </style>
 </head>
 <body>

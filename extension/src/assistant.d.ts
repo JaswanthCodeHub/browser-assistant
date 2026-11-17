@@ -123,6 +123,7 @@ interface AssistantJournal extends Omit<AssistantJournalSession, 'path'> {
     opening: boolean;
     matches(): boolean;
     active?(): AssistantJournalSession;
+    getStartLink?(): HTMLAnchorElement | null;
 }
 interface AssistantAceEditor {
     getValue(): string;

@@ -3,11 +3,14 @@
 (function () {
     function nodes(question) {
         const found = new Set<Element>();
-        for (const region of [question.visualRegion, ...question.options.map(option => option.node)]) {
+        const optionRegions = question.options.map(option => option.node).filter(Boolean);
+        for (const region of [question.visualRegion, ...optionRegions]) {
             if (!region) continue;
             const candidates = region.matches('img,svg,canvas') ? [region] : region.querySelectorAll('img,svg,canvas');
             for (const node of candidates) {
-                if (node.closest('#assistant-root,nav,aside,button') || !node.getClientRects().length) continue;
+                if (node.closest('#assistant-root,nav,aside') || !node.getClientRects().length) continue;
+                const button = node.closest('button');
+                if (button && !optionRegions.some(option => button.contains(option) && option.contains(node))) continue;
                 if (node.parentElement?.closest('svg')) continue;
                 const width = node.naturalWidth || node.width?.baseVal?.value || Number(node.getAttribute('width'));
                 const height = node.naturalHeight || node.height?.baseVal?.value || Number(node.getAttribute('height'));

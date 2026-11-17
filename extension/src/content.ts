@@ -80,7 +80,7 @@ function mountJournalCountdown(signal: AbortSignal) {
     };
     const navigationCleanup = [];
 
-    console.log("Browser Assistant v3.0 loaded.");
+    console.log("Browser Assistant v" + extensionVersion + " loaded.");
 
     const SERVER = 'http://localhost:8000';
 
@@ -193,14 +193,14 @@ function mountJournalCountdown(signal: AbortSignal) {
 
     initDrag();
     restorePanelPosition();
-    const panelResize = new ResizeObserver(() => {
+    const panelResizeObserver = new ResizeObserver(() => {
         if (!root.style.left || !root.offsetWidth || dragState.dragging) return;
-        const {left, top} = root.getBoundingClientRect();
-        const {x, y} = clampPanelPosition(left, top);
-        if (x !== left || y !== top) setPanelPosition(left, top);
+        const { left, top } = root.getBoundingClientRect();
+        const { x, y } = clampPanelPosition(left, top);
+        if (left !== x || top !== y) setPanelPosition(left, top);
     });
-    panelResize.observe(root);
-    lifecycle.signal.addEventListener('abort', () => panelResize.disconnect(), {once: true});
+    panelResizeObserver.observe(root);
+    lifecycle.signal.addEventListener('abort', () => panelResizeObserver.disconnect(), { once: true });
 
     let isCollapsed = true;
     // Scan type and visible tab are intentionally separate. Switching away
@@ -220,6 +220,19 @@ function mountJournalCountdown(signal: AbortSignal) {
         state: 'IDLE', running: false, paused: false, runId: 0,
         processed: new Set(), completed: 0, error: '', currentSignature: '',
     };
+    const directRunKey = 'browserAssistantDirectRun';
+    let directRun: {
+        id: string; type: string; url: string; started_at: string; ended_at: string | null;
+        total: number | null; completed: number; failed: number; status: string; revision: number;
+    } | null = null;
+    let directRunStarting = false;
+    let noticeTimer: number;
+    let automationNotice = '';
+    try {
+        const saved = JSON.parse(sessionStorage.getItem(directRunKey) || 'null');
+        if (saved?.status === 'Running' && new URL(saved.url).origin === location.origin
+            && Date.now() - Date.parse(saved.started_at) < 8 * 60 * 60 * 1000) directRun = saved;
+    } catch { /* The shortcut still works when storage is unavailable. */ }
 
     let panelToken = '';
     let floatingMinimal = false;
@@ -259,13 +272,13 @@ function mountJournalCountdown(signal: AbortSignal) {
                 });
             }
         });
-        return {ok: true, html: copy.innerHTML, countdown: journalCountdown?.getCountdownLabel() || ''};
+        return {ok: true, html: copy.innerHTML, countdown: journalCountdown?.getCountdownLabel() || '', notice: automationNotice};
     }
 
     function panelAction(request: AssistantMessage) {
         if (request.operation === 'vision') {void visionScan(); return {ok: true};}
         if (request.operation === 'automation') {
-            handleAutomationShortcut(new KeyboardEvent('keydown', {key: 'a', code: 'KeyA', altKey: true, cancelable: true}));
+            toggleDirectAutomation();
             return {ok: true};
         }
         if (request.operation === 'journal') {
@@ -341,7 +354,8 @@ function mountJournalCountdown(signal: AbortSignal) {
     document.addEventListener('assistant-journal-update', updateAutomationUI, {signal:lifecycle.signal});
     document.addEventListener('assistant-journal-ready', () => {
         if (!window.BrowserAssistantJournal?.matches()) return;
-        selectedTab = 'qa'; isCollapsed = false; isHidden = false; root.style.display = 'block'; render();
+        selectedTab = 'qa';
+        openPanel();
     }, {signal:lifecycle.signal});
 
     function getAutomationContext() {
@@ -519,6 +533,7 @@ function mountJournalCountdown(signal: AbortSignal) {
 
     function updateAutomationUI() {
         if (disposed) return;
+        updateDirectRun();
         const status = document.getElementById('assistant-automation-status');
         const statusBadge = document.getElementById('assistant-automation-state');
         const page = document.getElementById('assistant-automation-page');
@@ -935,7 +950,9 @@ function mountJournalCountdown(signal: AbortSignal) {
         automation.running = true; automation.paused = false; automation.error = '';
         automation.targetId = context.target.id; automation.batch = batch;
         automation.completed = batch.completed;
-        isCollapsed = false; selectedTab = 'qa'; render();
+        if (!directRun) {
+            isHidden = false; isCollapsed = false; root.style.display = 'block'; selectedTab = 'qa'; render();
+        }
         const persist = phase => {
             batch.phase = phase; batch.updatedAt = Date.now();
             sessionStorage.setItem(CODING_BATCH_KEY, JSON.stringify(batch));
@@ -1225,6 +1242,64 @@ function mountJournalCountdown(signal: AbortSignal) {
         return false;
     }
 
+    async function solveCompoundMcq(compound, runId, adapter) {
+        const findCurrent = (original) => {
+            const fresh = getAuthorizedQuestion();
+            return fresh?.compoundQuestions?.find(candidate => hasSameQuestionOptions(original, candidate)) || null;
+        };
+        for (const original of compound.compoundQuestions || []) {
+            if (!(await waitWhilePaused(runId))) return false;
+            let question = findCurrent(original);
+            if (!question) throw new Error('A linked question changed before its answer was selected. Nothing else was submitted.');
+            if (question.options.some(option => option.isSelected?.() || option.input?.checked)) continue;
+            automation.state = 'SOLVING'; updateAutomationUI();
+            const prompt = `${compound.compoundContext || ''}\n\nAnswer only this linked question: ${question.text}\nQuestion format: select one answer.\n${question.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option.text}`).join('\n')}`;
+            const response = await window.BrowserAssistantAnswerRequests.run({
+                request: () => apiRequest('/solve', 'POST', { text: prompt, url: window.location.href, practice_type: 'mcq', verify_answer: true }),
+                active: () => automation.running && automation.runId === runId,
+                ready: () => waitWhilePaused(runId),
+                current: () => Boolean(findCurrent(original)),
+                onRetry: ({attempt, attempts, message}) => {
+                    automation.state = 'RETRYING_REQUEST';
+                    automation.error = `Temporary answer service issue. Retrying ${attempt}/${attempts}: ${message}`;
+                    updateAutomationUI();
+                },
+                sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
+            });
+            if (!response?.data?.answer_verified) throw new Error('Answer verification is required for every linked question.');
+            let results;
+            try { results = JSON.parse(response.data.results); } catch { throw new Error('The answer service returned invalid linked-question data.'); }
+            const answerIndexes = answerIndexesFromResult(results, question);
+            if (!answerIndexes.length) throw new Error('The verified answer did not match this linked question’s displayed options.');
+            automation.state = 'SELECTING'; updateAutomationUI();
+            for (const index of answerIndexes) {
+                question = findCurrent(original);
+                const option = question?.options[index];
+                if (!option) throw new Error('A linked question option disappeared before selection.');
+                if (!(option.isSelected?.() || option.input?.checked)) (option.input || option.control)?.click();
+                let selected = false;
+                for (let attempt = 0; attempt < 50 && await waitWhilePaused(runId); attempt++) {
+                    question = findCurrent(original);
+                    const current = question?.options[index];
+                    if (current?.isSelected?.() || current?.input?.checked) { selected = true; break; }
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                }
+                if (!selected) throw new Error('A linked answer could not be verified after selection.');
+            }
+        }
+        const current = getAuthorizedQuestion();
+        const submitQuestion = current?.compoundQuestions?.[0] || compound.compoundQuestions?.[0];
+        const submit = submitQuestion && adapter.getSubmit(document, submitQuestion);
+        if (!submit?.isConnected || submit.disabled || submit.getAttribute('aria-disabled') === 'true') {
+            throw new Error('All linked answers were selected, but the portal did not enable a unique Submit button.');
+        }
+        automation.state = 'SUBMITTING'; updateAutomationUI();
+        automation.processed.add(compound.signature);
+        submit.click();
+        automation.state = 'WAITING_FOR_NEXT'; updateAutomationUI();
+        return true;
+    }
+
     async function startPracticeAutomation() {
         if (window.BrowserAssistantJournal?.matches()) {
             await window.BrowserAssistantJournal.start(); updateAutomationUI(); return;
@@ -1361,6 +1436,11 @@ function mountJournalCountdown(signal: AbortSignal) {
                 stopAutomation('PAUSED'); break;
             }
             if (question.type === 'code') { await runCodingAutomation(question, runId); break; }
+            if (question.type === 'compound-mcq') {
+                try { await solveCompoundMcq(question, runId, adapter); }
+                catch (error) { automation.error = error.message || 'Linked questions could not be completed.'; stopAutomation('PAUSED'); }
+                break;
+            }
             if (automation.deferredQuestions.has(question.signature)) {
                 automation.currentSignature = question.signature;
                 if (await continueAfterUnverifiedQuestion(question, runId, 'This question was deferred earlier.', false)) continue;
@@ -1640,7 +1720,11 @@ function mountJournalCountdown(signal: AbortSignal) {
             370000,
         );
         if (!response) throw new Error('Local server did not respond');
-        if (response.error) throw new Error(response.error);
+        if (response.error) {
+            if (response.error.startsWith('Local server is offline')) setServerStatus(false);
+            throw new Error(response.error);
+        }
+        if (path !== '/health' && response.status) setServerStatus(true);
         return response;
     }
 
@@ -1688,15 +1772,22 @@ function mountJournalCountdown(signal: AbortSignal) {
     }
 
     // ── Server health check ───────────────────────────────────────────────────
+    function setServerStatus(online: boolean) {
+        serverOnline = online;
+        const dot = root.querySelector('.status-dot');
+        if (!dot) return;
+        dot.classList.remove('unknown', 'online', 'offline');
+        dot.classList.add(online ? 'online' : 'offline');
+        dot.setAttribute('title', online ? 'Server online' : 'Server offline');
+    }
+
     async function checkServer() {
+        let online = false;
         try {
             const res = await apiRequest('/health', 'GET');
-            serverOnline = res.ok;
-        } catch {
-            serverOnline = false;
-        }
-        // Re-render if panel is open to show status
-        if (!isCollapsed) render();
+            online = res.ok;
+        } catch { /* The next request can reconnect when the backend starts. */ }
+        if (serverOnline === null) setServerStatus(online);
     }
 
     // Check once on load
@@ -1838,24 +1929,104 @@ function mountJournalCountdown(signal: AbortSignal) {
         root.style.display = 'none';
     }
 
-    function handleAutomationShortcut(e) {
-        if (e.repeat || e.isComposing || e.defaultPrevented || !e.altKey || e.ctrlKey || e.metaKey
+    function showAutomationNotice(message: string) {
+        automationNotice = message;
+        window.clearTimeout(noticeTimer);
+        const element = document.getElementById('assistant-automation-notice') || document.createElement('div');
+        element.id = 'assistant-automation-notice';
+        element.setAttribute('role', 'status');
+        element.textContent = message;
+        if (!element.isConnected) document.body.appendChild(element);
+        noticeTimer = window.setTimeout(() => { automationNotice = ''; element.remove(); }, 5000);
+    }
+
+    function saveDirectRun() {
+        if (!directRun) return;
+        const record = {...directRun, revision: ++directRun.revision};
+        try {
+            if (record.status === 'Running') sessionStorage.setItem(directRunKey, JSON.stringify(record));
+            else sessionStorage.removeItem(directRunKey);
+        } catch { /* Storage is optional for runs on the current document. */ }
+        void apiRequest('/automation-history', 'PUT', record).then(response => {
+            if (!response.ok) throw Error('History write failed');
+        }).catch(() => {
+            if (!directRun || directRun.id === record.id) showAutomationNotice('Automation history could not be saved.');
+        });
+    }
+
+    function finishDirectRun(status: string) {
+        if (!directRun) return;
+        directRun.status = status;
+        directRun.ended_at = new Date().toISOString();
+        saveDirectRun();
+        directRun = null;
+    }
+
+    function updateDirectRun() {
+        if (!directRun || directRunStarting) return;
+        const journal = directRun.type === 'Journal' ? window.BrowserAssistantJournal?.getState() : null;
+        const current = journal || automation;
+        const completed = Math.max(directRun.completed, current.completed || 0);
+        const failed = Math.max(directRun.failed, journal ? 0 : automation.deferredQuestions?.size || 0);
+        const changed = directRun.completed !== completed || directRun.failed !== failed;
+        Object.assign(directRun, {completed, failed});
+        if (current.running || ['STARTING_PRACTICE', 'OPENING_NEXT_PRACTICE'].includes(current.state)) {
+            if (changed) saveDirectRun();
+            return;
+        }
+        const status = current.state === 'COMPLETED' ? 'Completed' : current.state === 'STOPPED' ? 'Stopped' : 'Failed';
+        if (status === 'Failed' && directRun.failed === 0) directRun.failed = 1;
+        showAutomationNotice(status === 'Failed' ? (journal?.message || automation.error || 'Automation could not continue.') : 'Automation ' + status.toLowerCase() + '.');
+        finishDirectRun(status);
+    }
+
+    function toggleDirectAutomation() {
+        if (directRunStarting) return;
+        const journal = window.BrowserAssistantJournal;
+        if (journal?.matches() && journal.getState().running) {
+            journal.pause(); updateAutomationUI(); return;
+        }
+        if (automation.running) {
+            pauseOrResumeAutomation();
+            return;
+        }
+        if (directRun) return;
+        const context = getAutomationContext();
+        const adapter = getAutomationAdapter(context);
+        const question = getAuthorizedQuestion(context);
+        const batch = location.origin === 'https://learning.ccbp.in' && /^\/problems-set\/?$/.test(location.pathname);
+        const ide = window.BrowserAssistantCoding?.getOnlineIdeQuestion?.(document, location);
+        const journalPage = Boolean(journal?.matches());
+        const canNavigate = automationPolicy?.canExecute('navigate', context);
+        const type = journalPage ? 'Journal' : batch && canNavigate ? 'Batch Coding'
+            : question?.type === 'code' || (ide && canNavigate) ? 'Coding'
+            : question || (canNavigate && adapter?.getStartPractice?.(document)) ? (/quiz/i.test(location.pathname) ? 'Quiz' : 'MCQ')
+            : null;
+        if (!type) { showAutomationNotice('Automation is unavailable on this page.'); return; }
+        if (context.target.id !== 'local-practice'
+            && !window.confirm('Start ' + type + ' automation on this page? It can enter and submit answers as it runs.')) return;
+        const progress = document.querySelector('[data-practice-quiz] #progress')?.textContent;
+        const total = type === 'Journal' || type === 'Coding' ? 1 : Number(progress?.match(/\bof\s+(\d+)/i)?.[1]) || null;
+        directRun = {id: crypto.randomUUID(), type, url: location.origin + location.pathname,
+            started_at: new Date().toISOString(), ended_at: null, total, completed: 0, failed: 0, status: 'Running', revision: 0};
+        directRunStarting = true;
+        saveDirectRun();
+        showAutomationNotice(type + ' automation started.');
+        const started = startPracticeAutomation();
+        directRunStarting = false;
+        updateDirectRun();
+        void started.catch(error => {
+            automation.error = error.message || 'Automation could not start.';
+            stopAutomation('ERROR');
+        });
+    }
+
+    function handleAutomationShortcut(e: KeyboardEvent, isTyping = false) {
+        if (isTyping || e.repeat || e.isComposing || e.defaultPrevented || !e.altKey || e.ctrlKey || e.metaKey
             || (e.code !== 'KeyA' && String(e.key).toLowerCase() !== 'a')) return false;
         e.preventDefault();
         e.stopPropagation();
-        selectedTab = 'qa'; isHidden = false; isCollapsed = false;
-        root.style.display = 'block'; render();
-        const journal = window.BrowserAssistantJournal;
-        if (journal?.matches() && journal.getState().running) {
-            journal.pause(); updateAutomationUI();
-        } else if (automation.running) {
-            pauseOrResumeAutomation();
-        } else {
-            void startPracticeAutomation().catch(error => {
-                automation.error = error.message || 'Automation could not start.';
-                stopAutomation('ERROR');
-            });
-        }
+        toggleDirectAutomation();
         return true;
     }
 
@@ -1864,9 +2035,6 @@ function mountJournalCountdown(signal: AbortSignal) {
         // Block held-key auto-repeat to prevent rapid-fire race conditions
         if (e.repeat || e.isComposing) return;
         if (panelToken && (e.key === '`' || e.key === ']' || e.key === '[')) return;
-        // Explicit automation chord also works while the code editor has focus.
-        if (handleAutomationShortcut(e)) return;
-
         const active = document.activeElement;
         const isTyping =
             active instanceof HTMLInputElement ||
@@ -1874,6 +2042,11 @@ function mountJournalCountdown(signal: AbortSignal) {
             active instanceof HTMLSelectElement ||
             (active as HTMLElement)?.isContentEditable ||
             active?.getAttribute?.('role') === 'textbox';
+        const editorSelector = 'input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"],.monaco-editor,.CodeMirror,.ace_editor';
+        const shortcutTyping = isTyping
+            || Boolean((active as Element | null)?.closest?.(editorSelector))
+            || e.composedPath().some(node => node instanceof Element && node.matches(editorSelector));
+        if (handleAutomationShortcut(e, shortcutTyping)) return;
 
         if (isTyping) return;
 
@@ -2062,13 +2235,6 @@ function mountJournalCountdown(signal: AbortSignal) {
         if (isScanning) return;
         isScanning = true;
 
-        // Show server-offline warning early
-        if (serverOnline === false) {
-            showError("Server offline. Start the backend with: python main.py");
-            isScanning = false;
-            return;
-        }
-
         isCollapsed = false;
         render();
         setLoading("Solving…");
@@ -2114,7 +2280,6 @@ function mountJournalCountdown(signal: AbortSignal) {
 
             const data = res.data;
             await assertVisionQuestionCurrent(context);
-            serverOnline = true;
             let parsed;
             try {
                 parsed = JSON.parse(data.results);
@@ -2135,9 +2300,6 @@ function mountJournalCountdown(signal: AbortSignal) {
             console.error("Scan error:", error);
             if (error.name === 'AbortError') {
                 showError("Request timed out — server may be busy, please try again");
-            } else if (error instanceof TypeError && error.message.includes('fetch')) {
-                serverOnline = false;
-                showError(`Error: ${error.message}`);
             } else {
                 showError(`Error: ${error.message}`);
             }
@@ -2319,7 +2481,7 @@ function mountJournalCountdown(signal: AbortSignal) {
 
     function scanPanelMarkup() {
         return `
-            <section class="assistant-scan-panel" id="assistant-scan-panel" role="tabpanel" aria-labelledby="mode-${selectedTab}">
+            <section class="assistant-scan-panel" id="assistant-scan-panel" role="tabpanel" aria-labelledby="mode-${selectedTab === 'aptitude' ? 'apt' : selectedTab}">
                 <div class="assistant-btn-row">
                     <button class="assistant-btn" id="assistant-scan-btn">⚡ Scan (Text)</button>
                     <button class="assistant-btn secondary" id="assistant-vision-btn">⌁ Scan (Vision)</button>
@@ -2403,6 +2565,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             const safeContent = content.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
             root.innerHTML = `
                 <button class="assistant-tab collapsed ${content ? 'has-answer' : ''}" id="assistant-trigger" type="button" aria-label="Open Browser Assistant" data-content="${safeContent}">
+                    <span class="assistant-mark" aria-hidden="true">BA</span>
                     ${isMinimalMode ? '<div class="assistant-mode-indicator">MIN</div>' : ''}
                 </button>
             `;
@@ -2421,8 +2584,9 @@ function mountJournalCountdown(signal: AbortSignal) {
                 <div class="assistant-tab" id="assistant-panel">
                     <div class="assistant-header">
                         <div class="assistant-title-row">
-                            ${statusDot}
+                            <span class="assistant-mark" aria-hidden="true">BA</span>
                             <h3 class="assistant-title">Browser Assistant</h3>
+                            ${statusDot}
                         </div>
                         <div class="assistant-header-actions">
                             <button class="assistant-icon-btn" id="assistant-history-btn" type="button" aria-label="Open Scan History" title="Scan History">
@@ -2455,7 +2619,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             bindTabKeyboardNavigation();
             document.getElementById('assistant-history-btn').onclick = openHistory;
             document.getElementById('assistant-scan-btn')?.addEventListener('click', scanPage);
-            document.getElementById('assistant-vision-btn')?.addEventListener('click', () => {void visionScan();});
+            document.getElementById('assistant-vision-btn')?.addEventListener('click', () => { void visionScan(); });
             document.getElementById('assistant-auto-start-btn')?.addEventListener('click', startPracticeAutomation);
             document.getElementById('assistant-export-question-btn')?.addEventListener('click', exportQuestionDiagnostic);
             document.getElementById('assistant-auto-pause-btn')?.addEventListener('click', pauseOrResumeAutomation);
@@ -2622,8 +2786,7 @@ function mountJournalCountdown(signal: AbortSignal) {
         const context = getAutomationContext();
         const isFresh = Number.isFinite(resume?.createdAt) && Date.now() - resume.createdAt < 120000;
         if (!isFresh || resume.targetId !== context.target?.id || context.mode !== 'FULL') return;
-        isCollapsed = false;
-        render();
+        if (!directRun) { isCollapsed = false; render(); }
         const adapter = getAutomationAdapter(context);
         if (!adapter) return;
 
@@ -2664,5 +2827,16 @@ function mountJournalCountdown(signal: AbortSignal) {
     } catch {}
     render();
     void syncDetachedPanel();
-    if (!reopenedAfterUpdate) void resumeCodingBatch().then(resumed => { if (!resumed) void resumeAuthorizedQaAfterNavigation(); });
+    function hasDirectRunContinuation() {
+        try {
+            return [AUTO_RESUME_KEY, CODING_BATCH_KEY, 'assistantPendingJournal'].some(key => sessionStorage.getItem(key));
+        } catch { return false; }
+    }
+    if (directRun && !hasDirectRunContinuation()) finishDirectRun('Stopped');
+    window.addEventListener('pagehide', () => {
+        if (!hasDirectRunContinuation()) finishDirectRun('Stopped');
+    }, {signal:lifecycle.signal});
+    if (!reopenedAfterUpdate) void resumeCodingBatch().then(resumed => {
+        if (!resumed) return resumeAuthorizedQaAfterNavigation();
+    });
 })();

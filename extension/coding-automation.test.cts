@@ -24,10 +24,11 @@ test('MCQ fixture adapter and authorization remain available', () => {
     const context = vm.createContext({ window: {}, URL });
     vm.runInContext(source('automation-policy.js'), context);
     const policy = context.window.BrowserAssistantAutomationPolicy;
-    const options = ['First', 'Second'].map(textContent => ({ textContent, querySelector: () => ({ checked: false }) }));
+    const options = ['A. First', 'Second'].map(textContent => ({ textContent, querySelector: () => ({ checked: false }) }));
     const doc = { querySelectorAll: () => options, querySelector: selector => selector === '[data-practice-question-text]' ? { textContent: 'Choose an option', closest: () => null } : {} };
     const question = policy.getAdapter('practice-fixture').getQuestion(doc);
     assert.equal(question.options.length, 2);
+    assert.deepEqual(Array.from(question.options, option => option.text), ['First', 'Second']);
     assert.equal(question.text, 'Choose an option');
     const general = policy.resolveTarget(new URL('https://unrelated.example/'), doc);
     assert.equal(general.adapter, 'semantic-mcq');

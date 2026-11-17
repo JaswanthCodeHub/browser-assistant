@@ -255,7 +255,7 @@ chrome.runtime.onMessage.addListener((request: AssistantMessage, sender, sendRes
 
     if (request.action === "apiRequest") {
         const allowedMethods = {'/health':['GET'],'/solve':['POST'],'/solve-vision':['POST'],
-            '/history':['GET','POST','DELETE'],'/journal':['POST']};
+            '/history':['GET','POST','DELETE'],'/automation-history':['GET','PUT'],'/journal':['POST']};
         const method = request.method || 'POST';
         if (sender.id !== chrome.runtime.id || !allowedMethods[request.path]?.includes(method)) {
             sendResponse({ error: "Blocked API sender, path or method" });
@@ -282,7 +282,7 @@ chrome.runtime.onMessage.addListener((request: AssistantMessage, sender, sendRes
                 catch { data = { detail: text || "Unexpected server response" }; }
                 sendResponse({ ok: response.ok, status: response.status, data });
             })
-            .catch(error => sendResponse({ error: error.name === 'TimeoutError' ? 'Local server request timed out.' : 'Local server is offline. Start it with: python main.py' }))
+            .catch(error => sendResponse({ error: error.name === 'TimeoutError' ? 'Local server request timed out.' : 'Local server is offline. Start it with the project virtual environment.' }))
             .finally(()=>{if(keepAlive !== null)clearInterval(keepAlive);});
         return true;
     }

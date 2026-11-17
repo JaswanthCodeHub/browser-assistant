@@ -56,6 +56,7 @@ History lives inside the container and is lost when the container is removed or 
 ## Troubleshooting
 
 - **Offline popup:** start the backend in `server/`; check port 8000 and `/health`. Another process may occupy the port.
+- **Missing `groq` module on Windows:** from the repository root, use `.\.venv\Scripts\python.exe -m pip install --require-hashes -r server\requirements.lock.txt`, then start the backend with `.\.venv\Scripts\python.exe server\main.py`.
 - **No panel:** use an ordinary HTTP/HTTPS page, reload the extension and refresh the page. Chrome internal pages and the Chrome Web Store restrict extensions.
 - **Text model fails:** check the key/model in your own provider console. For Ollama, check `ollama list`, service reachability, and available memory. A local model is not bundled.
 - **Vision fails:** use a Groq model with image support. No local vision fallback exists. Review visible tab contents before capture.

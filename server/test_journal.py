@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 import journal as journal_module
 from fastapi import FastAPI, HTTPException
-from journal import SYLLABUS, SECTIONS, MASTER_PROMPT, JournalRequest, register_journal, subject_key, validate_sections
+from journal import SECTIONS, JournalRequest, load_syllabus, register_journal, subject_key, validate_sections
 
 
 def sample(n=80):
@@ -23,7 +23,7 @@ class JournalTests(unittest.TestCase):
         self.assertEqual(subject_key('AI201'), 'ai')
         with self.assertRaises(HTTPException):
             subject_key('Advanced Data Structures (AI201)')
-        for subject in SYLLABUS.values():
+        for subject in load_syllabus().values():
             self.assertEqual(set(subject['modules']), {str(n) for n in range(1, 11)})
             self.assertTrue(all(len(v) > 50 for v in subject['modules'].values()))
         with self.assertRaises(HTTPException):
@@ -61,7 +61,7 @@ class JournalTests(unittest.TestCase):
         endpoint=next(route.endpoint for route in app.routes if route.path=='/journal')
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/'syllabus.json'
-            catalog={'ai':json.loads(json.dumps(SYLLABUS['ai']))}
+            catalog={'ai':load_syllabus()['ai']}
             catalog['ai']['modules']['1']='Initial AI module topics.'
             path.write_text(json.dumps(catalog),encoding='utf-8')
             with patch.object(journal_module,'SYLLABUS_PATH',path):
@@ -92,8 +92,9 @@ class JournalTests(unittest.TestCase):
 
     def test_generation_retries_and_uses_requested_module(self):
         calls = []
+        master_prompt = journal_module.PROMPT_PATH.read_text(encoding='utf-8-sig')
         async def cloud(messages, **kwargs):
-            self.assertTrue(messages[0]['content'].startswith(MASTER_PROMPT))
+            self.assertTrue(messages[0]['content'].startswith(master_prompt))
             self.assertNotIn('aim for 375',messages[0]['content'])
             calls.append(json.loads(messages[1]['content']))
             return json.dumps(sample(20 if len(calls) == 1 else 80))
