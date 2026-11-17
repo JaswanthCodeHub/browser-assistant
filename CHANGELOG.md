@@ -1,3 +1,12 @@
+# 2.9.21
+
+- Replace the glass theme with a transparent, monochrome interface: no background fills, gradients, blur, shadows or coloured accents. The page stays visible through the panel, popup, journal card and separate window, and hierarchy comes from typography, spacing and 1px neutral rules.
+- Make panel ink follow the page behind it: black on light backgrounds, white on dark ones, re-measured on open, scroll, resize and drag with a WCAG-based tone choice.
+- Show correct answers in green, using a brighter green on dark pages.
+- Replace the macOS Option chords with Control + Shift (⌃⇧O open, ⌃⇧X close, ⌃⇧S vision scan, ⌃⇧M minimal mode), and fix the bug where every chord toggled minimal mode instead of running its own action.
+- Register the four panel actions as Chrome commands so they still fire when a page cancels key events, ignore a command that echoes an already-handled key, and keep the original backtick, `]`, `\` and `[` keys working.
+- Add real-Chromium coverage for the chords, browser commands, backdrop tone and green answers.
+
 # 2.9.20
 
 - Keep CCBP classroom quiz automation waiting while the instructor start dialog is visible, then resume when the first question loads.

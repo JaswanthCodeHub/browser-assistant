@@ -8,6 +8,7 @@ function harness(activeElement={}){
     const automation={running:false,paused:false};
     const ctx=vm.createContext({automation,selectedTab:'auto',isHidden:true,isCollapsed:true,panelToken:'',root:{style:{display:'none'}},
         window:{},lifecycle:{signal:{}},document:{activeElement,querySelector:()=>null,addEventListener:(_event,fn)=>{listener=fn;}},
+        chrome:{runtime:{id:'test-extension',onMessage:{addListener(){}}}},
         location:{origin:'https://example.test',pathname:'/practice'},crypto:{randomUUID:()=>'run-1'},
         directRun:null,directRunStarting:false,
         getAutomationContext:()=>({mode:'FULL',target:{id:'local-practice'}}),

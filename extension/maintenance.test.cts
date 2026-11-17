@@ -40,7 +40,8 @@ test('a stationary collapsed-badge pointer press opens the panel despite root po
     root.getBoundingClientRect=()=>({left:20,top:20});root.setPointerCapture=()=>{};
     let opens=0;
     const ctx=vm.createContext({root,window,dragState:{dragging:false},suppressNextClick:false,
-        lifecycle:{signal:undefined},localStorage:{setItem(){}},setTimeout(){},setPanelPosition(){},openPanel(){opens++;}});
+        lifecycle:{signal:undefined},localStorage:{setItem(){}},setTimeout(){},setPanelPosition(){},openPanel(){opens++;},
+        scheduleSurfaceTones(){}});
     const start=content.indexOf('    function initDrag()');
     vm.runInContext(content.slice(start,content.indexOf('    initDrag();',start)),ctx);ctx.initDrag();
     const event=(type,target,x)=>{const e=new window.Event(type,{bubbles:true,cancelable:true});e.clientX=x;e.clientY=20;e.pointerId=1;target.dispatchEvent(e);};

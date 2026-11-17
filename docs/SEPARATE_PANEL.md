@@ -7,7 +7,9 @@ Extract the extension ZIP into its own folder. In Chrome, open `chrome://extensi
 3. To switch targets, open the toolbar on the new tab and choose the separate panel again. Chrome reuses the existing assistant window. Keep the selected tab active in its own browser window when using Vision Scan.
 4. Choose **Return to floating panel** to restore the in-page controls. Closing the separate window also restores the floating panel and keeps **Resume separate panel for this tab** available from the toolbar after a Chrome restart.
 
-Text Scan, Vision Scan, modes, history, code copying, and QA Control use the selected tab's existing assistant session. Alt+A toggles automation, Alt+Shift+J invokes the journal shortcut, and backslash invokes Vision Scan. In the separate window, the left bracket toggles compact view, the backtick expands it, and the right bracket returns to the floating panel.
+Text Scan, Vision Scan, modes, history, code copying, and QA Control use the selected tab's existing assistant session. Alt+A toggles automation, Alt+Shift+J invokes the journal shortcut, and backslash invokes Vision Scan. In the separate window, the left bracket toggles compact view, the backtick expands it, and the right bracket returns to the floating panel. The Control + Shift chords (⌃⇧O/X/S/M) act on the floating panel of the tab and stay inert while the panel lives in its separate window.
+
+The same four panel actions are also Chrome commands declared in `manifest.json`. They reach the page from the background script, so they still work when a site cancels keydown events or keeps focus inside an iframe. If a chord collides with another extension or the browser, reassign it at `chrome://extensions/shortcuts`; Chrome allows four suggested shortcuts per extension, which is why only these four are registered there.
 
 ## OBS Window Capture on Windows
 
@@ -31,7 +33,7 @@ A user-selected Chrome tab recording requires manual verification. The browser c
 | File | Change |
 | --- | --- |
 | `extension/src/content.ts` | Keeps one floating panel per document, clamps the panel on size changes, and shares its controls and journal countdown with the separate window. |
-| `extension/styles.css` | Keeps the v2.9.1 panel style and adds narrow-viewport sizing and the separate window layout. |
+| `extension/styles.css` | Carries the panel, popup and separate-window styles: transparent monochrome surfaces with neutral 1px rules, plus narrow-viewport sizing and the separate window layout. |
 | `extension/detached-panel.html`, `extension/src/detached-panel.ts` | Show the selected tab, mirror the assistant controls, and support keyboard navigation, shortcuts, and returning to the floating panel. |
 | `extension/popup.html`, `extension/src/popup.ts` | Add the toolbar button that opens, resumes, or retargets the separate window. |
 | `extension/src/background.ts`, `extension/src/detached-panel-background.ts`, `extension/src/assistant.d.ts` | Route controls to the chosen tab, reuse one window, remember the mode, and verify which tab a Vision screenshot comes from. |
