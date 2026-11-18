@@ -1769,8 +1769,13 @@ function mountJournalCountdown(signal: AbortSignal) {
             if (ordering) {
                 const active = () => automation.running && automation.runId === runId && getAutomationContext().mode === 'FULL';
                 const nativeDrag = (prompt, options, from, to) => safeSendMessage({ action: 'orderingDrag', prompt, options, from, to });
-                if (!(await currentAdapter.applyOrder(document, current, answerIndexes, active, nativeDrag))) {
-                    automation.error = 'Drag-and-drop order could not be verified. This page may need a different drag adapter.'; stopAutomation('PAUSED'); break;
+                const orderUrl = location.href;
+                const applied = await currentAdapter.applyOrder(document, current, answerIndexes, active, nativeDrag);
+                if (!automation.running || automation.runId !== runId) break;
+                if (!applied) {
+                    const visibleQuestion = location.href === orderUrl ? getAuthorizedQuestion() : null;
+                    automation.error = orderingReviewMessage(question, answerIndexes, visibleQuestion);
+                    stopAutomation('PAUSED'); break;
                 }
                 const reordered = getAuthorizedQuestion();
                 if (!reordered || reordered.text !== question.text || !answerIndexes.every((index, position) => reordered.options[position]?.text === question.options[index].text)) {
@@ -2433,6 +2438,18 @@ function mountJournalCountdown(signal: AbortSignal) {
             && !answerIndexesFromResult(results, question).length) {
             throw new Error('The verified answer did not match the displayed options exactly.');
         }
+    }
+
+    function orderingReviewMessage(question, order, current) {
+        const message = 'The page did not confirm the drag.';
+        if (current?.type !== 'ordering' || current.text !== question.text || current.options.length !== order.length) {
+            return message + ' Check the current rows before submitting.';
+        }
+        const positions = order.map(index => current.options.findIndex(option => option.text === question.options[index].text) + 1);
+        if (positions.includes(0) || new Set(positions).size !== order.length) {
+            return message + ' Check the current rows before submitting.';
+        }
+        return message + ` Arrange the current rows in the order ${positions.join(' → ')}.`;
     }
 
     async function prepareVisionQuestionContext() {

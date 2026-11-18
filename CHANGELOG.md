@@ -1,3 +1,8 @@
+# 2.9.24
+
+- Use the practice row as the primary drag target and retry the handle if the whole list stays unchanged.
+- Show the verified order using the current row numbers when a drag does not take effect.
+
 # 2.9.23
 
 - Verify linked-list stack push ordering locally and map the steps to the displayed positions.

@@ -1,4 +1,9 @@
-# Browser Assistant 2.9.23
+# Browser Assistant 2.9.24
+
+- The practice drag adapter targets the upper or lower half of the destination row according to the move direction.
+- When a drag does not take effect, the panel shows the verified order using the current row numbers.
+
+## Browser Assistant 2.9.23
 
 - Linked-list stack push exercises use a local dependency check to order the displayed steps.
 - The drag adapter finds the current row after the practice page repaints its controls. The final order is checked before submission.

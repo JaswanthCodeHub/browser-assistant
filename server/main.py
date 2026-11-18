@@ -194,7 +194,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.9.23", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.9.24", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)

@@ -241,8 +241,7 @@ function browserAssistantReadMcqSnippets() {
     } catch (error) { return {ok:false,error:error.message}; }
 }
 
-// Runs in the page's main world. CCBP's React drag listeners receive the
-// native DataTransfer object only when these events originate in this world.
+// Run in the page's main world so the practice page receives the drag data.
 async function browserAssistantOrderingDrag(prompt: string, optionTexts: string[], from: number, to: number) {
     try {
         const normalize = value => (value || '').replace(/\s+/g, ' ').trim();
@@ -258,7 +257,10 @@ async function browserAssistantOrderingDrag(prompt: string, optionTexts: string[
             if (normalize(question?.querySelector('#generic-question-wrapper-id')?.textContent) !== requestedPrompt) return [];
             const visible = [...question.querySelectorAll('.drag-and-drop-option-label')]
                 .filter(label => label.getClientRects().length)
-                .map(label => ({ text: normalize(label.textContent), handle: label.parentElement?.querySelector('.drag-icon-container[draggable="true"]') }));
+                .map(label => ({
+                    label, row: label.parentElement, text: normalize(label.textContent),
+                    handle: label.parentElement?.querySelector('.drag-icon-container[draggable="true"]'),
+                }));
             return visible.length === expectedTexts.length && visible.every(row => uniqueTexts.has(row.text) && row.handle)
                 && new Set(visible.map(row => row.text)).size === uniqueTexts.size ? visible : [];
         };
@@ -266,39 +268,57 @@ async function browserAssistantOrderingDrag(prompt: string, optionTexts: string[
         if (before.length !== expectedTexts.length || before.some((row, index) => row.text !== expectedTexts[index])
             || from >= before.length || to >= before.length) return { ok: false };
         if (from === to) return { ok: true };
-        const source = before[from].handle;
-        const findHandle = index => rows().find(row => row.text === before[index].text)?.handle;
-        const dataTransfer = new DataTransfer();
-        dataTransfer.effectAllowed = 'move';
-        const send = (node, type) => {
+        const moving = before[from].text;
+        const destination = before[to].text;
+        const findRow = text => rows().find(row => row.text === text);
+        const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+        const center = node => {
             const rect = node.getBoundingClientRect();
-            node.dispatchEvent(new DragEvent(type, {
-                bubbles: true, cancelable: true, dataTransfer,
-                clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2,
-            }));
+            return { node, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
         };
-        send(source, 'dragstart');
-        try {
-            // The portal can replace row nodes while the drag is in progress.
-            await new Promise(resolve => setTimeout(resolve, 220));
-            const entered = findHandle(to);
-            if (!entered) return { ok: false };
-            send(entered, 'dragenter');
-            const hovered = findHandle(to);
-            if (!hovered) return { ok: false };
-            send(hovered, 'dragover');
-            await new Promise(resolve => setTimeout(resolve, 220));
-            const target = findHandle(to);
-            if (!target) return { ok: false };
-            send(target, 'drop');
-        } finally {
-            send(findHandle(from) || source, 'dragend');
-        }
-        for (let attempt = 0; attempt < 10; attempt++) {
-            await new Promise(resolve => setTimeout(resolve, 160));
-            const after = rows();
-            if (after.length !== before.length) return { ok: false };
-            if (after[to]?.text === before[from].text) return { ok: true };
+
+        for (const useRowBody of [true, false]) {
+            const current = rows();
+            if (current.length !== before.length || current.some((row, index) => row.text !== expectedTexts[index])) break;
+            const source = current[from].handle;
+            const dataTransfer = new DataTransfer();
+            dataTransfer.setData('text/plain', moving);
+            dataTransfer.effectAllowed = 'move';
+            const send = ({node, clientX, clientY}, type) => node.dispatchEvent(new DragEvent(type, {
+                bubbles: true, cancelable: true, dataTransfer, clientX, clientY,
+            }));
+            const target = () => {
+                const row = findRow(destination);
+                if (!row) return null;
+                if (!useRowBody) return center(row.handle);
+                const { clientX } = center(row.label);
+                const rect = row.row.getBoundingClientRect();
+                const clientY = rect.top + rect.height * (from > to ? 0.25 : 0.75);
+                const hit = document.elementFromPoint?.(clientX, clientY);
+                return { node: hit && row.row.contains(hit) ? hit : row.label, clientX, clientY };
+            };
+            if (!send(center(source), 'dragstart')) break;
+            try {
+                // A drag handler can render fresh row nodes between events.
+                await wait(220);
+                dataTransfer.dropEffect = 'move';
+                const entered = target();
+                if (!entered) break;
+                send(entered, 'dragenter');
+                const hovered = target();
+                if (!hovered) break;
+                send(hovered, 'dragover');
+                await wait(220);
+                const dropped = target();
+                if (!dropped) break;
+                send(dropped, 'drop');
+            } finally {
+                send(center(findRow(moving)?.handle || source), 'dragend');
+            }
+            for (let attempt = 0; attempt < 10; attempt++) {
+                await wait(160);
+                if (rows()[to]?.text === moving) return { ok: true };
+            }
         }
         return { ok: false };
     } catch (error) { return { ok: false, error: error.message }; }

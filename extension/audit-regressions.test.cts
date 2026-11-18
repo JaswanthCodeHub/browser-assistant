@@ -63,7 +63,7 @@ test('linked-list stack push drags the current row even when the portal replaces
         + '<span class="drag-and-drop-option-label">' + label + '</span></div>').join('');
     window.HTMLElement.prototype.getClientRects = () => [{}];
     window.HTMLElement.prototype.getBoundingClientRect = () => ({ left: 0, top: 0, width: 100, height: 40 });
-    const context = vm.createContext({ document, window, URL, DataTransfer: class {}, DragEvent: window.Event, setTimeout: fn => fn() });
+    const context = vm.createContext({ document, window, URL, DataTransfer: class { setData() {} }, DragEvent: window.Event, setTimeout: fn => fn() });
     for (const file of ['automation-policy.js', 'editor-bridge.js']) {
         vm.runInContext(fs.readFileSync(__dirname + '/' + file, 'utf8'), context);
     }
@@ -75,7 +75,7 @@ test('linked-list stack push drags the current row even when the portal replaces
     steps.addEventListener('drop', event => {
         drops++;
         const currentRow = [...steps.children].find(row => row.dataset.step === movingId);
-        steps.insertBefore(currentRow, event.target.parentElement);
+        steps.insertBefore(currentRow, event.target.closest('[data-step]'));
     });
     const adapter = window.BrowserAssistantAutomationPolicy.getAdapter('semantic-mcq');
     const question = adapter.getQuestion(document);
@@ -83,6 +83,127 @@ test('linked-list stack push drags the current row even when the portal replaces
     assert.equal(await adapter.applyOrder(document, question, [1, 2, 0], () => true, context.browserAssistantOrderingDrag), true);
     assert.deepEqual([...steps.children].map(row => Number(row.dataset.step)), [2, 3, 1]);
     assert.equal(drops, 2);
+});
+
+function orderingDropFixture() {
+    const { parseHTML } = require('linkedom');
+    const prompt = 'Arrange the stack push steps';
+    const labels = ['Make temp the new top', 'Allocate temp', 'Link temp to the old top'];
+    const { document, window } = parseHTML('<html><body><main id="generic-question-container">'
+        + '<p id="generic-question-wrapper-id">' + prompt + '</p><section id="steps">'
+        + labels.map((label, index) => '<div data-row="' + index + '" draggable="false">'
+            + '<span class="drag-icon-container" draggable="true">Move</span>'
+            + '<span class="drag-and-drop-option-label">' + label + '</span></div>').join('')
+        + '</section></main></body></html>');
+    const steps = document.getElementById('steps');
+    const handleSelector = '.drag-icon-container';
+    const labelSelector = '.drag-and-drop-option-label';
+    for (const row of steps.children) {
+        const top = () => 100 + [...steps.children].indexOf(row) * 50;
+        for (const [element, left, width] of [
+            [row, 20, 240], [row.querySelector(handleSelector), 20, 30], [row.querySelector(labelSelector), 50, 210],
+        ]) {
+            element.getBoundingClientRect = () => ({ top: top(), bottom: top() + 50, height: 50, left, right: left + width, width });
+            element.getClientRects = () => [element.getBoundingClientRect()];
+        }
+    }
+    document.elementFromPoint = (x, y) => {
+        if (x < 20 || x >= 260) return null;
+        const row = steps.children[Math.floor((y - 100) / 50)];
+        return row?.querySelector(x < 50 ? handleSelector : labelSelector) || null;
+    };
+    class Transfer {
+        values = new Map();
+        setData(type, value) { this.values.set(type, value); }
+        getData(type) { return this.values.get(type) || ''; }
+        get types() { return [...this.values.keys()]; }
+    }
+    class Drag extends window.Event {
+        constructor(type, options) {
+            super(type, options);
+            this.dataTransfer = options.dataTransfer;
+            this.clientX = options.clientX;
+            this.clientY = options.clientY;
+        }
+    }
+    const context = vm.createContext({ document, window, URL, DataTransfer: Transfer, DragEvent: Drag, setTimeout: fn => fn() });
+    vm.runInContext(fs.readFileSync(__dirname + '/editor-bridge.js', 'utf8'), context);
+    return {
+        steps, handleSelector, labelSelector,
+        move: (from, to) => context.browserAssistantOrderingDrag(prompt, labels, from, to),
+        order: () => [...steps.children].map(row => Number(row.dataset.row)),
+    };
+}
+
+test('native ordering uses the row body and approaches from the correct side with populated drag data', async () => {
+    for (const { from, to, expected } of [
+        { from: 1, to: 0, expected: [1, 0, 2] },
+        { from: 0, to: 2, expected: [1, 2, 0] },
+    ]) {
+        const { steps, handleSelector, labelSelector, move, order } = orderingDropFixture();
+        let moving;
+        let acceptedHover = false;
+        let drops = 0;
+        steps.addEventListener('dragstart', event => {
+            assert.ok(event.target.matches(handleSelector));
+            assert.ok(event.dataTransfer.getData('text/plain'));
+            moving = event.target.closest('[data-row]');
+        });
+        steps.addEventListener('dragover', event => {
+            const row = event.target.closest('[data-row]');
+            const { top, height } = row.getBoundingClientRect();
+            const onChosenSide = from > to ? event.clientY < top + height / 2 : event.clientY > top + height / 2;
+            acceptedHover = event.target.matches(labelSelector) && onChosenSide
+                && event.clientY > top && event.clientY < top + height;
+            if (acceptedHover) event.preventDefault();
+        });
+        steps.addEventListener('drop', event => {
+            drops++;
+            if (!acceptedHover || !event.target.matches(labelSelector) || !event.dataTransfer.getData('text/plain')) return;
+            const row = event.target.closest('[data-row]');
+            steps.insertBefore(moving, from > to ? row : row.nextElementSibling);
+        });
+        assert.equal((await move(from, to)).ok, true);
+        assert.deepEqual(order(), expected);
+        assert.equal(drops, 1);
+    }
+});
+
+test('native ordering only retries the legacy handle path when the row drop left the list unchanged', async () => {
+    for (const behavior of ['handle-only', 'no-movement', 'unexpected-movement']) {
+        const { steps, handleSelector, move, order } = orderingDropFixture();
+        let moving;
+        const attempts = [];
+        steps.addEventListener('dragstart', event => { moving = event.target.closest('[data-row]'); });
+        steps.addEventListener('drop', event => {
+            const handle = event.target.matches(handleSelector);
+            attempts.push(handle ? 'handle' : 'body');
+            if (handle && behavior === 'handle-only') steps.insertBefore(moving, event.target.closest('[data-row]'));
+            if (!handle && behavior === 'unexpected-movement') steps.appendChild(moving);
+        });
+        assert.equal((await move(1, 0)).ok, behavior === 'handle-only');
+        assert.deepEqual(attempts, behavior === 'unexpected-movement' ? ['body'] : ['body', 'handle']);
+        assert.deepEqual(order(), behavior === 'handle-only' ? [1, 0, 2]
+            : behavior === 'unexpected-movement' ? [0, 2, 1] : [0, 1, 2]);
+    }
+});
+
+test('manual ordering guidance uses current positions and omits numbers if the question changed', () => {
+    const source = fs.readFileSync(__dirname + '/content.js', 'utf8');
+    const context = vm.createContext({});
+    vm.runInContext(source.slice(source.indexOf('    function orderingReviewMessage('),
+        source.indexOf('    async function prepareVisionQuestionContext(')), context);
+    const original = { type: 'ordering', text: 'Stack push', options: [
+        { text: 'Update the top' }, { text: 'Allocate a node' }, { text: 'Link to the old top' },
+    ] };
+    const current = { ...original, options: [original.options[1], original.options[0], original.options[2]] };
+    assert.match(context.orderingReviewMessage(original, [1, 2, 0], current), /1 → 3 → 2/);
+    assert.doesNotMatch(context.orderingReviewMessage(original, [1, 2, 0], {
+        ...current, text: 'Another question',
+    }), /\d/);
+    assert.doesNotMatch(context.orderingReviewMessage(original, [1, 2, 0], {
+        ...current, options: [current.options[0], current.options[1], { text: 'A different option' }],
+    }), /\d/);
 });
 
 test('numeric answers are values, preserve zero and signs, and are not option numbers', () => {
