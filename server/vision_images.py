@@ -228,6 +228,36 @@ def solve_stack_empty_order(ordering):
     }
 
 
+def solve_stack_push_order(ordering):
+    """Check the dependencies of a linked-list stack push."""
+    if not ordering:
+        return None
+    prompt, options = ordering
+    if not re.fullmatch(
+        r'arrange the steps in the correct order for the push\s*\(\s*\) operation '
+        r'in a stack implemented (?:using|with) a linked list[.:?]?',
+        ' '.join(prompt.replace('\x60', '').split()), re.I,
+    ):
+        return None
+    steps = (
+        r'create a new node with temp pointing to it',
+        r'(?:point temp\s*->\s*next to (?:the )?top(?: pointer)?|temp\s*->\s*next\s*=\s*top)',
+        r'(?:update (?:the )?top(?: pointer)? to temp|top\s*=\s*temp)',
+    )
+    if len(options) != len(steps):
+        return None
+    normalized = [' '.join(option.replace('\x60', '').replace('→', '->').split()).lower().rstrip(' .;')
+                  for option in options]
+    matches = [[index for index, option in enumerate(normalized, 1) if re.fullmatch(step, option)]
+               for step in steps]
+    if any(len(indices) != 1 for indices in matches):
+        return None
+    return {
+        'type': 'mcq', 'question': prompt, 'answer': [indices[0] for indices in matches],
+        'reasoning': 'Allocate temp first, link temp->next to the old top, then make temp the new top.',
+    }
+
+
 def ordering_key(value, size):
     if isinstance(value, str):
         try:

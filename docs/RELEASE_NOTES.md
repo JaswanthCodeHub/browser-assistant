@@ -1,4 +1,9 @@
-# Browser Assistant 2.9.22
+# Browser Assistant 2.9.23
+
+- Linked-list stack push exercises use a local dependency check to order the displayed steps.
+- The drag adapter finds the current row after the practice page repaints its controls. The final order is checked before submission.
+
+## Browser Assistant 2.9.22
 
 - In AUTO mode, Vision Scan summarizes the visible requirements on readable assignment overview pages. Questions still use the answer verification flow.
 - The ReLU tensor-parallelism question is checked locally. ReLU operates on each activation independently, so each shard can apply it to its own activations.

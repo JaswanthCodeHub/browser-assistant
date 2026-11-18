@@ -1,3 +1,8 @@
+# 2.9.23
+
+- Verify linked-list stack push ordering locally and map the steps to the displayed positions.
+- Keep drag-and-drop working when the practice page replaces its drag controls during a move.
+
 # 2.9.22
 
 - In AUTO mode, Vision Scan summarizes readable assignment overviews and instructions while retaining verification for questions.

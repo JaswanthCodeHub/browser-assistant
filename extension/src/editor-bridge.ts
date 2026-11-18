@@ -246,19 +246,28 @@ function browserAssistantReadMcqSnippets() {
 async function browserAssistantOrderingDrag(prompt: string, optionTexts: string[], from: number, to: number) {
     try {
         const normalize = value => (value || '').replace(/\s+/g, ' ').trim();
-        const question = document.querySelector('#generic-question-container');
-        const actualPrompt = normalize(question?.querySelector('#generic-question-wrapper-id')?.textContent);
-        if (!question || actualPrompt !== normalize(prompt) || !Array.isArray(optionTexts)
+        if (!Array.isArray(optionTexts)
             || !Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < 0) return { ok: false };
-        const rows = () => [...question.querySelectorAll('.drag-and-drop-option-label')]
-            .map(label => ({ label, text: normalize(label.textContent), handle: label.parentElement?.querySelector('.drag-icon-container[draggable="true"]') }))
-            .filter(row => row.handle);
+        const requestedPrompt = normalize(prompt);
+        if (!requestedPrompt) return { ok: false };
+        const expectedTexts = optionTexts.map(normalize);
+        const uniqueTexts = new Set(expectedTexts);
+        if (uniqueTexts.size !== expectedTexts.length) return { ok: false };
+        const rows = () => {
+            const question = document.querySelector('#generic-question-container');
+            if (normalize(question?.querySelector('#generic-question-wrapper-id')?.textContent) !== requestedPrompt) return [];
+            const visible = [...question.querySelectorAll('.drag-and-drop-option-label')]
+                .filter(label => label.getClientRects().length)
+                .map(label => ({ text: normalize(label.textContent), handle: label.parentElement?.querySelector('.drag-icon-container[draggable="true"]') }));
+            return visible.length === expectedTexts.length && visible.every(row => uniqueTexts.has(row.text) && row.handle)
+                && new Set(visible.map(row => row.text)).size === uniqueTexts.size ? visible : [];
+        };
         const before = rows();
-        if (before.length !== optionTexts.length || before.some((row, index) => row.text !== normalize(optionTexts[index]))
+        if (before.length !== expectedTexts.length || before.some((row, index) => row.text !== expectedTexts[index])
             || from >= before.length || to >= before.length) return { ok: false };
         if (from === to) return { ok: true };
         const source = before[from].handle;
-        const target = before[to].handle;
+        const findHandle = index => rows().find(row => row.text === before[index].text)?.handle;
         const dataTransfer = new DataTransfer();
         dataTransfer.effectAllowed = 'move';
         const send = (node, type) => {
@@ -269,12 +278,22 @@ async function browserAssistantOrderingDrag(prompt: string, optionTexts: string[
             }));
         };
         send(source, 'dragstart');
-        await new Promise(resolve => setTimeout(resolve, 220));
-        send(target, 'dragenter');
-        send(target, 'dragover');
-        await new Promise(resolve => setTimeout(resolve, 220));
-        send(target, 'drop');
-        send(source, 'dragend');
+        try {
+            // The portal can replace row nodes while the drag is in progress.
+            await new Promise(resolve => setTimeout(resolve, 220));
+            const entered = findHandle(to);
+            if (!entered) return { ok: false };
+            send(entered, 'dragenter');
+            const hovered = findHandle(to);
+            if (!hovered) return { ok: false };
+            send(hovered, 'dragover');
+            await new Promise(resolve => setTimeout(resolve, 220));
+            const target = findHandle(to);
+            if (!target) return { ok: false };
+            send(target, 'drop');
+        } finally {
+            send(findHandle(from) || source, 'dragend');
+        }
         for (let attempt = 0; attempt < 10; attempt++) {
             await new Promise(resolve => setTimeout(resolve, 160));
             const after = rows();

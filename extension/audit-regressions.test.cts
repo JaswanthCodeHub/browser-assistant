@@ -50,6 +50,41 @@ test('exported CCBP ordering page detects five options and verifies native drop 
     assert.equal(await adapter.applyOrder(document, question, [1, 1, 0, 2, 4], () => true), false);
 });
 
+test('linked-list stack push drags the current row even when the portal replaces the controls', async () => {
+    const { parseHTML } = require('linkedom');
+    const { document, window } = parseHTML('<html><body><main id="generic-question-container">'
+        + '<p id="generic-question-wrapper-id">Arrange the steps in the correct order for the <code>push()</code> operation in a stack implemented using a linked list.</p>'
+        + '<div id="steps"></div><button>Submit</button></main></body></html>');
+    const steps = document.getElementById('steps');
+    steps.innerHTML = ['Update the <code>top</code> pointer to <code>temp</code> .',
+        'Create a new node with <code>temp</code> pointing to it.',
+        'Point <code>temp→next</code> to <code>top</code> .'].map((label, index) =>
+        '<div data-step="' + (index + 1) + '"><span draggable="true" class="drag-icon-container">Move</span>'
+        + '<span class="drag-and-drop-option-label">' + label + '</span></div>').join('');
+    window.HTMLElement.prototype.getClientRects = () => [{}];
+    window.HTMLElement.prototype.getBoundingClientRect = () => ({ left: 0, top: 0, width: 100, height: 40 });
+    const context = vm.createContext({ document, window, URL, DataTransfer: class {}, DragEvent: window.Event, setTimeout: fn => fn() });
+    for (const file of ['automation-policy.js', 'editor-bridge.js']) {
+        vm.runInContext(fs.readFileSync(__dirname + '/' + file, 'utf8'), context);
+    }
+    let movingId;
+    let drops = 0;
+    steps.addEventListener('dragstart', event => { movingId = event.target.parentElement.dataset.step; steps.innerHTML = steps.innerHTML; });
+    steps.addEventListener('dragenter', () => { steps.innerHTML = steps.innerHTML; });
+    steps.addEventListener('dragover', () => { steps.innerHTML = steps.innerHTML; });
+    steps.addEventListener('drop', event => {
+        drops++;
+        const currentRow = [...steps.children].find(row => row.dataset.step === movingId);
+        steps.insertBefore(currentRow, event.target.parentElement);
+    });
+    const adapter = window.BrowserAssistantAutomationPolicy.getAdapter('semantic-mcq');
+    const question = adapter.getQuestion(document);
+    assert.equal(question.dragKind, 'native-ccbp');
+    assert.equal(await adapter.applyOrder(document, question, [1, 2, 0], () => true, context.browserAssistantOrderingDrag), true);
+    assert.deepEqual([...steps.children].map(row => Number(row.dataset.step)), [2, 3, 1]);
+    assert.equal(drops, 2);
+});
+
 test('numeric answers are values, preserve zero and signs, and are not option numbers', () => {
     const src = fs.readFileSync(`${__dirname}/content.js`, 'utf8');
     const context = vm.createContext({});
