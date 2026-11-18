@@ -50,3 +50,22 @@ behind tests and user approval without affecting baseline solve behavior.
 
 Run `python -m unittest server/test_self_learning.py` with the server directory
 on `PYTHONPATH`, or `cd server && python -m unittest test_self_learning.py`.
+
+## Fill for review
+
+Use **QA Control → Fill for review** on a supported CCBP practice question,
+CCBP coding question, or the local `/practice` fixture. Review the entered
+answer and submit it yourself. The existing Start automation action and its
+shortcut continue to use the legacy workflow.
+
+This action reuses the existing DOM adapters for native answer choices, short
+responses, ordering, linked questions, and supported coding editors. Visual
+and code-snippet context is read through the existing solver. Pages with
+unrecognized layouts or unsupported answer controls require manual entry.
+
+With learning enabled, the local fixture can reuse one confirmed answer,
+even if the answer choices change order, and skip answers previously marked
+incorrect. After a manual submission with the suggested option still selected,
+the fixture reports the outcome and the assistant asks whether to save it.
+Third-party feedback is outside this memory adapter. Clearing learning memory
+also clears these outcomes.

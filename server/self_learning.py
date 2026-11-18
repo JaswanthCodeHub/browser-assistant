@@ -11,6 +11,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Query
@@ -60,6 +61,12 @@ def connection():
             )""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_learned_lessons_lookup
                           ON learned_lessons(task_type, site, problem_hash)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS practice_answers (
+                problem_hash TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                outcome TEXT NOT NULL CHECK(outcome IN ('correct', 'incorrect')),
+                PRIMARY KEY (problem_hash, answer)
+            )""")
             yield db
     except sqlite3.Error as exc:
         raise HTTPException(503, "Learning storage is unavailable.") from exc
@@ -161,3 +168,45 @@ def erase_lessons():
     require_enabled()
     with connection() as db:
         db.execute("DELETE FROM learned_lessons")
+        db.execute("DELETE FROM practice_answers")
+
+
+class PracticeLookup(BaseModel):
+    problem: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class PracticeFeedback(PracticeLookup):
+    answer: str = Field(min_length=1, max_length=500)
+    outcome: Literal["correct", "incorrect"]
+    consent: Literal[True]
+
+
+@router.post("/practice/lookup")
+def lookup_practice_answers(payload: PracticeLookup):
+    require_enabled()
+    with connection() as db:
+        rows = db.execute(
+            "SELECT answer, outcome FROM practice_answers WHERE problem_hash = ?",
+            (payload.problem,),
+        ).fetchall()
+    verified = [row["answer"] for row in rows if row["outcome"] == "correct"]
+    return {"answer": verified[0] if len(verified) == 1 else None,
+            "rejected": [row["answer"] for row in rows if row["outcome"] == "incorrect"]}
+
+
+@router.post("/practice/feedback", status_code=201)
+def record_practice_feedback(payload: PracticeFeedback):
+    require_enabled()
+    if redact_private(payload.answer) != payload.answer:
+        raise HTTPException(422, "Private information cannot be stored as an answer.")
+    with connection() as db:
+        db.execute(
+            "INSERT OR REPLACE INTO practice_answers VALUES (?, ?, ?)",
+            (payload.problem, payload.answer, payload.outcome),
+        )
+        db.execute(
+            "DELETE FROM practice_answers WHERE rowid NOT IN "
+            "(SELECT rowid FROM practice_answers ORDER BY rowid DESC LIMIT ?)",
+            (MAX_LESSONS,),
+        )
+    return {"stored": True}
