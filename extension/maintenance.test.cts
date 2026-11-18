@@ -119,6 +119,36 @@ test('Text Scan recovers on the same tab after the backend starts',async()=>{
     assert.equal(ctx.serverOnline,true);
     assert.equal(ctx.root.querySelector('.status-dot').getAttribute('title'),'Server online');
 });
+
+test('coding Text Scan sends the identified problem and starter and requires review', async()=>{
+    const codingQuestion={text:'Read n.\nSample Input 1\n3\nSample Output 1\n6',language:'python',editorSelector:'#code',signature:'one'};
+    const context={url:'https://example.test/coding',question:null,codingQuestion};
+    const requests=[], shown=[], errors=[];
+    let reviewed=false;
+    const ctx=vm.createContext({
+        isScanning:false,isCollapsed:false,window:{},console:{log(){},error(){}},render(){},setLoading(){},updateScanControls(){},
+        detectPracticeType:()=> 'auto',prepareVisionQuestionContext:async()=>context,assertVisionQuestionCurrent:async()=>{},
+        getAuthorizedQuestion:()=>codingQuestion,assertVerifiedScanAnswers(){},
+        safeSendMessage:async({operation,selector})=>{assert.equal(operation,'read');assert.equal(selector,'#code');return {ok:true,value:'def solve(n):\n    pass'};},
+        apiRequest:async(_path,_method,body)=>{
+            requests.push(body);
+            return {ok:true,data:{code_reviewed:reviewed,results:'[{"type":"code","code":"print(6)"}]'}};
+        },
+        displayResults:value=>shown.push(value),showError:error=>errors.push(error),
+    });
+    const scan=content.indexOf('    async function scanPage(');
+    vm.runInContext(content.slice(scan,content.indexOf('    // ── Helpers',scan)),ctx);
+    await ctx.scanPage();
+    assert.match(errors[0],/could not be verified/);
+    reviewed=true;
+    await ctx.scanPage();
+    assert.equal(shown[0][0].code,'print(6)');
+    for (const request of requests) {
+        assert.equal(request.text,`${codingQuestion.text}\nCurrent code:\ndef solve(n):\n    pass`);
+        assert.equal(request.starter_code,'def solve(n):\n    pass');
+        assert.equal(request.review_before_submit,true);
+    }
+});
 test('Stop cancels automation even when site session storage is unavailable',()=>{
     const automation={runId:1,running:true,paused:true,batch:{},pendingNavigation:true};
     const ctx=vm.createContext({window:{},automation,sessionStorage:{removeItem(){throw Error('Storage blocked');}},updateAutomationUI(){}});

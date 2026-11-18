@@ -181,6 +181,34 @@ class PreSubmitQualityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reviewer.await_count,2)
         self.assertNotIn('complete executable solution',generator.await_args.args[0][-1]['content'])
 
+    async def test_reviewed_auto_coding_keeps_tail_samples_and_repairs_mismatch(self):
+        text = ('Write a Python program to print the value on two indented lines.\n'
+                + 'Details about formatting.\n' * 500
+                + 'Constraints\nThe value can be zero.\nSample Input 1\n3\nSample Output 1\n  3\n3  3\n'
+                  'Explanation\nSpaces are significant.\nSample Input 2\n0\nSample Output 2\n  0\n0  0')
+        wrong = 'n = input()\nprint(n)'
+        correct = 'n = input()\nprint("  " + n)\nprint(n + "  " + n)'
+        generator = AsyncMock(side_effect=[result(wrong, 'python'), result(correct, 'python')])
+        def verdict(outputs):
+            return json.dumps({'verdict': 'pass', 'issues': [], 'sample_outputs': [
+                {'id': index, 'output': output} for index, output in enumerate(outputs, 1)
+            ]})
+        reviewer = AsyncMock(side_effect=[verdict(['3', '0']), verdict(['  3\n3  3\n', '  0\n0  0\n'])])
+        with patch.object(main, 'try_groq', generator), patch.object(main, 'try_independent_code_review', reviewer):
+            solved = await main.solve_questions(main.PageContent(
+                text=text, url='https://example.test', practice_type='auto', review_before_submit=True))
+        self.assertTrue(solved['code_reviewed'])
+        self.assertEqual(json.loads(solved['results'])[0]['code'], correct)
+        self.assertIn('The value can be zero.', generator.await_args_list[0].args[0][1]['content'])
+        self.assertIn('Sample 2', generator.await_args_list[1].args[0][-1]['content'])
+        self.assertIn('"id": 2, "input": "0"', reviewer.await_args.args[0][1]['content'])
+
+    async def test_pass_without_all_sample_outputs_cannot_verify_code(self):
+        reviewer = AsyncMock(return_value='{"verdict":"pass","issues":[]}')
+        with self.assertRaisesRegex(ValueError, 'every supplied sample'):
+            await main.review_and_correct_code(AsyncMock(), [], result('print(3)', 'python'), 'python',
+                                               reviewer=reviewer, samples=[('3', '3')])
+
     async def test_local_fallback_cannot_bypass_the_requested_review(self):
         reviewer=AsyncMock(return_value='{"verdict":"pass","issues":[]}')
         with patch.object(main,'try_groq',AsyncMock(side_effect=RuntimeError('unavailable'))), \

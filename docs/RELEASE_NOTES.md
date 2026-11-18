@@ -1,4 +1,10 @@
-# Browser Assistant 2.9.30
+# Browser Assistant 2.9.31
+
+- Coding requests retain the complete description, examples, and starter interface. Local fallback reports when it cannot fit the full request.
+- Coding review compares the reviewer's predicted outputs for clearly labeled examples with the displayed outputs and sends mismatches back for correction.
+- Text Scan on a recognized coding page reads the problem and current editor directly.
+
+## Browser Assistant 2.9.30
 
 - Linked groups containing checkbox questions now verify and apply all correct choices before submitting the group.
 - Includes v2.9.29's local verification for the reported linked-list stack push and pop questions.

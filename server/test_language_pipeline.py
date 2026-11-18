@@ -164,6 +164,8 @@ class ProviderPipelineTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_ollama_fallback_uses_compact_code_request_and_keeps_language(self):
         python_solution = code_response("python", "def factorial(n):\n    return 1 if n <= 1 else n * factorial(n - 1)")
+        statement = "Compute factorial.\nSample Input\n0\nSample Output\n1\nJudge feedback: expected 1, got 0"
+        starter = "def factorial(n):\n    pass"
         groq = AsyncMock(side_effect=RuntimeError("primary unavailable"))
         ollama = AsyncMock(return_value=python_solution)
         reviewer = AsyncMock(return_value='{"verdict":"pass","issues":[],"corrected_code":""}')
@@ -172,15 +174,21 @@ class ProviderPipelineTests(unittest.IsolatedAsyncioTestCase):
             main, "try_ollama", ollama
         ), patch.object(main, "try_independent_code_review", reviewer):
             response = await main.solve_questions(main.PageContent(
-                text="Solve this problem using Python.",
+                text=statement,
                 url="https://example.test",
                 practice_type="code",
+                language="python",
+                starter_code=starter,
+                repair_attempt=1,
             ))
 
         self.assertEqual(response["provider"], f"ollama ({main.OLLAMA_MODEL})")
         self.assertEqual(response["language"], "python")
         fallback_messages = ollama.await_args.args[0]
         self.assertIn("Write one complete Python solution", fallback_messages[0]["content"])
+        self.assertIn(main.CODE_DESCRIPTION_PRIORITY, fallback_messages[0]["content"])
+        self.assertIn(main.CODE_REPAIR_INSTRUCTIONS, fallback_messages[0]["content"])
+        self.assertTrue(fallback_messages[1]["content"].endswith(statement + "\n\nOriginal portal starter interface:\n" + starter))
         self.assertEqual(json.loads(response["results"])[0]["language"], "python")
         # The local fallback already applies syntax/language/completeness
         # checks. A second full review can overflow the local model context.
@@ -214,6 +222,12 @@ class ProviderPipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"type":"code"', messages[0]["content"])
         self.assertIn('"language":"python"', messages[0]["content"])
         self.assertIn("add_numbers", messages[1]["content"])
+
+    def test_ollama_rejects_an_oversized_statement_or_combined_starter(self):
+        for statement, starter in (("x" * 18_001, None), ("x" * 18_000, "def solve():\n    pass")):
+            with self.subTest(length=len(statement), starter=bool(starter)):
+                with self.assertRaisesRegex(ValueError, 'full problem, code and feedback'):
+                    main.build_ollama_code_messages(statement, "https://example.test/question", "python", starter_code=starter)
 
     async def test_vision_reads_language_then_regenerates_mismatch(self):
         captured_messages = []

@@ -50,6 +50,25 @@ test('detects screenshot-style description and plain Python 3.10 toolbar label',
     assert.doesNotMatch(question.text, /starter code|Previous question/);
 });
 
+test('descriptions keep sibling constraints and preserve the sample line structure', () => {
+    const { document, detect } = fixture();
+    const pane = document.body.firstElementChild;
+    pane.innerHTML = '<button>Description</button><h2>Square Pattern</h2>'
+        + '<div class="QuestionDescription-text">Given a number, print a pattern as shown.</div>'
+        + '<h3>Constraints</h3><p>1 &lt;= N &lt;= 10</p>'
+        + '<h3>Sample Input 1</h3><pre>2</pre>'
+        + '<h3>Sample Output 1</h3><pre>*  *<br>  **</pre>'
+        + '<h3>Sample Input 2</h3><pre>1</pre>'
+        + '<h3>Sample Output 2</h3><pre>*</pre>';
+    const question = detect();
+    assert.equal(question.title, 'Square Pattern');
+    assert.match(question.text, /Constraints\n+1 <= N <= 10/);
+    assert.match(question.text, /Sample Input 1\n+2\n+Sample Output 1\n+\*  \*\n  \*\*/);
+    assert.match(question.text, /Sample Input 2\n+1\n+Sample Output 2\n+\*$/);
+    assert.doesNotMatch(question.text, /starter code|Previous question|^Description/m);
+    assert.equal(detect().editorSelector, question.editorSelector);
+});
+
 test('unknown or conflicting toolbar languages never default to Python', () => {
     assert.equal(fixture('Select language').detect(), null);
     const { document, detect } = fixture();

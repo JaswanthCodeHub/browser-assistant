@@ -2480,10 +2480,12 @@ function mountJournalCountdown(signal: AbortSignal) {
             url: string;
             text: string;
             question: ReturnType<typeof getAuthorizedQuestion>;
+            codingQuestion?: ReturnType<typeof getAuthorizedQuestion>;
             visualSnapshot?: string;
             codeSnapshot?: string;
         } = {url: location.href, text: '', question: getAuthorizedQuestion()};
         if (!context.question || context.question.type === 'code') {
+            context.codingQuestion = context.question;
             context.question = null;
             return context;
         }
@@ -2541,9 +2543,20 @@ function mountJournalCountdown(signal: AbortSignal) {
         try {
             const context = await prepareVisionQuestionContext();
             const question = context.question;
+            const codingQuestion = context.codingQuestion;
             const visuals = window.BrowserAssistantQuestionVisuals;
             let res;
-            if (question && visuals?.nodes(question).length) {
+            if (codingQuestion) {
+                const webProject = codingQuestion.language === 'web';
+                const editor = await safeSendMessage({action:'codingEditor', operation:webProject ? 'readProject' : 'read',
+                    selector:codingQuestion.editorSelector});
+                if (!editor?.ok) throw new Error(editor?.error || 'The current code editor could not be read.');
+                res = await apiRequest('/solve', 'POST', {
+                    text:`${codingQuestion.text}\nCurrent code:\n${editor.value}`, url:context.url,
+                    practice_type:'code', language:codingQuestion.language, review_before_submit:!webProject,
+                    starter_code:webProject ? null : editor.value,
+                });
+            } else if (question && visuals?.nodes(question).length) {
                 setLoading('Reading complete question illustrations…');
                 await visuals.requireBackend(apiRequest, visuals.nodes(question).length);
                 const snapshot = await visuals.capture(question, safeSendMessage);
@@ -2560,6 +2573,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                     text: question ? context.text : extractSmartText(), url: context.url,
                     practice_type: question ? 'mcq' : practiceType, verify_answer: Boolean(question) || practiceType !== 'code',
                     require_answer_agreement: question?.selectionType === 'multiple',
+                    review_before_submit: !question && practiceType === 'code',
                 });
             }
 
@@ -2577,6 +2591,12 @@ function mountJournalCountdown(signal: AbortSignal) {
 
             const data = res.data;
             await assertVisionQuestionCurrent(context);
+            if (codingQuestion && getAuthorizedQuestion()?.signature !== codingQuestion.signature) {
+                throw new Error('The coding question changed while scanning. Scan the current problem again.');
+            }
+            if (codingQuestion && codingQuestion.language !== 'web' && data.code_reviewed !== true) {
+                throw new Error('The coding solution could not be verified against the problem description.');
+            }
             let parsed;
             try {
                 parsed = JSON.parse(data.results);

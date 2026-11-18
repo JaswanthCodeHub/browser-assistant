@@ -7,6 +7,34 @@ CLASSES = {'class_specifier', 'struct_specifier', 'class_declaration', 'class_de
 FUNCTIONS = {'function_definition', 'function_declaration', 'generator_function_declaration',
              'method_definition', 'method_declaration', 'constructor_declaration'}
 
+SAMPLE_HEADING = re.compile(r'(?im)^[ \t]*(?:#{1,6}[ \t]+)?Sample[ \t]+(Input|Output)'
+                            r'(?:[ \t]+(\d+))?[ \t]*:?[ \t]*$')
+SAMPLE_END = re.compile(r'(?im)^[ \t]*(?:#{1,6}[ \t]+)?(?:Explanation|Note|Constraints|Input Format|'
+                        r'Output Format|Example)(?:[ \t]+\d+)?[ \t]*(?::[^\n]*)?$')
+
+
+def coding_samples(text):
+    """Read explicit, paired sample blocks while preserving significant spaces."""
+    statement = text.replace('\r\n', '\n').split('\nCurrent code:\n', 1)[0]
+    statement = statement.split('\nPreserve the required function signature and input/output format.', 1)[0]
+    statement = statement.split('\n\nGenerate the complete app.js for the online Node.js IDE.', 1)[0]
+    headings = list(SAMPLE_HEADING.finditer(statement))
+    samples = []
+    for index in range(0, len(headings) - 1, 2):
+        start, output = headings[index:index + 2]
+        if start[1].lower() != 'input' or output[1].lower() != 'output' or start[2] != output[2]:
+            return []
+        next_heading = headings[index + 2].start() if index + 2 < len(headings) else len(statement)
+        input_text = SAMPLE_END.split(statement[start.end():output.start()], maxsplit=1)[0].strip('\n')
+        expected = SAMPLE_END.split(statement[output.end():next_heading], maxsplit=1)[0].strip('\n')
+        input_text, expected = (re.sub(r'\A```[^\n]*\n([\s\S]*)\n```\Z', r'\1', value)
+                                for value in (input_text, expected))
+        if not input_text or not expected:
+            return []
+        samples.append((input_text, expected))
+    # Keep output traces within the compact review response budget.
+    return samples if len(headings) == 2 * len(samples) and sum(len(output) for _, output in samples) <= 2000 else []
+
 
 def function_header(node, data, language):
     """Compare C++ callable types without treating local parameter names as ABI."""

@@ -34,12 +34,13 @@
     }
     // Some practice pages use generated CSS classes and plain text labels.
     // Find the Description pane by its visible content, keeping editor/sidebar text out.
-    function findDescription(doc, editor) {
+    function findDescription(doc, editor, hint = null) {
         const anchors = [...doc.querySelectorAll('h1,h2,h3,h4,p,span,div,button,[role="tab"]')]
             .filter(element => visible(element) && /^(description|(?:sample\s+)?output\s*:?|(?:sample\s+)?input\s*:?)$/i.test(text(element)));
         for (const anchor of anchors) {
             for (let region = anchor.parentElement; region && region !== doc.body; region = region.parentElement) {
                 if (region.contains(editor) || region.querySelector('#assistant-root')) break;
+                if (hint && !region.contains(hint)) continue;
                 const content = text(region);
                 const hasOutputHeading = [...region.querySelectorAll('h1,h2,h3,h4,h5,h6,p,span,div,strong,b')]
                     .some(node => /^(?:sample\s+)?output\s*:?$/i.test(text(node)));
@@ -48,6 +49,19 @@
             }
         }
         return null;
+    }
+
+    function descriptionText(description) {
+        // A detached clone loses innerText's layout line breaks. Keep the line
+        // structure of examples and the distinction between headings and prose.
+        description.querySelectorAll('br').forEach(node => node.replaceWith('\n'));
+        const blocks = 'article,blockquote,div,dl,dt,dd,h1,h2,h3,h4,h5,h6,li,p,pre,section,tr';
+        for (const node of description.querySelectorAll(blocks)) {
+            if (node.parentElement?.closest('pre')) continue;
+            node.before('\n');
+            node.after('\n');
+        }
+        return (description.textContent || '').trim();
     }
     const aliases = { python: 'python', python3: 'python', javascript: 'javascript', 'node.js': 'javascript', java: 'java', 'c++': 'cpp', cpp: 'cpp', c: 'c', 'c#': 'csharp', go: 'go', rust: 'rust', kotlin: 'kotlin', php: 'php', sql: 'sql' };
     function parseLanguage(label) {
@@ -82,8 +96,12 @@
         if (!editors.length) return unavailable(`CODE-EDITOR: No supported visible editor found (${doc.querySelectorAll('iframe').length} embedded frames).`);
         const editor = chooseEditor(editors, doc);
         if (!editor) return unavailable(`CODE-EDITORS: Found ${editors.length} visible editors, but no unique editable solution editor with Run/Submit controls.`);
-        const regions = [...doc.querySelectorAll('#codingQuestionInfoContainer,[data-coding-question],.problem-statement,.problem-description,[class*="problemDescription"],[class*="ProblemDescription"],[class*="questionDescription"],[class*="QuestionDescription"]')].filter(visible);
-        const region = regions.find(element => !element.contains(editor)) || findDescription(doc, editor) || [...doc.querySelectorAll('main,article')].find(element => visible(element) && !element.contains(editor));
+        const primaryDescription = '#codingQuestionInfoContainer,[data-coding-question]';
+        const regions = [...doc.querySelectorAll(primaryDescription + ',.problem-statement,.problem-description,[class*="problemDescription"],[class*="ProblemDescription"],[class*="questionDescription"],[class*="QuestionDescription"]')]
+            .filter(element => visible(element) && !element.contains(editor));
+        const markedRegion = regions.find(element => element.matches(primaryDescription));
+        const region = markedRegion || findDescription(doc, editor, regions[0]) || regions[0]
+            || [...doc.querySelectorAll('main,article')].find(element => visible(element) && !element.contains(editor));
         if (!region || text(region).length < 20) return unavailable('CODE-DESCRIPTION: Editor found, but the problem description could not be identified.');
         const webProject = ['htmlEditor', 'cssEditor', 'javascriptEditor'].every(id => doc.getElementById(id)?.matches('.ace_editor'))
             && ['HTML', 'CSS', 'JAVASCRIPT'].every(name => doc.querySelector(`[data-testid="${name}"]`));
@@ -115,7 +133,7 @@
                 }
             }
         }
-        return { type: 'code', title, text: text(description), language, problemStatus, editorSelector: selectorFor(editor), options: [] };
+        return { type: 'code', title, text: descriptionText(description), language, problemStatus, editorSelector: selectorFor(editor), options: [] };
     }
     function getOnlineIdeQuestion(doc, location) {
         if (location.origin !== 'https://learning.ccbp.in'

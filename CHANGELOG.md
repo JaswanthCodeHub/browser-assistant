@@ -1,3 +1,8 @@
+# 2.9.31
+
+- Preserve coding descriptions, constraints, and sample formatting when reading the portal and during provider fallback.
+- Compare predicted sample outputs during coding review and correct mismatches before returning the code.
+
 # 2.9.30
 
 - Apply checkbox answer-set verification to groups of linked questions and verify the selections across the entire group before submitting.
