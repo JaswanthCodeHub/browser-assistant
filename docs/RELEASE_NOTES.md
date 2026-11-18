@@ -1,4 +1,8 @@
-# Browser Assistant 2.9.25
+# Browser Assistant 2.9.26
+
+- QA Control verifies linked-list stack pop ordering before dragging. It checks for an empty stack, saves the old top, advances top, and deletes the saved node.
+
+## Browser Assistant 2.9.25
 
 - QA Control can now move practice rows whose drag handle must be pressed to enable dragging. The full displayed order is verified before Submit.
 

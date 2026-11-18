@@ -29,7 +29,7 @@ from vision_images import (compress_image_base64, unique_image_blocks, collect_i
                            answer_permutation, cross_check_text_answers, solve_matrix_choice, solve_row_parallel_choice,
                            solve_relu_parallel_choice,
                            ordering_question, solve_sorted_list_merge_order, solve_stack_empty_order, solve_pseudocode_choice,
-                           solve_stack_push_order,
+                           solve_stack_push_order, solve_stack_pop_order,
                            reading_response_constraints,
                            VisionRateLimitError, VisionUnconfirmedError)
 
@@ -194,7 +194,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.9.25", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.9.26", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)
@@ -1367,6 +1367,9 @@ REPAIR MODE:
         if item is None:
             item = solve_stack_push_order(ordering)
             provider = 'local stack push check'
+        if item is None:
+            item = solve_stack_pop_order(ordering)
+            provider = 'local stack pop check'
         if item is not None:
             return {"results": json.dumps([item], ensure_ascii=False), "provider": f"{provider} [verified]",
                     "language": language, "answer_verified": True, "code_reviewed": False}

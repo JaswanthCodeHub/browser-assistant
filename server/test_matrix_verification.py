@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 import main
 from vision_images import (
     cross_check_text_answers, cross_check_visual_answers, solve_matrix_choice,
-    ordering_question, solve_relu_parallel_choice, solve_stack_push_order, VisionUnconfirmedError,
+    ordering_question, solve_relu_parallel_choice, solve_stack_pop_order, solve_stack_push_order, VisionUnconfirmedError,
 )
 
 
@@ -284,6 +284,38 @@ class MatrixVerificationTests(unittest.IsolatedAsyncioTestCase):
             ollama.assert_not_awaited()
         self.assertIsNone(solve_stack_push_order(ordering_question(request((steps[0], steps[2], steps[2])))))
         self.assertIsNone(solve_stack_push_order(ordering_question(request(steps).replace('linked list', 'array'))))
+
+    async def test_linked_stack_pop_reorders_all_four_dependencies_locally(self):
+        prompt = ('Arrange the steps in the correct order for the pop() operation in a stack '
+                  'implemented using a linked list.\nReorder ALL items.\n')
+        steps = ('Check if the stack is empty using empty() .',
+                 'Create a temp pointer which points to the node the top pointer is pointing to.',
+                 'Update top to top→next .', 'Delete the node pointed to by temp .')
+
+        def request(displayed):
+            return prompt + '\n'.join(f'{index}. {step}' for index, step in enumerate(displayed, 1))
+
+        with patch.object(main, 'try_groq', new_callable=AsyncMock) as groq, \
+             patch.object(main, 'try_ollama', new_callable=AsyncMock) as ollama:
+            for displayed in permutations(steps):
+                result = await main.solve_questions(main.PageContent(
+                    text=request(displayed), url='https://example.test', practice_type='mcq', verify_answer=True))
+                self.assertTrue(result['answer_verified'])
+                self.assertEqual(result['provider'], 'local stack pop check [verified]')
+                self.assertEqual(json.loads(result['results'])[0]['answer'],
+                                 [displayed.index(step) + 1 for step in steps])
+            groq.assert_not_awaited()
+            ollama.assert_not_awaited()
+
+        cases = (
+            request(steps[1:]),
+            request((*steps[:3], steps[2])),
+            request((*steps[:3], 'Delete the node pointed to by top.')),
+            request(steps).replace('linked list', 'array'),
+        )
+        for text in cases:
+            with self.subTest(text=text):
+                self.assertIsNone(solve_stack_pop_order(ordering_question(text)))
 
     async def test_ordering_retries_disagreement_and_requires_every_displayed_step(self):
         text = 'Arrange the tasks.\nReorder ALL items. Return a permutation.\n1. Build\n2. Design\n3. Check'

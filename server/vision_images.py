@@ -228,22 +228,16 @@ def solve_stack_empty_order(ordering):
     }
 
 
-def solve_stack_push_order(ordering):
-    """Check the dependencies of a linked-list stack push."""
+def _solve_linked_stack_order(ordering, operation, steps, reasoning):
     if not ordering:
         return None
     prompt, options = ordering
     if not re.fullmatch(
-        r'arrange the steps in the correct order for the push\s*\(\s*\) operation '
+        rf'arrange the steps in the correct order for the {operation}\s*\(\s*\) operation '
         r'in a stack implemented (?:using|with) a linked list[.:?]?',
         ' '.join(prompt.replace('\x60', '').split()), re.I,
     ):
         return None
-    steps = (
-        r'create a new node with temp pointing to it',
-        r'(?:point temp\s*->\s*next to (?:the )?top(?: pointer)?|temp\s*->\s*next\s*=\s*top)',
-        r'(?:update (?:the )?top(?: pointer)? to temp|top\s*=\s*temp)',
-    )
     if len(options) != len(steps):
         return None
     normalized = [' '.join(option.replace('\x60', '').replace('→', '->').split()).lower().rstrip(' .;')
@@ -254,8 +248,34 @@ def solve_stack_push_order(ordering):
         return None
     return {
         'type': 'mcq', 'question': prompt, 'answer': [indices[0] for indices in matches],
-        'reasoning': 'Allocate temp first, link temp->next to the old top, then make temp the new top.',
+        'reasoning': reasoning,
     }
+
+
+def solve_stack_push_order(ordering):
+    steps = (
+        r'create a new node with temp pointing to it',
+        r'(?:point temp\s*->\s*next to (?:the )?top(?: pointer)?|temp\s*->\s*next\s*=\s*top)',
+        r'(?:update (?:the )?top(?: pointer)? to temp|top\s*=\s*temp)',
+    )
+    return _solve_linked_stack_order(
+        ordering, 'push', steps, 'Allocate temp first, link temp->next to the old top, then make temp the new top.'
+    )
+
+
+def solve_stack_pop_order(ordering):
+    steps = (
+        r'check (?:if|whether) the stack is empty using empty\s*\(\s*\)',
+        r'(?:create a temp pointer (?:which|that) points to the node the top pointer is pointing to'
+        r'|(?:save|store) (?:the )?(?:current )?top(?: pointer)? in temp|temp\s*=\s*top)',
+        r'(?:update (?:the )?top(?: pointer)? to|top\s*=)\s*(?:top|temp)\s*->\s*next',
+        r'(?:delete the node pointed to by temp|delete temp|free\s*\(\s*temp\s*\))',
+    )
+    return _solve_linked_stack_order(
+        ordering, 'pop', steps,
+        'Check for an empty stack first. If it has a node, save the old top in temp, advance top to the next node, '
+        'then delete the saved node.',
+    )
 
 
 def ordering_key(value, size):
