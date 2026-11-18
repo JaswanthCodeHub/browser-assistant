@@ -24,7 +24,6 @@ from fastapi import Query, status
 from fastapi.responses import FileResponse
 from fastapi.exception_handlers import http_exception_handler
 from local_security import install_local_guards, redact, sanitize_data
-from self_learning import router as self_learning_router
 from vision_images import (compress_image_base64, unique_image_blocks, collect_image_evidence,
                            cross_check_visual_answers, relative_percentage_question, RELATIVE_PERCENTAGE_INSTRUCTION,
                            answer_permutation, cross_check_text_answers, solve_matrix_choice, solve_row_parallel_choice,
@@ -197,7 +196,6 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="Browser Assistant API", version="2.9.27", lifespan=lifespan)
 install_local_guards(app)
-app.include_router(self_learning_router)
 
 @app.exception_handler(HTTPException)
 async def safe_http_error(request, exc):

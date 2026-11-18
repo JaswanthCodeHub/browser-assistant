@@ -928,7 +928,7 @@ function mountJournalCountdown(signal: AbortSignal) {
         return null;
     }
 
-    async function runCodingAutomation(question, runId, repairAttempt = 0, feedback = '', starterCode = null, reviewOnly = false) {
+    async function runCodingAutomation(question, runId, repairAttempt = 0, feedback = '', starterCode = null) {
         automation.codingQuestionText = question.text;
         const active = () => automation.running && automation.runId === runId;
         const webProject = question.language === 'web';
@@ -982,7 +982,6 @@ function mountJournalCountdown(signal: AbortSignal) {
             if (!active()) return;
             const current = getAutomationContext();
             if (!verified?.ok || verified.value !== code || getAuthorizedQuestion(current)?.signature !== question.signature) throw new Error('Editor or question changed before submission.');
-            if (reviewOnly) { stopAutomation('ANSWER_FILLED'); return; }
             const submit = window.BrowserAssistantCoding.getSubmit(document);
             if (!automationPolicy.canExecute('submit', current) || !submit) throw new Error('Code filled. No unique enabled Submit button found.');
             const previousResult = window.BrowserAssistantCoding.getResult(document);
@@ -1492,87 +1491,7 @@ function mountJournalCountdown(signal: AbortSignal) {
         return transition === 'next';
     }
 
-    function supportsReviewFill(question) {
-        if (question.type === 'code' || question.type === 'ordering') return true;
-        if (question.compoundQuestions) return question.compoundQuestions.every(supportsReviewFill);
-        if (question.type === 'short-answer' || question.input) {
-            return question.input?.matches('input[type="text"], input[type="number"], textarea')
-                && !question.input.disabled && !question.input.readOnly;
-        }
-        return question.options.length >= 2 && question.options.every(option =>
-            option.input?.matches('input[type="radio"], input[type="checkbox"]') && !option.input.disabled);
-    }
-
-    async function readPracticeMemory(question) {
-        const options = question.options.map(option => option.text);
-        if (question.compoundQuestions || options.length < 2 || new Set(options).size !== options.length) return null;
-        try {
-            const identity = JSON.stringify([location.origin, location.pathname, question.text, options.sort()]);
-            const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(identity));
-            const problem = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
-            const response = await apiRequest('/learning/practice/lookup', 'POST', { problem });
-            if (response.ok && Array.isArray(response.data.rejected)) {
-                return { problem, answer: response.data.answer, rejected: response.data.rejected };
-            }
-        } catch { /* Optional memory cannot stop practice when unavailable. */ }
-        return null;
-    }
-
-    let cancelPracticeFeedback: (() => void) | undefined;
-
-    function watchPracticeFeedback(question, problem, answer) {
-        cancelPracticeFeedback?.();
-        const feedback = document.querySelector('[data-practice-quiz] #feedback');
-        if (!feedback || feedback.hasAttribute('data-practice-outcome') || !question.form) return;
-        const form = question.form;
-        const originalUrl = location.href;
-        let observer: MutationObserver;
-        function cancel() {
-            clearTimeout(timeout);
-            form.removeEventListener('submit', onSubmit, true);
-            observer?.disconnect();
-            cancelPracticeFeedback = undefined;
-        }
-        function onSubmit(event: Event) {
-            if (!event.isTrusted) return;
-            const fresh = getAuthorizedQuestion();
-            if (location.href !== originalUrl || !hasSameQuestionOptions(question, fresh)
-                || fresh.options.find(option => option.input?.checked)?.text !== answer) {
-                cancel();
-                return;
-            }
-            observer = new MutationObserver(() => {
-                const outcome = feedback.getAttribute('data-practice-outcome');
-                if (outcome !== 'correct' && outcome !== 'incorrect') return;
-                cancel();
-                if (location.href === originalUrl && window.confirm('Save this local practice result to learning memory?')) {
-                    void apiRequest('/learning/practice/feedback', 'POST', { problem, answer, outcome, consent: true })
-                        .then(response => { if (!response.ok) throw new Error('Memory rejected the result.'); })
-                        .catch(() => { automation.error = 'Practice feedback could not be saved.'; updateAutomationUI(); });
-                }
-            });
-            observer.observe(feedback, { attributes: true, attributeFilter: ['data-practice-outcome'] });
-        }
-        const timeout = setTimeout(cancel, 120000);
-        cancelPracticeFeedback = cancel;
-        form.addEventListener('submit', onSubmit, { capture: true });
-    }
-
-    async function startPracticeAutomation(reviewOnly = false) {
-        if (reviewOnly) {
-            if (automation.running) return;
-            cancelPracticeFeedback?.();
-            const practice = location.origin === 'https://learning.ccbp.in'
-                && /^\/(?:default-question|primitive-coding(?:-review)?)\/practice\//.test(location.pathname);
-            const coding = location.origin === 'https://learning.ccbp.in'
-                && /^\/question\/[a-f0-9-]{36}\/?$/i.test(location.pathname);
-            const fixture = location.origin === 'http://127.0.0.1:8000' && location.pathname === '/practice';
-            if (!(practice || coding || fixture) || !getAuthorizedQuestion()) {
-                automation.error = 'Open a supported practice question before using Fill for review.';
-                stopAutomation('PAUSED');
-                return;
-            }
-        }
+    async function startPracticeAutomation() {
         if (window.BrowserAssistantJournal?.matches()) {
             await window.BrowserAssistantJournal.start(); updateAutomationUI(); return;
         }
@@ -1596,7 +1515,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             updateAutomationUI();
             return;
         }
-        const onlineIde = reviewOnly ? null : window.BrowserAssistantCoding?.getOnlineIdeQuestion?.(document, location);
+        const onlineIde = window.BrowserAssistantCoding?.getOnlineIdeQuestion?.(document, location);
         if (onlineIde && automationPolicy.canExecute('navigate', initialContext)) {
             await runOnlineIdeAutomation(onlineIde);
             return;
@@ -1605,7 +1524,7 @@ function mountJournalCountdown(signal: AbortSignal) {
         // practice first, then resume when its first question is available.
         const waitingForInstructor = initialContext.target.id === 'ccbp-learning-practice'
             && adapter.isWaitingForInstructor?.(document);
-        if (!reviewOnly && !waitingForInstructor && !getAuthorizedQuestion(initialContext)) {
+        if (!waitingForInstructor && !getAuthorizedQuestion(initialContext)) {
             const startPractice = adapter.getStartPractice?.(document);
             if (startPractice && automationPolicy.canExecute('navigate', initialContext)) {
                 automation.state = 'STARTING_PRACTICE';
@@ -1648,7 +1567,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                 await new Promise(resolve => setTimeout(resolve, 100));
                 continue;
             }
-            const finalSubmit = reviewOnly ? null : currentAdapter.getFinalQuizSubmit?.(document);
+            const finalSubmit = currentAdapter.getFinalQuizSubmit?.(document);
             if (finalSubmit && getAuthorizedQuestion(context)?.compoundSubmit !== finalSubmit) {
                 const submitted = await submitCompletedQuiz(finalSubmit, currentAdapter, runId);
                 if (!automation.running || automation.runId !== runId) break;
@@ -1662,7 +1581,6 @@ function mountJournalCountdown(signal: AbortSignal) {
                 continue;
             }
             const submittedAdvance = currentAdapter.getSubmittedAdvance?.(document);
-            if (reviewOnly && submittedAdvance) { stopAutomation('PAUSED'); break; }
             if (submittedAdvance) {
                 if (!automationPolicy.canExecute('click', context)) {
                     automation.error = 'Target policy does not permit Next.'; stopAutomation('UNAUTHORIZED'); break;
@@ -1683,7 +1601,6 @@ function mountJournalCountdown(signal: AbortSignal) {
                 continue;
             }
             if (currentAdapter.isComplete(document)) {
-                if (reviewOnly) { stopAutomation('COMPLETED'); break; }
                 if (automation.deferredQuestions.size) {
                     stopAutomation('REVIEW_NEEDED');
                     break;
@@ -1717,11 +1634,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                 automation.error = questionDetectionError();
                 stopAutomation('PAUSED'); break;
             }
-            if (reviewOnly && !supportsReviewFill(question)) {
-                automation.error = 'This question has no verified fill interaction. Enter your answer manually.';
-                stopAutomation('PAUSED'); break;
-            }
-            if (question.type === 'code') { await runCodingAutomation(question, runId, 0, '', null, reviewOnly); break; }
+            if (question.type === 'code') { await runCodingAutomation(question, runId); break; }
             if (automation.deferredQuestions.has(question.signature)) {
                 automation.currentSignature = question.signature;
                 if (await continueAfterUnverifiedQuestion(question, runId, 'This question was deferred earlier.', false)) continue;
@@ -1732,11 +1645,6 @@ function mountJournalCountdown(signal: AbortSignal) {
             if (question.compoundQuestions) {
                 try {
                     const ready = await solveCompoundQuestion(question, runId, currentAdapter);
-                    if (reviewOnly) {
-                        if (ready?.button && automation.running && automation.runId === runId) stopAutomation('ANSWER_FILLED');
-                        else if (automation.running && automation.runId === runId) stopAutomation('PAUSED');
-                        break;
-                    }
                     if (ready?.button && automation.running && automation.runId === runId
                         && await submitPracticeAnswer(question, ready.button, runId, currentAdapter)) continue;
                 } catch (error) {
@@ -1748,69 +1656,60 @@ function mountJournalCountdown(signal: AbortSignal) {
                 break;
             }
             automation.state = 'SOLVING'; updateAutomationUI();
-            const questionUrl = location.href;
             let response;
-            let memory: Awaited<ReturnType<typeof readPracticeMemory>> = null;
             try {
-                if (reviewOnly && currentAdapter.id === 'practice-fixture') memory = await readPracticeMemory(question);
-                if (!(await waitWhilePaused(runId))) break;
                 let requestText = question.text;
-                if (memory?.answer && question.options.some(option => option.text === memory.answer)
-                    && !memory.rejected.includes(memory.answer)) {
-                    response = { data: { answer_verified: true, results: JSON.stringify([{ type: 'mcq', answer: memory.answer }]) } };
+                if (question.type === 'ordering') {
+                    await checkServer();
+                    if (!(await waitWhilePaused(runId))) break;
+                    const [major, minor, patch] = backendVersion.split('.').map(Number);
+                    if (major === 1 || (major === 2 && (minor < 9 || (minor === 9 && patch < 10)))) {
+                        throw new Error(`Drag-and-drop needs backend 2.9.10 or newer. Backend ${backendVersion} is running. Restart it, then start automation again.`);
+                    }
+                }
+                if (location.origin === 'https://learning.ccbp.in' && /^\/primitive-coding(?:-review)?\/practice\//.test(location.pathname)
+                    && document.querySelector('.ace_editor,.monaco-editor,.CodeMirror')) {
+                    const snapshot = await readMcqSnippetSnapshot(question, runId);
+                    if (!snapshot?.ok) throw new Error(snapshot?.error || 'Full code snippet could not be read.');
+                    if (!(await waitWhilePaused(runId))) break;
+                    const fresh = getAuthorizedQuestion();
+                    if (!hasSameQuestionOptions(question, fresh)) throw new Error('Question changed while reading the code.');
+                    // The snapshot fills option code from full models, not the
+                    // rows visible when this question was initially detected.
+                    question = fresh;
+                    automation.currentSignature = question.signature;
+                    question.codeSnapshot = JSON.stringify(snapshot.editorSources || snapshot.sources);
+                    if (snapshot.sources.length) requestText = `${question.identityText || question.text}\nComplete code snippets:\n${snapshot.sources.join('\n\n')}`;
+                }
+                const requestBody = {
+                    text: `${requestText}\nQuestion format: ${question.type === 'short-answer' ? 'Free response. Return only the exact value to enter in the JSON answer field, without an option label, explanation, or Markdown.' : question.selectionType === 'multiple' ? 'select all that apply; return every correct option as "Option A: ...; Option B: ...".' : 'select one answer.'}\n${question.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option.text}`).join('\n')}`,
+                    ...(question.type === 'ordering' ? { text: `${requestText}\nReorder ALL items. Return the complete permutation as a JSON array of 1-based item numbers in the answer field (example: [2,1,3]). Check every item appears exactly once.\n${question.options.map((option, index) => `${index + 1}. ${option.text}`).join('\n')}` } : {}),
+                    url: window.location.href, practice_type: 'mcq', verify_answer: true,
+                };
+                const visuals = window.BrowserAssistantQuestionVisuals;
+                if (visuals?.nodes(question).length) {
+                    automation.state = 'READING_CHART'; updateAutomationUI();
+                    await visuals.requireBackend(apiRequest, visuals.nodes(question).length);
+                    const snapshot = await visuals.capture(question, safeSendMessage);
+                    if (!(await waitWhilePaused(runId))) break;
+                    const fresh = getAuthorizedQuestion();
+                    if (!hasSameQuestionOptions(question, fresh) || visuals.fingerprint(fresh) !== snapshot.fingerprint) {
+                        throw new Error('Question or illustration changed while loading. Please restart.');
+                    }
+                    question.visualSnapshot = snapshot.fingerprint;
+                    automation.state = 'SOLVING'; updateAutomationUI();
+                    response = await requestPracticeAnswer(question, runId, '/solve-vision', {
+                        image:snapshot.images[0], images:snapshot.images.slice(1),
+                        text:requestBody.text, url:requestBody.url, practice_type:'mcq', verify_answer:true,
+                    });
                 } else {
-                    if (question.type === 'ordering') {
-                        await checkServer();
-                        if (!(await waitWhilePaused(runId))) break;
-                        const [major, minor, patch] = backendVersion.split('.').map(Number);
-                        if (major === 1 || (major === 2 && (minor < 9 || (minor === 9 && patch < 10)))) {
-                            throw new Error(`Drag-and-drop needs backend 2.9.10 or newer. Backend ${backendVersion} is running. Restart it, then start automation again.`);
-                        }
-                    }
-                    if (location.origin === 'https://learning.ccbp.in' && /^\/primitive-coding(?:-review)?\/practice\//.test(location.pathname)
-                        && document.querySelector('.ace_editor,.monaco-editor,.CodeMirror')) {
-                        const snapshot = await readMcqSnippetSnapshot(question, runId);
-                        if (!snapshot?.ok) throw new Error(snapshot?.error || 'Full code snippet could not be read.');
-                        if (!(await waitWhilePaused(runId))) break;
-                        const fresh = getAuthorizedQuestion();
-                        if (!hasSameQuestionOptions(question, fresh)) throw new Error('Question changed while reading the code.');
-                        // The snapshot fills option code from full models, not the
-                        // rows visible when this question was initially detected.
-                        question = fresh;
-                        automation.currentSignature = question.signature;
-                        question.codeSnapshot = JSON.stringify(snapshot.editorSources || snapshot.sources);
-                        if (snapshot.sources.length) requestText = `${question.identityText || question.text}\nComplete code snippets:\n${snapshot.sources.join('\n\n')}`;
-                    }
-                    const requestBody = {
-                        text: `${requestText}\nQuestion format: ${question.type === 'short-answer' ? 'Free response. Return only the exact value to enter in the JSON answer field, without an option label, explanation, or Markdown.' : question.selectionType === 'multiple' ? 'select all that apply; return every correct option as "Option A: ...; Option B: ...".' : 'select one answer.'}\n${question.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option.text}`).join('\n')}`,
-                        ...(question.type === 'ordering' ? { text: `${requestText}\nReorder ALL items. Return the complete permutation as a JSON array of 1-based item numbers in the answer field (example: [2,1,3]). Check every item appears exactly once.\n${question.options.map((option, index) => `${index + 1}. ${option.text}`).join('\n')}` } : {}),
-                        url: window.location.href, practice_type: 'mcq', verify_answer: true,
-                    };
-                    const visuals = window.BrowserAssistantQuestionVisuals;
-                    if (visuals?.nodes(question).length) {
-                        automation.state = 'READING_CHART'; updateAutomationUI();
-                        await visuals.requireBackend(apiRequest, visuals.nodes(question).length);
-                        const snapshot = await visuals.capture(question, safeSendMessage);
-                        if (!(await waitWhilePaused(runId))) break;
-                        const fresh = getAuthorizedQuestion();
-                        if (!hasSameQuestionOptions(question, fresh) || visuals.fingerprint(fresh) !== snapshot.fingerprint) {
-                            throw new Error('Question or illustration changed while loading. Please restart.');
-                        }
-                        question.visualSnapshot = snapshot.fingerprint;
-                        automation.state = 'SOLVING'; updateAutomationUI();
-                        response = await requestPracticeAnswer(question, runId, '/solve-vision', {
-                            image:snapshot.images[0], images:snapshot.images.slice(1),
-                            text:requestBody.text, url:requestBody.url, practice_type:'mcq', verify_answer:true,
-                        });
-                    } else {
-                        response = await requestPracticeAnswer(question, runId, '/solve', requestBody);
-                    }
+                    response = await requestPracticeAnswer(question, runId, '/solve', requestBody);
                 }
             } catch (error) {
                 if (!automation.running || automation.runId !== runId) break;
                 automation.error = error.message || 'Local AI server unavailable.';
                 if (['answer_unconfirmed', 'vision_unconfirmed'].includes(error.code)) {
-                    if (await continueAfterUnverifiedQuestion(question, runId, automation.error, !reviewOnly)) continue;
+                    if (await continueAfterUnverifiedQuestion(question, runId, automation.error)) continue;
                 } else stopAutomation('ERROR');
                 break;
             }
@@ -1840,10 +1739,6 @@ function mountJournalCountdown(signal: AbortSignal) {
             const rawAnswer = results?.[0]?.answer;
             const answerText = typeof rawAnswer === 'string' || typeof rawAnswer === 'number' ? String(rawAnswer).trim() : '';
             let answerIndexes = shortAnswer ? (answerText ? [0] : []) : answerIndexesFromResult(results, question);
-            if (memory?.answer && !memory.rejected.includes(memory.answer)) {
-                const remembered = question.options.findIndex(option => option.text === memory.answer);
-                if (remembered >= 0) answerIndexes = [remembered];
-            }
             if (ordering) {
                 try {
                     const order = Array.isArray(rawAnswer) ? rawAnswer : JSON.parse(answerText);
@@ -1853,10 +1748,6 @@ function mountJournalCountdown(signal: AbortSignal) {
             }
             const currentContext = getAutomationContext();
             let current = getAuthorizedQuestion(currentContext);
-            if (reviewOnly && (location.href !== questionUrl || !current || !supportsReviewFill(current))) {
-                automation.error = 'The practice page or its answer controls changed. Restart on the current question.';
-                stopAutomation('PAUSED'); break;
-            }
             if (question.visualSnapshot && (!current || window.BrowserAssistantQuestionVisuals.fingerprint(current) !== question.visualSnapshot)) {
                 automation.error = 'Question illustration changed while solving. No answer was selected.';
                 stopAutomation('PAUSED'); break;
@@ -1868,14 +1759,9 @@ function mountJournalCountdown(signal: AbortSignal) {
             if (!answerIndexes.length || !current || !hasSameQuestionOptions(question, current)) {
                 automation.error = !answerIndexes.length ? 'The verified answer did not match the displayed options exactly.' : !current ? 'Question controls disappeared while solving.' : 'Question text or options changed while solving. Please retry.';
                 if (!answerIndexes.length && current?.signature === question.signature && hasSameQuestionOptions(question, current)) {
-                    if (await continueAfterUnverifiedQuestion(question, runId, automation.error, !reviewOnly)) continue;
+                    if (await continueAfterUnverifiedQuestion(question, runId, automation.error)) continue;
                     break;
                 }
-                stopAutomation('PAUSED'); break;
-            }
-            const memoryAnswer = memory && question.options[answerIndexes[0]]?.text;
-            if (memoryAnswer && memory.rejected.includes(memoryAnswer)) {
-                automation.error = 'Practice feedback previously rejected this answer. Solve this question manually.';
                 stopAutomation('PAUSED'); break;
             }
             if (!automationPolicy.canExecute('select', currentContext) || !automationPolicy.canExecute('validate', currentContext)) { automation.error = 'Target policy does not permit selection or validation.'; stopAutomation('UNAUTHORIZED'); break; }
@@ -1918,18 +1804,9 @@ function mountJournalCountdown(signal: AbortSignal) {
                 if (current.submitted) break;
             }
             if (!automation.running) break;
-            if (reviewOnly && (current.submitted || currentAdapter.getSubmittedAdvance?.(document))) {
-                automation.error = 'The page changed after answer entry. Review its status.';
-                stopAutomation('PAUSED'); break;
-            }
             if (current.submitted || currentAdapter.getSubmittedAdvance?.(document)) continue;
             if (!shortAnswer && !ordering && current.selectionType === 'multiple' && current.options.some(option => Boolean(option.isSelected?.() || option.input?.checked) !== answerIndexes.includes(option.index))) {
                 automation.error = 'Multiple-answer selection could not be verified.'; stopAutomation('PAUSED'); break;
-            }
-            if (reviewOnly) {
-                if (memory && memoryAnswer) watchPracticeFeedback(question, memory.problem, memoryAnswer);
-                stopAutomation('ANSWER_FILLED');
-                break;
             }
             let ready;
             try { ready = await waitForQuestionSubmit(question, runId, currentAdapter, answerIndexes, answerText); }
@@ -2914,7 +2791,6 @@ function mountJournalCountdown(signal: AbortSignal) {
                     <button class="assistant-auto-btn" id="assistant-auto-pause-btn" aria-keyshortcuts="Alt+A Alt+Shift+A" title="Pause or resume (Alt + A)" disabled>Pause</button>
                     <button class="assistant-auto-btn stop" id="assistant-auto-stop-btn" disabled>■ Stop</button>
                 </div>
-                <button class="assistant-auto-btn" id="assistant-fill-review-btn">Fill for review</button>
                 <p class="assistant-automation-status">Alt + A: Start / Pause / Resume</p>
                 <button class="assistant-auto-btn" id="assistant-export-question-btn">Export question details</button>
             </section>
@@ -3018,8 +2894,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             document.getElementById('assistant-history-btn').onclick = openHistory;
             document.getElementById('assistant-scan-btn')?.addEventListener('click', scanPage);
             document.getElementById('assistant-vision-btn')?.addEventListener('click', () => { void visionScan(); });
-            document.getElementById('assistant-auto-start-btn')?.addEventListener('click', () => void startPracticeAutomation());
-            document.getElementById('assistant-fill-review-btn')?.addEventListener('click', () => void startPracticeAutomation(true));
+            document.getElementById('assistant-auto-start-btn')?.addEventListener('click', startPracticeAutomation);
             document.getElementById('assistant-export-question-btn')?.addEventListener('click', exportQuestionDiagnostic);
             document.getElementById('assistant-auto-pause-btn')?.addEventListener('click', pauseOrResumeAutomation);
             document.getElementById('assistant-auto-stop-btn')?.addEventListener('click', () => stopAutomation());
