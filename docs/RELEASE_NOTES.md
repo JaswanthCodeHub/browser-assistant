@@ -1,4 +1,8 @@
-# Browser Assistant 2.9.26
+# Browser Assistant 2.9.27
+
+- Maintenance release: added regression coverage for the journal-ready QA Control panel path. The panel opens only when the detected journal matches, and an already-open panel is reused.
+
+## Browser Assistant 2.9.26
 
 - QA Control verifies linked-list stack pop ordering before dragging. It checks for an empty stack, saves the old top, advances top, and deletes the saved node.
 

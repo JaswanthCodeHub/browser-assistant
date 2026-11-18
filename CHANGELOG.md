@@ -1,3 +1,7 @@
+# 2.9.27
+
+- Add regression coverage for the journal-ready panel path: QA Control opens only for the matching journal controller and an already-open panel is reused.
+
 # 2.9.26
 
 - Verify the order of linked-list stack pop steps locally and map the result to the displayed rows for automatic drag-and-drop.
