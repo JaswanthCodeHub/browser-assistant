@@ -51,7 +51,7 @@ test('confirms only the save-code-before-leaving dialog', () => {
 for (const accepted of [false, true]) {
     test(`direct Start solves the open question without returning to the list (old accepted result=${accepted})`, async () => {
         const content = source('content.js');
-        const start = content.indexOf('    async function startPracticeAutomation(');
+        const start = content.indexOf('    async function startPracticeAutomation()');
         const end = content.indexOf('    async function requestPracticeAnswer(', start);
         let solves=0, batches=0, resultReads=0;
         const location = { origin: 'https://learning.ccbp.in', href: 'https://learning.ccbp.in/question/example', pathname: '/question/example' };
@@ -81,7 +81,7 @@ test('Start on the problem list still begins the filtered batch',async()=>{
     let batches=0;
     const location={origin:'https://learning.ccbp.in',pathname:'/problems-set/'};
     const context=vm.createContext({window:{location},startCodingBatch:async()=>{batches++;}});
-    vm.runInContext(content.slice(content.indexOf('    async function startPracticeAutomation('),content.indexOf('    async function requestPracticeAnswer(')),context);
+    vm.runInContext(content.slice(content.indexOf('    async function startPracticeAutomation()'),content.indexOf('    async function requestPracticeAnswer(')),context);
     await context.startPracticeAutomation();assert.equal(batches,1);
 });
 

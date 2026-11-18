@@ -105,7 +105,6 @@
     const progress = document.getElementById('progress');
     const feedback = document.getElementById('feedback');
     function render() {
-      delete feedback.dataset.practiceOutcome;
       if (index >= questions.length) {
         progress.textContent = `${questions.length} / ${questions.length} completed`;
         card.innerHTML = '<div class="done" data-practice-complete>Practice complete — all local questions finished.</div>';
@@ -120,9 +119,7 @@
         event.preventDefault();
         const selected = document.querySelector('input[name="answer"]:checked');
         if (!selected) return;
-        const correct = Number(selected.value) === q.answer;
-        feedback.dataset.practiceOutcome = correct ? 'correct' : 'incorrect';
-        feedback.textContent = correct ? 'Correct — loading next question…' : 'Submitted — loading next question…';
+        feedback.textContent = Number(selected.value) === q.answer ? 'Correct — loading next question…' : 'Submitted — loading next question…';
         setTimeout(() => { index += 1; render(); }, 250);
       });
     }
