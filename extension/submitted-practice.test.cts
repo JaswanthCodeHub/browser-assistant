@@ -143,6 +143,48 @@ test('a permanently unavailable Submit times out without clicking or losing the 
     assert.equal(h.now(),15000);
 });
 
+test('linked questions require and apply the complete checkbox set before submission',async()=>{
+    for(const selectionSetVerified of [false,true]){
+        const answerText=['Option A: One','Option A: One; Option B: Two'];
+        const groups=['single','multiple'].map((selectionType,position)=>({
+            selectionType,text:`Question ${position+1}`,
+            options:['One','Two','Three'].map((text,index)=>({
+                text,selected:position===1&&index===2,
+                isSelected(){return this.selected;},
+            })),
+        }));
+        for(const group of groups)for(const option of group.options)option.input={click(){option.selected=!option.selected;}};
+        const compound={type:'compound-mcq',signature:'linked',compoundQuestions:groups};
+        const button={};
+        let requests=0;
+        const ctx=vm.createContext({
+            location:{href:'https://example.test'},document:{},automation:{running:true,runId:1,targetId:'test'},
+            getAutomationContext:()=>({target:{id:'test'}}),getAuthorizedQuestion:()=>compound,
+            automationPolicy:{canExecute:()=>true},waitWhilePaused:async()=>true,updateAutomationUI(){},
+            window:{BrowserAssistantAnswerRequests:{run:({request})=>request()}},
+            apiRequest:async(_path,_method,body)=>{
+                const index=requests++;
+                assert.match(body.text,index===0?/select one answer/:/Select ALL correct options/);
+                return {data:{answer_agreement:true,selection_set_verified:selectionSetVerified,
+                    results:JSON.stringify([{type:'mcq',answer:answerText[index]}])}};
+            },
+            waitForQuestionSubmit:async(_question,_runId,_adapter,_answerIndexes,_text,linkedAnswers)=>{
+                assert.deepEqual(JSON.parse(JSON.stringify(linkedAnswers)),[0,[0,1]]);
+                assert.ok(groups.every((group,index)=>ctx.linkedAnswerMatches(group,linkedAnswers[index])));
+                return {button};
+            },
+        });
+        load(ctx,'    function answerIndexesFromResult(','    function updateAutomationUI(');
+        load(ctx,'    function selectionMatches(','    function fillPracticeField(');
+        load(ctx,'    async function solveCompoundQuestion(','    async function submitPracticeAnswer(');
+        if(selectionSetVerified)assert.equal((await ctx.solveCompoundQuestion(compound,1,{})).button,button);
+        else await assert.rejects(ctx.solveCompoundQuestion(compound,1,{}),/complete linked checkbox answer/);
+        assert.deepEqual(groups.map(group=>group.options.map(option=>option.selected)),
+            selectionSetVerified?[[true,false,false],[true,true,false]]:[[false,false,false],[false,false,true]]);
+        assert.equal(requests,2);
+    }
+});
+
 for(const scenario of ['already answered','verified answer','unverified answer','unverified checkbox set'])test(`runner handles ${scenario}`,async()=>{
     const previouslySubmitted=scenario==='already answered';
     const verified=scenario!=='unverified answer';

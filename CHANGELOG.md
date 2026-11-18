@@ -1,3 +1,7 @@
+# 2.9.30
+
+- Apply checkbox answer-set verification to groups of linked questions and verify the selections across the entire group before submitting.
+
 # 2.9.29
 
 - Verify every option in checkbox questions before submitting, and check the displayed linked-list stack push and pop statements locally.

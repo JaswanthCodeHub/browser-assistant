@@ -495,7 +495,8 @@ function mountJournalCountdown(signal: AbortSignal) {
         if (question.compoundQuestions) {
             return { ...question, signature: JSON.stringify([question.type,
                 question.compoundSubmit ? question.compoundContext : '',
-                question.compoundQuestions.map(group => [group.identityText || group.text, group.options.map(option => option.identityText || option.text)]),
+                question.compoundQuestions.map(group => [group.selectionType, group.identityText || group.text,
+                    group.options.map(option => option.identityText || option.text)]),
             ]) };
         }
         if (question.type !== 'short-answer' && question.options.length < 2) return null;
@@ -781,7 +782,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                 throw new Error('Target policy does not permit submission on this page.');
             }
             const fresh = getAuthorizedQuestion(context);
-            if (fresh && (fresh.signature !== question.signature || fresh.selectionType !== question.selectionType)) {
+            if (fresh && (fresh.signature !== question.signature || (!linkedAnswers && fresh.selectionType !== question.selectionType))) {
                 throw new Error('Question changed before submission. No Submit was clicked.');
             }
             if (adapter.isSaving?.(document)) {
@@ -815,7 +816,9 @@ function mountJournalCountdown(signal: AbortSignal) {
 
     function linkedAnswerMatches(group, answer) {
         if (group.input) return !group.input.disabled && !group.input.readOnly && group.input.value === answer;
-        return !group.options.some(option => option.disabled) && selectionMatches(group, [answer]);
+        const indexes = group.selectionType === 'multiple' ? (Array.isArray(answer) ? answer : [])
+            : (typeof answer === 'number' ? [answer] : []);
+        return indexes.length > 0 && !group.options.some(option => option.disabled) && selectionMatches(group, indexes);
     }
 
     function fillPracticeField(field, value) {
@@ -1387,15 +1390,17 @@ function mountJournalCountdown(signal: AbortSignal) {
                 || group.options.some(option => option.disabled)) return null;
             return group;
         };
-        const answers: (string | number)[] = [];
+        const answers: (string | number | number[])[] = [];
         for (let position = 0; position < compound.compoundQuestions.length; position++) {
             if (!(await waitWhilePaused(runId))) return null;
             const question = findCurrent(position);
             if (!question) throw new Error('A linked question changed or is already locked. Review it on the page.');
             automation.state = 'SOLVING'; updateAutomationUI();
             const keyword = question.requiredWord;
+            const multiple = question.selectionType === 'multiple';
+            const choiceFormat = multiple ? 'Select ALL correct options.' : 'Question format: select one answer.';
             const format = freeResponse ? (keyword ? `Question format: 2 to 5 words including the given word ${keyword}.` : 'Question format: one word.')
-                : `Question format: select one answer.\n${question.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option.text}`).join('\n')}`;
+                : `${choiceFormat}\n${question.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option.text}`).join('\n')}`;
             const prompt = `Reading context:\n${compound.compoundContext || ''}\n\nAnswer only this question: ${question.text}\n${format}`;
             const response = await window.BrowserAssistantAnswerRequests.run({
                 request: () => apiRequest('/solve', 'POST', {
@@ -1413,6 +1418,7 @@ function mountJournalCountdown(signal: AbortSignal) {
             });
             if (!response) return null;
             if (response.data?.answer_agreement !== true) throw new Error('Update and restart the Browser Assistant backend to verify linked answers.');
+            if (multiple && response.data.selection_set_verified !== true) throw new Error('The complete linked checkbox answer could not be verified.');
             let results;
             try { results = JSON.parse(response.data.results); } catch { throw new Error('The answer service returned invalid linked-question data.'); }
             if (!Array.isArray(results) || results.length !== 1 || results[0]?.type !== 'mcq') {
@@ -1429,8 +1435,10 @@ function mountJournalCountdown(signal: AbortSignal) {
                 answers.push(words.join(' '));
             } else {
                 const indexes = answerIndexesFromResult(results, question);
-                if (indexes.length !== 1) throw new Error('The verified answer did not match this linked question’s displayed options.');
-                answers.push(indexes[0]);
+                if (!indexes.length || (!multiple && indexes.length !== 1)) {
+                    throw new Error('The verified answer did not match this linked question’s displayed options.');
+                }
+                answers.push(multiple ? indexes : indexes[0]);
             }
         }
         automation.error = ''; automation.state = freeResponse ? 'FILLING' : 'SELECTING'; updateAutomationUI();
@@ -1440,8 +1448,14 @@ function mountJournalCountdown(signal: AbortSignal) {
             if (!question) throw new Error('A linked answer field or option disappeared.');
             if (freeResponse) {
                 if (question.input.value !== answer) fillPracticeField(question.input, answer);
+            } else if (Array.isArray(answer)) {
+                for (const [index, option] of question.options.entries()) {
+                    if (Boolean(option.isSelected?.() || option.input?.checked) !== answer.includes(index)) {
+                        (option.input || option.control)?.click();
+                    }
+                }
             } else {
-                const option = question.options[answer];
+                const option = question.options[Number(answer)];
                 if (!(option.isSelected?.() || option.input?.checked)) (option.input || option.control)?.click();
             }
             let selected = false;

@@ -1,4 +1,9 @@
-# Browser Assistant 2.9.29
+# Browser Assistant 2.9.30
+
+- Linked groups containing checkbox questions now verify and apply all correct choices before submitting the group.
+- Includes v2.9.29's local verification for the reported linked-list stack push and pop questions.
+
+## Browser Assistant 2.9.29
 
 - Checkbox answers require verification of the full set of choices. The assistant leaves a question for review when it cannot verify that set.
 - Linked-list stack push and pop questions matching the practice examples are checked locally.
