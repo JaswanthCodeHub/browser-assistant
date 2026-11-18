@@ -1,4 +1,8 @@
-# Browser Assistant 2.9.24
+# Browser Assistant 2.9.25
+
+- QA Control can now move practice rows whose drag handle must be pressed to enable dragging. The full displayed order is verified before Submit.
+
+## Browser Assistant 2.9.24
 
 - The practice drag adapter targets the upper or lower half of the destination row according to the move direction.
 - When a drag does not take effect, the panel shows the verified order using the current row numbers.

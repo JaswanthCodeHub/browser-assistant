@@ -1,3 +1,7 @@
+# 2.9.25
+
+- Automatically press the drag handle and retry on practice rows that become draggable only on press.
+
 # 2.9.24
 
 - Use the practice row as the primary drag target and retry the handle if the whole list stays unchanged.

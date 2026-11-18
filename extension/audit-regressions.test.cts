@@ -126,7 +126,19 @@ function orderingDropFixture() {
             this.clientY = options.clientY;
         }
     }
-    const context = vm.createContext({ document, window, URL, DataTransfer: Transfer, DragEvent: Drag, setTimeout: fn => fn() });
+    class Pointer extends window.Event {
+        constructor(type, options) {
+            super(type, options);
+            this.clientX = options.clientX;
+            this.clientY = options.clientY;
+            this.button = options.button;
+            this.buttons = options.buttons;
+        }
+    }
+    const context = vm.createContext({
+        document, window, URL, DataTransfer: Transfer, DragEvent: Drag,
+        PointerEvent: Pointer, MouseEvent: Pointer, setTimeout: fn => fn(),
+    });
     vm.runInContext(fs.readFileSync(__dirname + '/editor-bridge.js', 'utf8'), context);
     return {
         steps, handleSelector, labelSelector,
@@ -185,6 +197,51 @@ test('native ordering only retries the legacy handle path when the row drop left
         assert.deepEqual(attempts, behavior === 'unexpected-movement' ? ['body'] : ['body', 'handle']);
         assert.deepEqual(order(), behavior === 'handle-only' ? [1, 0, 2]
             : behavior === 'unexpected-movement' ? [0, 2, 1] : [0, 1, 2]);
+    }
+});
+
+test('native ordering presses the grip to activate the row and releases the pointer after dragging', async () => {
+    for (const acceptDrop of [true, false]) {
+        const { steps, handleSelector, labelSelector, move, order } = orderingDropFixture();
+        let activatedRow;
+        let draggingRow;
+        let rowDrops = 0;
+        const pressEvents = [];
+        const releaseEvents = [];
+        steps.addEventListener('pointerdown', event => {
+            if (event.target.closest(handleSelector)) pressEvents.push(event.type);
+        });
+        steps.addEventListener('mousedown', event => {
+            const handle = event.target.closest(handleSelector);
+            if (!handle) return;
+            pressEvents.push(event.type);
+            activatedRow = handle.closest('[data-row]');
+            activatedRow.setAttribute('draggable', 'true');
+        });
+        steps.addEventListener('dragstart', event => {
+            draggingRow = event.target === activatedRow && event.target.matches('[draggable="true"]')
+                ? activatedRow : null;
+        });
+        steps.addEventListener('dragover', event => {
+            if (draggingRow && event.target.closest(labelSelector)) event.preventDefault();
+        });
+        steps.addEventListener('drop', event => {
+            if (!draggingRow || !event.target.closest(labelSelector)) return;
+            rowDrops++;
+            if (acceptDrop) steps.insertBefore(draggingRow, event.target.closest('[data-row]'));
+        });
+        for (const type of ['mouseup', 'pointerup']) {
+            steps.ownerDocument.addEventListener(type, event => {
+                releaseEvents.push(event.type);
+                activatedRow?.setAttribute('draggable', 'false');
+            });
+        }
+        assert.equal((await move(1, 0)).ok, acceptDrop);
+        assert.deepEqual(order(), acceptDrop ? [1, 0, 2] : [0, 1, 2]);
+        assert.deepEqual(pressEvents, ['pointerdown', 'mousedown']);
+        assert.equal(rowDrops, 1);
+        assert.deepEqual(releaseEvents, ['pointerup', 'mouseup']);
+        assert.equal(activatedRow.getAttribute('draggable'), 'false');
     }
 });
 

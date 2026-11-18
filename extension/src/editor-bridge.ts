@@ -276,11 +276,33 @@ async function browserAssistantOrderingDrag(prompt: string, optionTexts: string[
             const rect = node.getBoundingClientRect();
             return { node, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
         };
-
-        for (const useRowBody of [true, false]) {
+        const unchangedRows = () => {
             const current = rows();
-            if (current.length !== before.length || current.some((row, index) => row.text !== expectedTexts[index])) break;
-            const source = current[from].handle;
+            return current.length === before.length && current.every((row, index) => row.text === expectedTexts[index]) ? current : [];
+        };
+        const pressHandle = (original, pressed) => {
+            const point = () => center(findRow(moving)?.handle || original);
+            const init = {
+                bubbles: true, cancelable: true, button: 0, buttons: pressed ? 1 : 0,
+            };
+            const pointer = point();
+            if (typeof PointerEvent === 'function' && !pointer.node.dispatchEvent(new PointerEvent(
+                pressed ? 'pointerdown' : 'pointerup',
+                { ...init, clientX: pointer.clientX, clientY: pointer.clientY, pointerType: 'mouse', pointerId: 1, isPrimary: true },
+            )) && pressed) return;
+            const mouse = point();
+            mouse.node.dispatchEvent(new MouseEvent(pressed ? 'mousedown' : 'mouseup', {
+                ...init, clientX: mouse.clientX, clientY: mouse.clientY,
+            }));
+        };
+
+        for (const mode of ['row', 'handle', 'press']) {
+            if (mode === 'press' && typeof MouseEvent !== 'function') break;
+            const current = unchangedRows();
+            if (!current.length) break;
+            const handle = current[from].handle;
+            let source = handle;
+            let started = false;
             const dataTransfer = new DataTransfer();
             dataTransfer.setData('text/plain', moving);
             dataTransfer.effectAllowed = 'move';
@@ -290,15 +312,25 @@ async function browserAssistantOrderingDrag(prompt: string, optionTexts: string[
             const target = () => {
                 const row = findRow(destination);
                 if (!row) return null;
-                if (!useRowBody) return center(row.handle);
+                if (mode === 'handle') return center(row.handle);
                 const { clientX } = center(row.label);
                 const rect = row.row.getBoundingClientRect();
                 const clientY = rect.top + rect.height * (from > to ? 0.25 : 0.75);
                 const hit = document.elementFromPoint?.(clientX, clientY);
                 return { node: hit && row.row.contains(hit) ? hit : row.label, clientX, clientY };
             };
-            if (!send(center(source), 'dragstart')) break;
             try {
+                if (mode === 'press') {
+                    // Some practice rows become draggable only after the handle is pressed.
+                    pressHandle(handle, true);
+                    await wait(100);
+                    const armed = unchangedRows()[from];
+                    if (!armed?.row.matches('[draggable="true"]')) break;
+                    source = armed.row;
+                }
+                started = send({ ...center(findRow(moving)?.handle || handle), node: source }, 'dragstart');
+                // A cancelled start can mean the row has yet to be enabled by its handle.
+                if (!started) continue;
                 // A drag handler can render fresh row nodes between events.
                 await wait(220);
                 dataTransfer.dropEffect = 'move';
@@ -313,7 +345,12 @@ async function browserAssistantOrderingDrag(prompt: string, optionTexts: string[
                 if (!dropped) break;
                 send(dropped, 'drop');
             } finally {
-                send(center(findRow(moving)?.handle || source), 'dragend');
+                if (started) {
+                    const latest = findRow(moving);
+                    const endSource = latest && (source.matches('.drag-icon-container') ? latest.handle : latest.row);
+                    send(center(endSource || source), 'dragend');
+                }
+                if (mode === 'press') pressHandle(handle, false);
             }
             for (let attempt = 0; attempt < 10; attempt++) {
                 await wait(160);
