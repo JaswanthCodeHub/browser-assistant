@@ -35,6 +35,7 @@
     "server/journal_prompt.md",
     "server/journal_syllabus.json",
     "server/local_security.py",
+    "server/self_learning.py",
     "server/main.py",
     "server/workspace_server.py",
     "server/practice_quiz.html",

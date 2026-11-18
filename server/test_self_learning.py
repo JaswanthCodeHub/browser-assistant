@@ -7,7 +7,11 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
-from self_learning import Lesson, erase_lessons, learning_status, record_lesson, retrieve_lessons
+from self_learning import (
+    Lesson, PracticeFeedback, PracticeLookup, erase_lessons, learning_status,
+    lookup_practice_answers, record_lesson, record_practice_feedback, retrieve_lessons,
+)
+from pydantic import ValidationError
 
 
 class LearningTests(unittest.TestCase):
@@ -55,6 +59,25 @@ class LearningTests(unittest.TestCase):
         result = retrieve_lessons("coding", "https://example.org/task",
                                   "How to reverse a Python list?", 5)
         self.assertNotIn("hunter2", result["items"][0]["lesson"])
+
+    def test_practice_answer_feedback_and_clearing(self):
+        key = "a" * 64
+        lookup = PracticeLookup(problem=key)
+        record_practice_feedback(PracticeFeedback(
+            problem=key, answer="11", outcome="incorrect", consent=True))
+        record_practice_feedback(PracticeFeedback(
+            problem=key, answer="13", outcome="correct", consent=True))
+        self.assertEqual(lookup_practice_answers(lookup), {"answer": "13", "rejected": ["11"]})
+        self.assertIsNone(lookup_practice_answers(PracticeLookup(problem="b" * 64))["answer"])
+        record_practice_feedback(PracticeFeedback(
+            problem=key, answer="13", outcome="incorrect", consent=True))
+        self.assertIsNone(lookup_practice_answers(lookup)["answer"])
+        erase_lessons()
+        self.assertEqual(lookup_practice_answers(lookup), {"answer": None, "rejected": []})
+
+    def test_practice_feedback_requires_consent(self):
+        with self.assertRaises(ValidationError):
+            PracticeFeedback(problem="a" * 64, answer="13", outcome="correct", consent=False)
 
     def test_clear_only_learning_history(self):
         record_lesson(self.payload())
