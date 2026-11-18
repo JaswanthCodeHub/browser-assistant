@@ -1,3 +1,7 @@
+# 2.9.28
+
+- Fix automatic ordering on CCBP practice by ignoring the temporary drag preview and moving through the correct side of the destination handle.
+
 # 2.9.27
 
 - Add regression coverage for the journal-ready panel path: QA Control opens only for the matching journal controller and an already-open panel is reused.

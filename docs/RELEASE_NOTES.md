@@ -1,4 +1,8 @@
-# Browser Assistant 2.9.27
+# Browser Assistant 2.9.28
+
+- QA Control moves CCBP practice rows using the portal's drag handles. The temporary drag preview is excluded from the row count, and the full displayed order is checked before submission.
+
+## Browser Assistant 2.9.27
 
 - Maintenance release: added regression coverage for the journal-ready QA Control panel path. The panel opens only when the detected journal matches, and an already-open panel is reused.
 

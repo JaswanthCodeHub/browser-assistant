@@ -303,10 +303,10 @@
                 if (gapSet || phraseSet || (headings.length && /read the (?:text|comments|passage)/i.test(pageText))) return null;
             }
             const nativeRegion = doc.querySelector('#generic-question-container');
-            const nativeLabels = [...(nativeRegion?.querySelectorAll('.drag-and-drop-option-label') || [])].filter(visible);
+            const nativeLabels = [...(nativeRegion?.querySelectorAll('.drag-and-drop-option-label') || [])]
+                .filter(label => visible(label) && label.parentElement?.querySelector('.drag-icon-container[draggable="true"]'));
             const nativePrompt = nativeRegion?.querySelector('#generic-question-wrapper-id');
-            if (nativeLabels.length >= 2 && nativeLabels.length <= 30 && nativePrompt
-                && nativeLabels.every(label => label.parentElement.querySelector('.drag-icon-container[draggable="true"]'))) {
+            if (nativeLabels.length >= 2 && nativeLabels.length <= 30 && nativePrompt) {
                 const options = nativeLabels.map((label, index) => ({ index, text: textOf(label), node: label.parentElement }));
                 if (new Set(options.map(option => option.text)).size === options.length) return {
                     type: 'ordering', dragKind: 'native-ccbp', text: textOf(nativePrompt), container: nativeRegion, options,

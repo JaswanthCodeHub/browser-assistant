@@ -260,8 +260,11 @@ async function browserAssistantOrderingDrag(prompt: string, optionTexts: string[
                 .map(label => ({
                     label, row: label.parentElement, text: normalize(label.textContent),
                     handle: label.parentElement?.querySelector('.drag-icon-container[draggable="true"]'),
-                }));
-            return visible.length === expectedTexts.length && visible.every(row => uniqueTexts.has(row.text) && row.handle)
+                }))
+                // The portal renders a copy of the option while dragging. Only
+                // the real option has a draggable handle.
+                .filter(row => row.handle);
+            return visible.length === expectedTexts.length && visible.every(row => uniqueTexts.has(row.text))
                 && new Set(visible.map(row => row.text)).size === uniqueTexts.size ? visible : [];
         };
         const before = rows();
@@ -271,6 +274,7 @@ async function browserAssistantOrderingDrag(prompt: string, optionTexts: string[
         const moving = before[from].text;
         const destination = before[to].text;
         const findRow = text => rows().find(row => row.text === text);
+        const didMove = () => rows()[to]?.text === moving;
         const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
         const center = node => {
             const rect = node.getBoundingClientRect();
@@ -296,7 +300,8 @@ async function browserAssistantOrderingDrag(prompt: string, optionTexts: string[
             }));
         };
 
-        for (const mode of ['row', 'handle', 'press']) {
+        const portalGrip = before[from].row.hasAttribute('data-handler-id') || before[from].handle.querySelector('svg');
+        for (const mode of portalGrip ? ['handle', 'row', 'press'] : ['row', 'handle', 'press']) {
             if (mode === 'press' && typeof MouseEvent !== 'function') break;
             const current = unchangedRows();
             if (!current.length) break;
@@ -312,10 +317,11 @@ async function browserAssistantOrderingDrag(prompt: string, optionTexts: string[
             const target = () => {
                 const row = findRow(destination);
                 if (!row) return null;
-                if (mode === 'handle') return center(row.handle);
-                const { clientX } = center(row.label);
-                const rect = row.row.getBoundingClientRect();
-                const clientY = rect.top + rect.height * (from > to ? 0.25 : 0.75);
+                const node = mode === 'handle' ? row.handle : row.label;
+                const { clientX } = center(node);
+                const bounds = (mode === 'handle' ? row.handle : row.row).getBoundingClientRect();
+                const clientY = bounds.top + bounds.height * (from > to ? 0.25 : 0.75);
+                if (mode === 'handle') return { node, clientX, clientY };
                 const hit = document.elementFromPoint?.(clientX, clientY);
                 return { node: hit && row.row.contains(hit) ? hit : row.label, clientX, clientY };
             };
@@ -329,7 +335,6 @@ async function browserAssistantOrderingDrag(prompt: string, optionTexts: string[
                     source = armed.row;
                 }
                 started = send({ ...center(findRow(moving)?.handle || handle), node: source }, 'dragstart');
-                // A cancelled start can mean the row has yet to be enabled by its handle.
                 if (!started) continue;
                 // A drag handler can render fresh row nodes between events.
                 await wait(220);
@@ -337,13 +342,20 @@ async function browserAssistantOrderingDrag(prompt: string, optionTexts: string[
                 const entered = target();
                 if (!entered) break;
                 send(entered, 'dragenter');
-                const hovered = target();
-                if (!hovered) break;
-                send(hovered, 'dragover');
-                await wait(220);
-                const dropped = target();
-                if (!dropped) break;
-                send(dropped, 'drop');
+                // The portal can commit the move on hover. Stop targeting the
+                // destination once its position changes.
+                await wait(0);
+                if (!didMove()) {
+                    const hovered = target();
+                    if (!hovered) break;
+                    send(hovered, 'dragover');
+                    await wait(220);
+                    if (!didMove()) {
+                        const dropped = target();
+                        if (!dropped) break;
+                        send(dropped, 'drop');
+                    }
+                }
             } finally {
                 if (started) {
                     const latest = findRow(moving);
@@ -354,7 +366,7 @@ async function browserAssistantOrderingDrag(prompt: string, optionTexts: string[
             }
             for (let attempt = 0; attempt < 10; attempt++) {
                 await wait(160);
-                if (rows()[to]?.text === moving) return { ok: true };
+                if (didMove()) return { ok: true };
             }
         }
         return { ok: false };

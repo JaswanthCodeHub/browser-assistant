@@ -200,6 +200,62 @@ test('native ordering only retries the legacy handle path when the row drop left
     }
 });
 
+test('CCBP ordering ignores the drag preview and crosses the destination grip midpoint', async () => {
+    for (const { hoverEvent, from, to, expected } of [
+        { hoverEvent: 'dragenter', from: 1, to: 0, expected: [1, 0, 2] },
+        { hoverEvent: 'dragover', from: 0, to: 2, expected: [1, 2, 0] },
+    ]) {
+        const { steps, handleSelector, labelSelector, move, order } = orderingDropFixture();
+        const rows = [...steps.children];
+        for (const [index, row] of rows.entries()) {
+            row.setAttribute('data-handler-id', 'T' + index);
+            row.querySelector(handleSelector).getBoundingClientRect = () => {
+                const { left, top } = row.getBoundingClientRect();
+                return { left, top: top + 10, width: 30, height: 30, right: left + 30, bottom: top + 40 };
+            };
+        }
+        let moving;
+        let preview;
+        let swaps = 0;
+        steps.addEventListener('dragstart', event => {
+            if (!event.target.matches(handleSelector)) return;
+            moving = event.target.closest('[data-row]');
+            preview = moving.cloneNode(true);
+            preview.removeAttribute('data-row');
+            preview.removeAttribute('data-handler-id');
+            preview.removeAttribute('draggable');
+            preview.style.position = 'fixed';
+            preview.style.pointerEvents = 'none';
+            preview.querySelector(handleSelector).removeAttribute('draggable');
+            preview.querySelector(labelSelector).getClientRects = () => [{}];
+            steps.after(preview);
+        });
+        steps.addEventListener(hoverEvent, event => {
+            if (!moving || !event.target.matches(handleSelector)) return;
+            assert.ok(preview.isConnected);
+            const { left, top, width, height } = event.target.getBoundingClientRect();
+            if (event.clientX <= left || event.clientX >= left + width) return;
+            const target = event.target.closest('[data-row]');
+            const current = [...steps.children];
+            const sourceIndex = current.indexOf(moving);
+            const targetIndex = current.indexOf(target);
+            const midpoint = top + height / 2;
+            if (sourceIndex === targetIndex || (sourceIndex > targetIndex && event.clientY >= midpoint)
+                || (sourceIndex < targetIndex && event.clientY <= midpoint)) return;
+            steps.insertBefore(moving, sourceIndex > targetIndex ? target : target.nextElementSibling);
+            swaps++;
+        });
+        steps.addEventListener('dragend', () => {
+            preview?.remove();
+            moving = null;
+        });
+        assert.equal((await move(from, to)).ok, true);
+        assert.deepEqual(order(), expected);
+        assert.equal(swaps, 1);
+        assert.equal(preview.isConnected, false);
+    }
+});
+
 test('native ordering presses the grip to activate the row and releases the pointer after dragging', async () => {
     for (const acceptDrop of [true, false]) {
         const { steps, handleSelector, labelSelector, move, order } = orderingDropFixture();
