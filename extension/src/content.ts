@@ -463,7 +463,7 @@ function mountJournalCountdown(signal: AbortSignal) {
     }
 
     function hasSameQuestionOptions(before, after) {
-        if (!before || !after || before.options.length !== after.options.length) return false;
+        if (!before || !after || before.selectionType !== after.selectionType || before.options.length !== after.options.length) return false;
         if (normalizeAutomationText(before.identityText || before.text) !== normalizeAutomationText(after.identityText || after.text)) return false;
         return before.options.every((option, index) =>
             normalizeAutomationText(option.identityText || option.text) === normalizeAutomationText(after.options[index]?.identityText || after.options[index]?.text),
@@ -781,7 +781,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                 throw new Error('Target policy does not permit submission on this page.');
             }
             const fresh = getAuthorizedQuestion(context);
-            if (fresh && fresh.signature !== question.signature) {
+            if (fresh && (fresh.signature !== question.signature || fresh.selectionType !== question.selectionType)) {
                 throw new Error('Question changed before submission. No Submit was clicked.');
             }
             if (adapter.isSaving?.(document)) {
@@ -1685,6 +1685,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                     text: `${requestText}\nQuestion format: ${question.type === 'short-answer' ? 'Free response. Return only the exact value to enter in the JSON answer field, without an option label, explanation, or Markdown.' : question.selectionType === 'multiple' ? 'select all that apply; return every correct option as "Option A: ...; Option B: ...".' : 'select one answer.'}\n${question.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option.text}`).join('\n')}`,
                     ...(question.type === 'ordering' ? { text: `${requestText}\nReorder ALL items. Return the complete permutation as a JSON array of 1-based item numbers in the answer field (example: [2,1,3]). Check every item appears exactly once.\n${question.options.map((option, index) => `${index + 1}. ${option.text}`).join('\n')}` } : {}),
                     url: window.location.href, practice_type: 'mcq', verify_answer: true,
+                    require_answer_agreement: question.selectionType === 'multiple',
                 };
                 const visuals = window.BrowserAssistantQuestionVisuals;
                 if (visuals?.nodes(question).length) {
@@ -1700,7 +1701,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                     automation.state = 'SOLVING'; updateAutomationUI();
                     response = await requestPracticeAnswer(question, runId, '/solve-vision', {
                         image:snapshot.images[0], images:snapshot.images.slice(1),
-                        text:requestBody.text, url:requestBody.url, practice_type:'mcq', verify_answer:true,
+                        ...requestBody,
                     });
                 } else {
                     response = await requestPracticeAnswer(question, runId, '/solve', requestBody);
@@ -1718,6 +1719,10 @@ function mountJournalCountdown(signal: AbortSignal) {
             if (response.data?.answer_verified !== true) {
                 automation.error = 'Answer verification is required. Restart the updated Browser Assistant backend.';
                 stopAutomation('PAUSED'); break;
+            }
+            if (question.selectionType === 'multiple' && response.data.selection_set_verified !== true) {
+                if (await continueAfterUnverifiedQuestion(question, runId, 'The complete checkbox answer could not be verified.')) continue;
+                break;
             }
             let results;
             try { results = JSON.parse(response.data.results); } catch { automation.error = 'AI returned an invalid answer.'; stopAutomation('ERROR'); break; }
@@ -2384,6 +2389,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                 practice_type: context.question ? 'mcq' : practiceType,
                 language: context.question ? undefined : requestedLanguage,
                 verify_answer: true,
+                require_answer_agreement: context.question?.selectionType === 'multiple',
                 allow_overview: !context.question && practiceType === 'auto' && !requestedLanguage,
             });
 
@@ -2402,7 +2408,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                 throw new Error('Vision returned an invalid answer format. Please scan a clear, complete question again.');
             }
             if (!Array.isArray(parsed) || !parsed.length) throw new Error('The complete question could not be read. No guessed answer was returned.');
-            assertVerifiedScanAnswers(parsed, data.answer_verified, context.question);
+            assertVerifiedScanAnswers(parsed, data.answer_verified, context.question, data.selection_set_verified);
             if (parsed.some(item => item?.type === 'code') && data.code_reviewed !== true) {
                 throw new Error('The code has not passed review against the screenshot.');
             }
@@ -2426,13 +2432,16 @@ function mountJournalCountdown(signal: AbortSignal) {
         }
     }
 
-    function assertVerifiedScanAnswers(results, verified, question) {
+    function assertVerifiedScanAnswers(results, verified, question, selectionSetVerified = false) {
         if (question && (!Array.isArray(results) || results.length !== 1 || results[0]?.type !== 'mcq')) {
             throw new Error('Expected one verified answer for the current question.');
         }
         if (!Array.isArray(results) || !results.some(item => item?.type === 'mcq')) return;
         if (verified !== true) {
             throw new Error('Answer verification is required. Restart the updated Browser Assistant backend.');
+        }
+        if (question?.selectionType === 'multiple' && selectionSetVerified !== true) {
+            throw new Error('The complete checkbox answer could not be verified.');
         }
         if (question && question.type !== 'short-answer' && question.type !== 'ordering'
             && !answerIndexesFromResult(results, question).length) {
@@ -2530,11 +2539,13 @@ function mountJournalCountdown(signal: AbortSignal) {
                     image:snapshot.images[0], images:snapshot.images.slice(1),
                     text:context.text,
                     url:location.href, practice_type:'mcq', verify_answer:true,
+                    require_answer_agreement: question.selectionType === 'multiple',
                 });
             } else {
                 res = await apiRequest('/solve', 'POST', {
                     text: question ? context.text : extractSmartText(), url: context.url,
                     practice_type: question ? 'mcq' : practiceType, verify_answer: Boolean(question) || practiceType !== 'code',
+                    require_answer_agreement: question?.selectionType === 'multiple',
                 });
             }
 
@@ -2565,7 +2576,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                     parsed = [{ type: "mcq", question: "Result", reasoning: "", answer: raw.substring(0, 200) }];
                 }
             }
-            assertVerifiedScanAnswers(parsed, data.answer_verified, question);
+            assertVerifiedScanAnswers(parsed, data.answer_verified, question, data.selection_set_verified);
             displayResults(parsed, data.provider);
         } catch (error) {
             if (timeoutId) clearTimeout(timeoutId);

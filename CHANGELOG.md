@@ -1,3 +1,7 @@
+# 2.9.29
+
+- Verify every option in checkbox questions before submitting, and check the displayed linked-list stack push and pop statements locally.
+
 # 2.9.28
 
 - Fix automatic ordering on CCBP practice by ignoring the temporary drag preview and moving through the correct side of the destination handle.

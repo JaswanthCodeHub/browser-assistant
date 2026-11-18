@@ -26,6 +26,34 @@ class ChartVisionTests(unittest.IsolatedAsyncioTestCase):
         self.enterContext(patch.object(main, '_vision_key_cooldowns', {}))
         self.enterContext(patch.object(main, '_groq_key_index', 0))
 
+    async def test_vision_checks_every_checkbox_against_the_original_image(self):
+        text = ('Which numbers are shown in the chart?\nSelect ALL correct options.\n'
+                'A. 12\nB. 13\nC. 14')
+        first = [{'type': 'mcq', 'answer': 'Option A: 12'}]
+        full_verdict = [{'letter': letter, 'correct': letter in 'AB'} for letter in 'ABC']
+        for verdict in (full_verdict, full_verdict[:-1]):
+            with self.subTest(verdict=verdict):
+                check = {'readable': True, 'options': verdict}
+                create = Mock(side_effect=[provider_response(first), provider_response(check), provider_response(check)])
+                client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+                with patch.object(main, '_groq_clients', [client]), \
+                     patch.object(main, 'VISION_MODELS', ['test-vision']), \
+                     patch.object(main, 'compress_image_base64', return_value='chart'):
+                    request = main.VisionContent(image='chart', url='https://example.test', text=text, practice_type='mcq',
+                                                 verify_answer=True, require_answer_agreement=True)
+                    if len(verdict) == len(full_verdict):
+                        result = await main.solve_vision(request)
+                        self.assertTrue(result['selection_set_verified'])
+                        self.assertEqual(json.loads(result['results'])[0]['answer'], 'Option A: 12; Option B: 13')
+                    else:
+                        with self.assertRaises(HTTPException) as error:
+                            await main.solve_vision(request)
+                        self.assertEqual(error.exception.detail['code'], 'vision_unconfirmed')
+                self.assertEqual(create.call_count, 3)
+                primary_evidence = create.call_args_list[0].kwargs['messages'][1]['content']
+                for call in create.call_args_list[1:]:
+                    self.assertEqual(call.kwargs['messages'][1]['content'], primary_evidence)
+
     async def test_auto_vision_displays_a_readable_assignment_overview(self):
         overview = {'type': 'overview', 'title': 'Model Parallelism Challenge',
                     'summary': 'Choose the parallelism degrees and build a notebook.'}

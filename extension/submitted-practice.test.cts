@@ -143,9 +143,10 @@ test('a permanently unavailable Submit times out without clicking or losing the 
     assert.equal(h.now(),15000);
 });
 
-for(const scenario of ['already answered','verified answer','unverified answer'])test(`runner handles ${scenario}`,async()=>{
+for(const scenario of ['already answered','verified answer','unverified answer','unverified checkbox set'])test(`runner handles ${scenario}`,async()=>{
     const previouslySubmitted=scenario==='already answered';
     const verified=scenario!=='unverified answer';
+    const setVerified=scenario!=='unverified checkbox set';
     let now=0,submitted=previouslySubmitted,nextClicks=0,requests=0,submitReads=0;
     const location={origin:'https://learning.ccbp.in',pathname:'/default-question/practice/example',href:'https://learning.ccbp.in/default-question/practice/example'};
     const automation={running:false,runId:0,processed:new Set()};
@@ -161,14 +162,23 @@ for(const scenario of ['already answered','verified answer','unverified answer']
         automationPolicy:{canExecute:()=>true},getAuthorizedQuestion:()=>submitted?null:question,
         normalizeAutomationText:value=>value.replace(/\s+/g,' ').trim(),waitWhilePaused:async()=>automation.running,
         answerIndexesFromResult:()=>[0,1],
-        requestPracticeAnswer:async()=>{requests++;return {data:{answer_verified:verified,results:JSON.stringify([{type:'mcq',answer:'Option A: Lower time complexity; Option B: Faster lookups'}])}};},
+        requestPracticeAnswer:async(_question,_runId,_path,body)=>{
+            requests++;
+            assert.equal(body.require_answer_agreement,true);
+            const answer=setVerified?'Option A: Lower time complexity; Option B: Faster lookups':'Option A: Lower time complexity';
+            return {data:{answer_verified:verified,selection_set_verified:setVerified,results:JSON.stringify([{type:'mcq',answer}])}};
+        },
+        continueAfterUnverifiedQuestion:async(_question,_runId,message)=>{
+            automation.error=message;automation.running=false;automation.state='WAITING_FOR_REVIEW';return false;
+        },
         stopAutomation:state=>{automation.running=false;automation.state=state;}});
     load(ctx,'    function hasSameQuestionOptions(','    function getAuthorizedQuestion(');
     load(ctx,'    async function waitForOptionSelection(','    async function waitForNextPracticeQuestion(');
     load(ctx,'    async function startPracticeAutomation(','    async function readMcqSnippetSnapshot(');
     await ctx.startPracticeAutomation();
-    if (!verified) {
-        assert.equal(automation.state,'PAUSED');assert.match(automation.error,/verification is required/);
+    if (!verified || !setVerified) {
+        assert.equal(automation.state,verified?'WAITING_FOR_REVIEW':'PAUSED');
+        assert.match(automation.error,verified?/complete checkbox answer/:/verification is required/);
         assert.equal(nextClicks,0);assert.equal(submitReads,0);assert.equal(requests,1);
         assert.ok(options.every(option=>!option.selected));
         return;

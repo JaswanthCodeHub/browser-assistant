@@ -30,6 +30,7 @@ from vision_images import (compress_image_base64, unique_image_blocks, collect_i
                            solve_relu_parallel_choice,
                            ordering_question, solve_sorted_list_merge_order, solve_stack_empty_order, solve_pseudocode_choice,
                            solve_stack_push_order, solve_stack_pop_order,
+                           multiple_choice_question, solve_linked_stack_choices, cross_check_multiple_choice,
                            reading_response_constraints,
                            VisionRateLimitError, VisionUnconfirmedError)
 
@@ -194,7 +195,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.9.28", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.9.29", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)
@@ -229,6 +230,7 @@ class VisionContent(BaseModel):
     language: str | None = None
     text: str = ""
     verify_answer: bool = False
+    require_answer_agreement: bool = False
     allow_overview: bool = False
     images: list[str] = []  # Additional complete question/option illustrations.
 
@@ -1313,12 +1315,21 @@ async def solve_questions(content: PageContent):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     system_prompt = build_system_prompt(content.practice_type, language)
     ordering = ordering_question(trimmed_text)
+    multiple_choice = multiple_choice_question(trimmed_text)
     reading_constraints = reading_response_constraints(trimmed_text) if content.require_answer_agreement else None
     if ordering:
         system_prompt = (
             'Arrange all steps in the order required by the problem. Check prerequisites and use each displayed '
             'step number once. Return exactly one JSON array item with type "mcq", the question, a brief '
             'reasoning string, and an answer array of the original step numbers in their new order.'
+        )
+    elif multiple_choice:
+        system_prompt = (
+            'Solve the checkbox question by evaluating every displayed option independently against the question. '
+            'A checkbox question can have one or more correct answers. Select every correct option and nothing else. '
+            'Return one JSON array item with type "mcq", the question, a brief reasoning string, and an answer string '
+            'containing each selected option in letter order as "Option A: exact text; Option B: exact text". '
+            'If any required evidence is missing, return [].'
         )
     elif reading_constraints:
         _, _, keyword = reading_constraints
@@ -1357,7 +1368,17 @@ REPAIR MODE:
         detect_requested_language(content.text) is not None or content.language is not None,
     )
     strict_code_review = require_code and (content.review_before_submit or not FAST_CODE_MODE or STRICT_REPAIR_REVIEW)
-    verify_answers = not require_code and (content.verify_answer or content.require_answer_agreement or not FAST_SCAN_MODE)
+    checkbox = multiple_choice is not None and not require_code
+    verify_answers = not require_code and (checkbox or content.verify_answer or content.require_answer_agreement or not FAST_SCAN_MODE)
+    if checkbox:
+        if not multiple_choice[1]:
+            raise HTTPException(422, detail={'code': 'answer_unconfirmed',
+                                             'message': 'The complete set of displayed checkbox options is required.'})
+        item = solve_linked_stack_choices(multiple_choice)
+        if item is not None:
+            return {"results": json.dumps([item], ensure_ascii=False), "provider": "local linked-list stack check [verified]",
+                    "language": language, "answer_verified": True, "answer_agreement": True,
+                    "selection_set_verified": True, "code_reviewed": False}
     if ordering and not require_code:
         item = solve_sorted_list_merge_order(ordering)
         provider = 'local merge-step check'
@@ -1373,13 +1394,13 @@ REPAIR MODE:
         if item is not None:
             return {"results": json.dumps([item], ensure_ascii=False), "provider": f"{provider} [verified]",
                     "language": language, "answer_verified": True, "code_reviewed": False}
-    if not require_code and not content.require_answer_agreement and content.practice_type in {'auto', 'mcq', 'math', 'aptitude'}:
+    if not require_code and not checkbox and not content.require_answer_agreement and content.practice_type in {'auto', 'mcq', 'math', 'aptitude'}:
         local_result = local_choice_result(trimmed_text, language)
         if local_result is not None:
             return local_result
 
     async def confirm_answers(cleaned, source_model=None):
-        if not verify_answers or not any(item['type'] == 'mcq' for item in json.loads(cleaned)):
+        if not verify_answers or (not checkbox and not any(item['type'] == 'mcq' for item in json.loads(cleaned))):
             return cleaned, False
 
         async def independent_solve(prompt_messages):
@@ -1394,10 +1415,13 @@ REPAIR MODE:
             return await try_groq(prompt_messages, model=source_model, temperature=0.0)
 
         try:
-            checked = await cross_check_text_answers(
-                messages, cleaned, independent_solve, question_text=trimmed_text,
-                require_agreement=content.require_answer_agreement,
-            )
+            if checkbox:
+                checked = await cross_check_multiple_choice(messages, cleaned, independent_solve, multiple_choice[1])
+            else:
+                checked = await cross_check_text_answers(
+                    messages, cleaned, independent_solve, question_text=trimmed_text,
+                    require_agreement=content.require_answer_agreement,
+                )
         except Exception as exc:
             if isinstance(exc, VisionUnconfirmedError):
                 message = str(exc)
@@ -1433,7 +1457,8 @@ REPAIR MODE:
                 cleaned, verified = await confirm_answers(cleaned, model_id)
                 return {"results": cleaned, "provider": f"groq ({model_id})" + (' [cross-checked]' if verified else ''),
                         "language": language, "answer_verified": verified,
-                        "answer_agreement": verified and content.require_answer_agreement,
+                        "answer_agreement": verified and (checkbox or content.require_answer_agreement),
+                        "selection_set_verified": verified and checkbox,
                         "code_reviewed": strict_code_review and language != 'web'}
             else:
                 errors.append(f"{model_id}: returned empty/unparseable results")
@@ -1472,7 +1497,8 @@ REPAIR MODE:
                 "results": cleaned,
                 "provider": f"ollama ({OLLAMA_MODEL})" + (' [cross-checked]' if verified else ''),
                 "answer_verified": verified,
-                "answer_agreement": verified and content.require_answer_agreement,
+                "answer_agreement": verified and (checkbox or content.require_answer_agreement),
+                "selection_set_verified": verified and checkbox,
                 "language": language,
                 "code_reviewed": strict_code_review and language != 'web',
             }
@@ -1547,7 +1573,12 @@ async def _solve_vision(content: VisionContent):
             raise HTTPException(422, f'Image {index}: {exc}') from exc
     is_code_scan = content.practice_type == "code" or (content.practice_type == "auto" and bool(content.language))
     allow_overview = content.allow_overview and content.practice_type == 'auto' and not is_code_scan and not content.text.strip()
-    if not is_code_scan and content.practice_type in {'auto', 'mcq', 'math', 'aptitude'}:
+    checkbox_question = None if is_code_scan else multiple_choice_question(content.text)
+    if ((checkbox_question is not None and not checkbox_question[1])
+            or (content.require_answer_agreement and checkbox_question is None)):
+        raise HTTPException(422, detail={'code': 'vision_unconfirmed',
+                                         'message': 'Every displayed checkbox option is required for verification.'})
+    if not is_code_scan and checkbox_question is None and content.practice_type in {'auto', 'mcq', 'math', 'aptitude'}:
         local_result = local_choice_result(content.text, content.language or CODE_DEFAULT_LANGUAGE)
         if local_result is not None:
             return local_result
@@ -1562,7 +1593,7 @@ async def _solve_vision(content: VisionContent):
     loop = asyncio.get_running_loop()
     errors = []
     rate_limit_resets = []
-    comparison = None if is_code_scan else relative_percentage_question(content.text)
+    comparison = None if is_code_scan or checkbox_question is not None else relative_percentage_question(content.text)
     unconfirmed = False
     vision_token_limit = 4096 if is_code_scan else VISION_MAX_TOKENS
 
@@ -1708,6 +1739,9 @@ async def _solve_vision(content: VisionContent):
             async def vision_verifier(prompt_messages, model):
                 return await complete_vision(prompt_messages, model, verification=True)
 
+            async def checkbox_verifier(prompt_messages):
+                return await vision_verifier(prompt_messages, vision_model)
+
             cleaned = await generate_validated_result(
                 vision_generator,
                 solution_messages,
@@ -1733,9 +1767,12 @@ async def _solve_vision(content: VisionContent):
                     except ValueError as exc:
                         raise VisionUnconfirmedError('The code could not be confirmed against the screenshot.') from exc
                     code_reviewed = True
-                if comparison and not has_mcq:
+                if checkbox_question is not None:
+                    cleaned = await cross_check_multiple_choice(solution_messages, cleaned, checkbox_verifier,
+                                                                checkbox_question[1])
+                elif comparison and not has_mcq:
                     raise VisionUnconfirmedError('Expected a chart comparison answer.')
-                if has_mcq and not is_code_scan:
+                elif has_mcq and not is_code_scan:
                     cleaned = await cross_check_visual_answers(
                         solution_messages, cleaned, vision_model, vision_verifier, comparison,
                         require_agreement=content.verify_answer,
@@ -1744,6 +1781,7 @@ async def _solve_vision(content: VisionContent):
                     "results": cleaned,
                     "provider": f"groq-vision ({vision_model})" + (' [cross-checked]' if has_mcq and not is_code_scan else ''),
                     "answer_verified": has_mcq and not is_code_scan,
+                    "selection_set_verified": checkbox_question is not None,
                     "code_reviewed": code_reviewed,
                     "language": language,
                 }

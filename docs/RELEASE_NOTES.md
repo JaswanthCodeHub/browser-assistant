@@ -1,4 +1,9 @@
-# Browser Assistant 2.9.28
+# Browser Assistant 2.9.29
+
+- Checkbox answers require verification of the full set of choices. The assistant leaves a question for review when it cannot verify that set.
+- Linked-list stack push and pop questions matching the practice examples are checked locally.
+
+## Browser Assistant 2.9.28
 
 - QA Control moves CCBP practice rows using the portal's drag handles. The temporary drag preview is excluded from the row count, and the full displayed order is checked before submission.
 

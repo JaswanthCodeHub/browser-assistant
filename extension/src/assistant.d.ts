@@ -52,6 +52,7 @@ interface AssistantMessageResponse {
         language?: string;
         code_reviewed?: boolean;
         answer_verified?: boolean;
+        selection_set_verified?: boolean;
         version?: string;
         answer_agreement?: boolean;
         items?: unknown[];

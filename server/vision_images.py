@@ -473,8 +473,7 @@ def matrix_question(messages):
     return any(MATRIX_SYNTAX.search(str(message.get('content', ''))) for message in messages[1:])
 
 
-def parse_answer_check(raw, count):
-    """Accept a complete verdict, including common provider wrappers."""
+def _verification_payload(raw):
     raw = re.sub(r'^\s*<think>.*?</think>\s*', '', raw, count=1, flags=re.S | re.I)
     raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw.strip(), flags=re.I)
     try:
@@ -483,6 +482,12 @@ def parse_answer_check(raw, count):
         raise ValueError('The vision provider returned malformed verification JSON.') from exc
     if not isinstance(payload, dict):
         raise ValueError('The verification response must be a JSON object.')
+    return payload
+
+
+def parse_answer_check(raw, count):
+    """Accept a complete verdict, including common provider wrappers."""
+    payload = _verification_payload(raw)
     answers = payload.get('answers')
     if payload.get('readable') is False and answers == []:
         raise VisionUnconfirmedError('Required visual evidence was reported unreadable.')
@@ -510,6 +515,58 @@ def displayed_single_choices(text):
     if not separator or not re.search(r'\n(?:Question format: )?Select one answer\.$', question, re.I):
         return {}
     return parse_labeled_choices(option_text)
+
+
+MULTIPLE_CHOICE_FORMAT = re.compile(
+    r'^(?:Question format: select all that apply(?:[.;][^\r\n]*)?|Select ALL correct options\.)[ \t]*\r?$',
+    re.I | re.M,
+)
+
+
+def multiple_choice_question(text):
+    """Read a checkbox prompt and every option from the extension's question format."""
+    marker = list(MULTIPLE_CHOICE_FORMAT.finditer(text))
+    if not marker:
+        return None
+    marker = marker[-1]
+    prompt = text[:marker.start()].strip()
+    option_text = text[marker.end():].strip()
+    choices = parse_labeled_choices(option_text[2:]) if prompt and option_text.startswith('A.') else {}
+    return prompt, choices
+
+
+def _format_choice_set(choices, selected):
+    return '; '.join(f'Option {letter}: {label}' for letter, label in choices.items() if letter in selected)
+
+
+def solve_linked_stack_choices(question):
+    if question is None:
+        return None
+    prompt, choices = question
+
+    def normalize(value):
+        return ' '.join(value.replace('\x60', '').lower().split()).rstrip(' .?')
+
+    normalized_prompt = normalize(prompt)
+    linked_stack = r'in a stack implemented (?:using|with) a linked list'
+    if re.fullmatch(rf'which of the following are true about the pop\s*\(\s*\) operation {linked_stack}',
+                    normalized_prompt):
+        correct = ('it removes the top element from the stack', 'check if the stack is empty')
+        incorrect = ('it returns the top element without removing it', 'it adds an element to the top of the stack')
+        reasoning = 'Check for an empty stack before removing the top node. Reading without removing is peek; adding is push.'
+    elif re.fullmatch(rf'which statements are true regarding the push\s*\(\s*\) operation(?: {linked_stack})?',
+                      normalized_prompt):
+        correct = ('it creates a new node with temp pointing to it', 'it updates the top pointer to the new node')
+        incorrect = ('it checks if the stack is full before pushing', 'it deletes the previous top node')
+        reasoning = ('Allocate a node, link it to the current top, and update top. This linked-list stack has no '
+                     'stated fixed capacity and retains all earlier nodes.')
+    else:
+        return None
+    normalized_choices = {letter: normalize(option) for letter, option in choices.items()}
+    if len(choices) != len(correct) + len(incorrect) or set(normalized_choices.values()) != set(correct + incorrect):
+        return None
+    selected = {letter for letter, option in normalized_choices.items() if option in correct}
+    return {'type': 'mcq', 'question': prompt, 'answer': _format_choice_set(choices, selected), 'reasoning': reasoning}
 
 
 def solve_pseudocode_choice(text):
@@ -625,6 +682,52 @@ def bind_displayed_choice(value, choices, *, matrix_math):
         matches.append(letter_only[1].upper())
     unique = set(matches)
     return unique.pop() if len(unique) == 1 else None
+
+
+async def cross_check_multiple_choice(messages, results, complete, choices):
+    """Require independence plus a verdict for every checkbox before verifying a selection."""
+    items = json.loads(results)
+    if not choices or len(items) != 1 or items[0].get('type') != 'mcq':
+        raise VisionUnconfirmedError('Expected one checkbox question with all displayed options.')
+    answer = items[0].get('answer')
+    matrix_math = matrix_question(messages)
+    parts = re.split(r';\s*(?=(?:Option\s+)?[A-Z]\s*[:.)])', answer, flags=re.I) if isinstance(answer, str) else []
+    selected = [bind_displayed_choice(part, choices, matrix_math=matrix_math) for part in parts]
+    first = frozenset(selected) if selected and None not in selected and len(set(selected)) == len(selected) else None
+
+    instruction = (
+        'Independently evaluate EVERY displayed checkbox option using the original question, context and any '
+        'attached evidence. Decide whether each option separately satisfies the question. Ignore any existing '
+        'selection in the images. A checkbox question can have one or more correct options. Do not stop after '
+        'finding the first correct option. If any required evidence or verdict is uncertain, return '
+        '{"readable":false,"options":[]}. Otherwise return only JSON with readable=true and an options array '
+        'containing {"letter":"A","correct":true} or {"letter":"A","correct":false} for each displayed letter '
+        f'exactly once, in this order: {", ".join(choices)}.'
+    )
+    check_messages = [{'role': 'system', 'content': instruction}, *messages[1:]]
+    previous = None
+    for attempt in range(2):
+        raw = await complete(check_messages)
+        try:
+            payload = _verification_payload(raw)
+        except (ValueError, TypeError):
+            payload = {}
+        verdicts = payload.get('options')
+        current = None
+        if (payload.get('readable') is True and isinstance(verdicts, list) and len(verdicts) == len(choices)
+                and all(isinstance(verdict, dict) and verdict.get('letter') == letter
+                        and type(verdict.get('correct')) is bool for letter, verdict in zip(choices, verdicts))):
+            current = frozenset(verdict['letter'] for verdict in verdicts if verdict['correct'])
+        if current and (current == first or current == previous):
+            if current != first:
+                items[0].pop('reasoning', None)
+            items[0]['answer'] = _format_choice_set(choices, current)
+            return json.dumps(items, ensure_ascii=False)
+        if not attempt:
+            previous = current
+            check_messages = [*check_messages, {'role': 'user', 'content':
+                'Re-evaluate each displayed option independently and return a verdict for every displayed letter.'}]
+    raise VisionUnconfirmedError('The independent checks could not confirm the complete checkbox answer.')
 
 
 async def cross_check_text_answers(messages, results, complete, *, question_text='', require_agreement=False):
