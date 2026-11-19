@@ -1,4 +1,10 @@
-# Browser Assistant 2.9.33
+# Browser Assistant 2.9.34
+
+- Short-answer questions use an exact-value contract, including numeric and pointer literals. Verification retains case, signs, and required formatting.
+- A deferred question gets one fresh solve when it returns during the same run. A second unsuccessful verification leaves it for review.
+- Queue initialization checks use the supplied implementation to distinguish array indices and linked-node pointers.
+
+## Browser Assistant 2.9.33
 
 - Stack question reviews trace the supplied implementation, including loop bodies and conditions, two-stack transfers, capacity and underflow, monotonic comparisons, and complexity.
 - When two complete checks agree that none of the displayed options fits the question, QA Control gives that specific reason for review.

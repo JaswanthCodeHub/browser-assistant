@@ -1,3 +1,8 @@
+# 2.9.34
+
+- Give typed answers their own exact-value prompt and verification, preserving signs and literal pointer values.
+- Retry a returned deferred question once and clear its deferred status after a confirmed submission.
+
 # 2.9.33
 
 - Add shared implementation-based stack checks to generation and independent text/vision verification.

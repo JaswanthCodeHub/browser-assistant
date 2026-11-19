@@ -395,6 +395,39 @@ class MatrixVerificationTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(verdict=verdict), self.assertRaises(VisionUnconfirmedError):
                 await cross_check_text_answers([], primary, AsyncMock(return_value=response), question_text=text)
 
+    async def test_free_response_verifies_exact_values_and_corrects_disagreement(self):
+        question = ('Using the supplied queue constructor, what are front and back initialized to?\n'
+                    'Queue() { front = back = -1; }\nQuestion format: Free response. Return only the exact value.')
+        for primary, checks, expected in (
+            (-1, [self.response('-1')], '-1'),
+            ('front = back = -1', [self.response('-1'), self.response(-1)], '-1'),
+            ('NULL', [self.response('NULL')], 'NULL'),
+            ('0, 0', [self.response('0, 0')], '0, 0'),
+        ):
+            checker = AsyncMock(side_effect=checks)
+            with self.subTest(primary=primary):
+                result = await cross_check_text_answers([], json.dumps([{'type': 'mcq', 'answer': primary}]),
+                                                       checker, question_text=question, require_agreement=True)
+                self.assertEqual(json.loads(result)[0]['answer'], expected)
+        for checks in (['{}', '{}'], [self.response('NULL'), self.response('0')]):
+            with self.subTest(checks=checks), self.assertRaises(VisionUnconfirmedError):
+                await cross_check_text_answers([], json.dumps([{'type': 'mcq', 'answer': '-1'}]),
+                                               AsyncMock(side_effect=checks), question_text=question)
+
+    async def test_typed_answer_route_uses_the_exact_value_contract(self):
+        question = ('Queue() { front = back = nullptr; }\nWhat is the initial pointer value?\n'
+                    'Free response: return only the exact value.')
+        provider = AsyncMock(side_effect=[json.dumps([{'type': 'mcq', 'answer': 'nullptr'}]), self.response('nullptr')])
+        with patch.object(main, 'try_groq', provider), patch.object(main, 'TEXT_MODELS', ['solver', 'checker']), \
+                patch.object(main, '_groq_disabled_until', 0):
+            result = await main.solve_questions(main.PageContent(
+                text=question, url='https://example.test', practice_type='mcq',
+                verify_answer=True, require_answer_agreement=True))
+        self.assertEqual(json.loads(result['results'])[0]['answer'], 'nullptr')
+        self.assertTrue(result['answer_verified'])
+        self.assertIn('exact value to enter', provider.await_args_list[0].args[0][0]['content'])
+        self.assertIn('exact text to enter', provider.await_args_list[1].args[0][0]['content'])
+
     async def test_solve_route_requires_agreement_for_one_word_blanks(self):
         question = 'Leo comes (1) ____ Canada.\n\nWhich word best fits blank (1)?\nQuestion format: one word.'
         request = main.PageContent(text=question, url='https://example.test', practice_type='mcq', require_answer_agreement=True)

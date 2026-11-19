@@ -1321,7 +1321,8 @@ function mountJournalCountdown(signal: AbortSignal) {
         const practice = initial.target.id === 'ccbp-learning-practice'
             && /^\/(?:default-question|primitive-coding(?:-review)?)\/practice\//.test(location.pathname);
         const hasDraft = fresh?.input?.value?.trim() || fresh?.options.some(option => option.isSelected?.() || option.input?.checked);
-        if (allowSkip && practice && sameQuestion && !hasDraft && question.type !== 'ordering'
+        if (allowSkip && !automation.retriedDeferredQuestions?.has(question.signature)
+            && practice && sameQuestion && !hasDraft && question.type !== 'ordering'
             && !adapter.isSaving?.(document) && !adapter.getSubmittedAdvance?.(document)
             && automationPolicy.canExecute('click', initial) && automationPolicy.canExecute('validate', initial)) {
             const skip = adapter.getPracticeSkip?.(document, fresh);
@@ -1495,7 +1496,10 @@ function mountJournalCountdown(signal: AbortSignal) {
             transition = await waitForPracticeTransition(question.signature, runId);
             if (!automation.running || automation.runId !== runId) return false;
         }
-        if (transition === 'next' || transition === 'complete') automation.completed += 1;
+        if (transition === 'next' || transition === 'complete') {
+            automation.completed += 1;
+            automation.deferredQuestions.delete(question.signature);
+        }
         if (transition === 'complete') {
             stopAutomation(automation.deferredQuestions.size ? 'REVIEW_NEEDED' : 'COMPLETED');
         } else if (transition !== 'next') {
@@ -1557,6 +1561,7 @@ function mountJournalCountdown(signal: AbortSignal) {
         automation.error = '';
         automation.completed = 0;
         automation.deferredQuestions = new Set();
+        automation.retriedDeferredQuestions = new Set();
         automation.targetId = initialContext.target.id;
         automation.pendingNavigation = false;
         automation.currentSignature = null;
@@ -1651,8 +1656,11 @@ function mountJournalCountdown(signal: AbortSignal) {
             if (question.type === 'code') { await runCodingAutomation(question, runId); break; }
             if (automation.deferredQuestions.has(question.signature)) {
                 automation.currentSignature = question.signature;
-                if (await continueAfterUnverifiedQuestion(question, runId, 'This question was deferred earlier.', false)) continue;
-                break;
+                if (automation.retriedDeferredQuestions.has(question.signature)) {
+                    if (await continueAfterUnverifiedQuestion(question, runId, 'The answer could not be verified after retrying.', false)) continue;
+                    break;
+                }
+                automation.retriedDeferredQuestions.add(question.signature);
             }
             if (automation.processed.has(question.signature)) { automation.error = 'Repeated question detected.'; stopAutomation('PAUSED'); break; }
             automation.currentSignature = question.signature;
@@ -1699,7 +1707,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                     text: `${requestText}\nQuestion format: ${question.type === 'short-answer' ? 'Free response. Return only the exact value to enter in the JSON answer field, without an option label, explanation, or Markdown.' : question.selectionType === 'multiple' ? 'select all that apply; return every correct option as "Option A: ...; Option B: ...".' : 'select one answer.'}\n${question.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option.text}`).join('\n')}`,
                     ...(question.type === 'ordering' ? { text: `${requestText}\nReorder ALL items. Return the complete permutation as a JSON array of 1-based item numbers in the answer field (example: [2,1,3]). Check every item appears exactly once.\n${question.options.map((option, index) => `${index + 1}. ${option.text}`).join('\n')}` } : {}),
                     url: window.location.href, practice_type: 'mcq', verify_answer: true,
-                    require_answer_agreement: question.selectionType === 'multiple',
+                    require_answer_agreement: question.selectionType === 'multiple' || question.type === 'short-answer',
                 };
                 const visuals = window.BrowserAssistantQuestionVisuals;
                 if (visuals?.nodes(question).length) {
@@ -2403,7 +2411,7 @@ function mountJournalCountdown(signal: AbortSignal) {
                 practice_type: context.question ? 'mcq' : practiceType,
                 language: context.question ? undefined : requestedLanguage,
                 verify_answer: true,
-                require_answer_agreement: context.question?.selectionType === 'multiple',
+                require_answer_agreement: context.question?.selectionType === 'multiple' || context.question?.type === 'short-answer',
                 allow_overview: !context.question && practiceType === 'auto' && !requestedLanguage,
             });
 
@@ -2566,13 +2574,13 @@ function mountJournalCountdown(signal: AbortSignal) {
                     image:snapshot.images[0], images:snapshot.images.slice(1),
                     text:context.text,
                     url:location.href, practice_type:'mcq', verify_answer:true,
-                    require_answer_agreement: question.selectionType === 'multiple',
+                    require_answer_agreement: question.selectionType === 'multiple' || question.type === 'short-answer',
                 });
             } else {
                 res = await apiRequest('/solve', 'POST', {
                     text: question ? context.text : extractSmartText(), url: context.url,
                     practice_type: question ? 'mcq' : practiceType, verify_answer: Boolean(question) || practiceType !== 'code',
-                    require_answer_agreement: question?.selectionType === 'multiple',
+                    require_answer_agreement: question?.selectionType === 'multiple' || question?.type === 'short-answer',
                     review_before_submit: !question && practiceType === 'code',
                 });
             }

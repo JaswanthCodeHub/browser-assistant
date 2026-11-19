@@ -3,6 +3,7 @@ import base64
 from fractions import Fraction
 from io import BytesIO
 import json
+import math
 import re
 
 from PIL import Image, ImageOps
@@ -578,6 +579,20 @@ def displayed_single_choices(text):
     return parse_labeled_choices(option_text)
 
 
+def free_response_question(text):
+    return bool(re.search(r'\n(?:Question format: Free response\.|Free response: return only the exact value\.)',
+                          text, re.I))
+
+
+def free_response_value(value):
+    if type(value) not in (str, int, float):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    answer = str(value).replace('\r\n', '\n').strip()
+    return answer if answer and not re.match(r'^(?:option\s+)?[A-Z]\s*[:.)]\s', answer, re.I) else None
+
+
 MULTIPLE_CHOICE_FORMAT = re.compile(
     r'^(?:Question format: select all that apply(?:[.;][^\r\n]*)?|Select ALL correct options\.)[ \t]*\r?$',
     re.I | re.M,
@@ -746,7 +761,7 @@ def bind_displayed_choice(value, choices, *, matrix_math):
 
 
 def stack_reasoning_guidance(text):
-    if not re.search(r'\bstacks?\b|\bstk\w*\s*\.|\.(?:push|pop|top|peek|empty)\s*\(', text, re.I):
+    if not re.search(r'\b(?:stacks?|queues?)\b|\bstk\w*\s*\.|\.(?:push|pop|top|peek|empty)\s*\(', text, re.I):
         return ''
     return (
         '\nSTACK QUESTION CHECKS: Use the complete supplied implementation and the exact question. '
@@ -755,6 +770,10 @@ def stack_reasoning_guidance(text):
         'For an array implementation use its stated capacity and top index; for a linked implementation check '
         'its node and pointer updates and any explicitly stated capacity. Check underflow before reading/removing. '
         'For a queue implemented with stacks, trace transfers and restoration to establish the front element. '
+        'For queue initialization, read the actual constructor or initialization code. Array indices may use -1 '
+        'or 0 depending on the convention, while linked-node front/back pointers may use NULL, nullptr or None. '
+        'Preserve the implementation and requested answer format. Ask for review when that convention cannot '
+        'be established from the question and supplied context. '
         'Identify which loop is referenced. Explain its body and net effect separately from its continuation '
         'condition and from statements after the loop. If several loops fit the question, check whether their '
         'effects agree before selecting an option. Trace transfers separately from a later push(x) statement. '
@@ -836,9 +855,12 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
     if ordering and len(items) != 1:
         raise VisionUnconfirmedError('Expected one answer containing all numbered steps.')
     step_count = len(ordering[1]) if ordering else 0
+    free_response = free_response_question(question_text)
+    if free_response and len(items) != 1:
+        raise VisionUnconfirmedError('Expected one exact typed answer for the current question.')
     choices = displayed_single_choices(question_text) if len(items) == 1 else {}
     constraints = reading_response_constraints(question_text) if require_agreement and len(items) == 1 else None
-    if require_agreement and not (choices or constraints or step_count):
+    if require_agreement and not (choices or constraints or step_count or free_response):
         raise VisionUnconfirmedError('Expected one linked answer with displayed options or a reading response format.')
     if step_count:
         check_messages[0]['content'] = (
@@ -862,8 +884,19 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
                 if keyword else 'Return exactly one word.')
         instruction += f' Fill the numbered gap using the entire passage. {rule} Use no option label or surrounding punctuation.'
         check_messages[0]['content'] = instruction
+    elif free_response:
+        check_messages[0]['content'] = (
+            'Independently solve the original question using its complete context and any code. '
+            'Return the exact text to enter into its answer field, preserving signs, case, and required formatting. '
+            'Return only JSON {"readable":true,"answers":[{"id":1,"answer":"exact value"}]}. '
+            'Use no option label, explanation or Markdown in the answer value. '
+            'If the implementation or a required convention is unspecified and changes the answer, '
+            'return {"readable":false,"answers":[]}.' + stack_reasoning_guidance(question_text)
+        )
 
     def answer_key(entries):
+        if free_response:
+            return free_response_value(entries[0].get('answer'))
         if step_count:
             return ordering_key(entries[0].get('answer'), step_count)
         if choices:
@@ -921,8 +954,13 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
                     items[0].pop('reasoning', None)
                 items[0]['answer'] = ' '.join((items[0] if current == first else verified[0])['answer'].split())
                 return json.dumps(items, ensure_ascii=False)
+            if free_response:
+                if current != first:
+                    items[0].pop('reasoning', None)
+                items[0]['answer'] = current
+                return json.dumps(items, ensure_ascii=False)
             return results
-        if not (choices or constraints or step_count) and current is not None:
+        if not (choices or constraints or step_count or free_response) and current is not None:
             break
         if not attempt:
             previous = current
@@ -935,11 +973,11 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
     # primary answer over blocking the automation entirely. The primary solve was
     # validated and the verification provider returned unusable JSON — a parsing
     # failure, not a disagreement — so a hard 422 is disproportionate.
-    if not require_agreement and not step_count and current is None and previous is None:
+    if not require_agreement and not step_count and not free_response and current is None and previous is None:
         return results
     # For multi-answer questions (fill-in-the-blank), accept the primary answers
     # when the majority of individual answers agree with any independent solve.
-    if not require_agreement and not choices and not step_count and first is not None and len(first) > 1:
+    if not require_agreement and not choices and not step_count and not free_response and first is not None and len(first) > 1:
         best = current or previous
         if best is not None:
             agreed = sum(a == b for a, b in zip(first, best))
@@ -947,6 +985,8 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
                 return results
     if step_count:
         raise VisionUnconfirmedError('The independent checks could not confirm a complete order for the displayed steps.')
+    if free_response:
+        raise VisionUnconfirmedError('The independent checks could not confirm the exact value to enter.')
     raise VisionUnconfirmedError('The independent solves could not agree on the answer for this blank.' if constraints
                                  else 'The independent solves could not agree on the displayed answer.')
 

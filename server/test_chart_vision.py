@@ -26,6 +26,20 @@ class ChartVisionTests(unittest.IsolatedAsyncioTestCase):
         self.enterContext(patch.object(main, '_vision_key_cooldowns', {}))
         self.enterContext(patch.object(main, '_groq_key_index', 0))
 
+    async def test_typed_value_with_illustration_is_verified_as_free_response(self):
+        first = [{'type': 'mcq', 'answer': '-1'}]
+        check = {'readable': True, 'answers': [{'id': 1, 'answer': '-1'}]}
+        create = Mock(side_effect=[provider_response(first), provider_response(check)])
+        client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+        with patch.object(main, '_groq_clients', [client]), patch.object(main, 'VISION_MODELS', ['test-vision']), \
+             patch.object(main, 'compress_image_base64', return_value='queue-diagram'):
+            result = await main.solve_vision(main.VisionContent(
+                image='queue-diagram', url='https://example.test', practice_type='mcq', verify_answer=True,
+                require_answer_agreement=True,
+                text='Read the initial front index in the diagram.\nFree response: return only the exact value.'))
+        self.assertEqual(json.loads(result['results'])[0]['answer'], '-1')
+        self.assertTrue(result['answer_verified'])
+
     async def test_vision_checks_every_checkbox_against_the_original_image(self):
         text = ('Which numbers are shown in the chart?\nSelect ALL correct options.\n'
                 'A. 12\nB. 13\nC. 14')

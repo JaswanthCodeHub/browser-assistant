@@ -31,7 +31,7 @@ from vision_images import (compress_image_base64, unique_image_blocks, collect_i
                            ordering_question, solve_sorted_list_merge_order, solve_stack_empty_order, solve_pseudocode_choice,
                            solve_stack_push_order, solve_stack_pop_order, solve_next_greater_element_order,
                            multiple_choice_question, solve_linked_stack_choices, cross_check_multiple_choice, stack_reasoning_guidance,
-                           reading_response_constraints,
+                           reading_response_constraints, free_response_question,
                            VisionRateLimitError, VisionUnconfirmedError)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -195,7 +195,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.9.33", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.9.34", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)
@@ -1360,6 +1360,7 @@ async def solve_questions(content: PageContent):
     multiple_choice = None if require_code else multiple_choice_question(trimmed_text)
     reading_constraints = (reading_response_constraints(trimmed_text)
                            if content.require_answer_agreement and not require_code else None)
+    free_response = not require_code and free_response_question(trimmed_text)
     if ordering:
         system_prompt = (
             'Arrange all steps in the order required by the problem. Check prerequisites and use each displayed '
@@ -1384,6 +1385,14 @@ async def solve_questions(content: PageContent):
             'Return one JSON array item with type "mcq", the exact question, a brief reasoning string, '
             'and an answer string containing only the words that belong in the gap. Use no option label, quotation marks '
             'inside the answer value, surrounding punctuation, or Markdown. If the blank is unclear, return [].'
+        )
+    elif free_response:
+        system_prompt = (
+            'Read the complete question and any supplied code or context. Return exactly one JSON array item '
+            'with type "mcq", the question, a brief reasoning string, and an answer string containing only '
+            'the exact value to enter into the field. Preserve signs, case, and required separators. '
+            'Use no option label, explanation or Markdown in the answer field. '
+            'If a required implementation convention is unspecified and changes the answer, return [].'
         )
     if require_code:
         system_prompt += '\n\n' + CODE_DESCRIPTION_PRIORITY
@@ -1616,7 +1625,7 @@ async def _solve_vision(content: VisionContent):
     allow_overview = content.allow_overview and content.practice_type == 'auto' and not is_code_scan and not content.text.strip()
     checkbox_question = None if is_code_scan else multiple_choice_question(content.text)
     if ((checkbox_question is not None and not checkbox_question[1])
-            or (content.require_answer_agreement and checkbox_question is None)):
+            or (content.require_answer_agreement and checkbox_question is None and not free_response_question(content.text))):
         raise HTTPException(422, detail={'code': 'vision_unconfirmed',
                                          'message': 'Every displayed checkbox option is required for verification.'})
     if not is_code_scan and checkbox_question is None and content.practice_type in {'auto', 'mcq', 'math', 'aptitude'}:

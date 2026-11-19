@@ -230,6 +230,40 @@ for(const scenario of ['already answered','verified answer','unverified answer',
     assert.equal(automation.completed,1);
 });
 
+for (const recovers of [false,true]) test(`a returned typed-answer question ${recovers?'recovers':'waits for review'} after one fresh attempt`,async()=>{
+    const location={origin:'https://learning.ccbp.in',pathname:'/default-question/practice/example',href:'https://learning.ccbp.in/default-question/practice/example'};
+    const automation={running:false,runId:0,processed:new Set()};
+    let requests=0,skips=0,submitted=false;
+    const field={value:''};
+    const question={type:'short-answer',signature:'queue',text:'Using front = back = -1, what is the initial value?',options:[],input:field};
+    const adapter={id:'semantic-mcq',isComplete:()=>submitted,getPracticeSkip:()=>({click(){skips++;}})};
+    const ctx=vm.createContext({document:{},window:{location},location,automation,
+        updateAutomationUI(){},getAutomationContext:()=>({mode:'FULL',target:{id:'ccbp-learning-practice'}}),
+        getAutomationAdapter:()=>adapter,automationPolicy:{canExecute:()=>true},getAuthorizedQuestion:()=>submitted?null:question,
+        normalizeAutomationText:value=>value.trim(),waitWhilePaused:async()=>automation.running,
+        setTimeout:fn=>{if(automation.state==='WAITING_FOR_REVIEW')automation.running=false;fn();},
+        fillPracticeField:(input,value)=>{input.value=value;},
+        waitForQuestionSubmit:async()=>({button:{}}),
+        waitForPracticeTransition:async()=> 'next',
+        submitPracticeAnswer:async()=>{
+            assert.equal(field.value,'-1');submitted=true;automation.deferredQuestions.delete(question.signature);
+            automation.completed++;automation.running=false;automation.state='COMPLETED';return false;
+        },
+        requestPracticeAnswer:async(_question,_runId,_path,body)=>{
+            requests++;assert.equal(body.require_answer_agreement,true);
+            if(requests===1||!recovers)throw Object.assign(new Error('Value unconfirmed'),{code:'answer_unconfirmed'});
+            return {data:{answer_verified:true,results:'[{"type":"mcq","answer":"-1"}]'}};
+        },stopAutomation:state=>{automation.running=false;automation.state=state;},
+    });
+    load(ctx,'    function hasSameQuestionOptions(','    function getAuthorizedQuestion(');
+    load(ctx,'    async function continueAfterUnverifiedQuestion(','    async function solveCompoundQuestion(');
+    load(ctx,'    async function startPracticeAutomation(','    async function readMcqSnippetSnapshot(');
+    await ctx.startPracticeAutomation();
+    assert.equal(requests,2);assert.equal(skips,1);assert.equal(submitted,recovers);
+    assert.equal(automation.state,recovers?'COMPLETED':'WAITING_FOR_REVIEW');
+    assert.equal(field.value,recovers?'-1':'');
+});
+
 for (const practice of [true,false]) test(`a failed question in a ten-question run ${practice?'defers once':'waits for manual advance'} and the run continues`, async () => {
     const origin=practice?'https://learning.ccbp.in':'https://quiz.example.test';
     const pathname=practice?'/default-question/practice/example':'/quiz/example';

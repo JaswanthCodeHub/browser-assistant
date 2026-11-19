@@ -96,6 +96,7 @@ interface AssistantAutomationState {
     runId: number;
     processed: Set<string>;
     deferredQuestions?: Set<string>;
+    retriedDeferredQuestions?: Set<string>;
     completed: number;
     error: string;
     currentSignature: string;
