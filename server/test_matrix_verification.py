@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, patch
 import main
 from vision_images import (
     cross_check_text_answers, cross_check_visual_answers, solve_matrix_choice,
-    ordering_question, solve_relu_parallel_choice, solve_stack_pop_order, solve_stack_push_order, VisionUnconfirmedError,
+    ordering_question, solve_relu_parallel_choice, solve_stack_pop_order, solve_stack_push_order,
+    solve_next_greater_element_order, VisionUnconfirmedError,
 )
 
 
@@ -317,6 +318,32 @@ class MatrixVerificationTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(text=text):
                 self.assertIsNone(solve_stack_pop_order(ordering_question(text)))
 
+    def test_next_greater_element_order_verifies_every_display_permutation(self):
+        prompt = 'Arrange the steps of the optimal stack-based approach to find the NGE in the correct order.'
+        steps = (
+            'Initialize a result array with -1 values',
+            'Loop through each element from the end of the array to the beginning',
+            'Use a while loop to remove elements from the stack that are less than or equal to the current element',
+            'If the stack is not empty, set the top of the stack as the next greater element',
+            'Push the current element onto the stack',
+            'Return the result array ans',
+        )
+        for displayed in permutations(steps):
+            text = prompt + '\nReorder ALL items.\n' + '\n'.join(
+                f'{index}. {step}' for index, step in enumerate(displayed, 1))
+            result = solve_next_greater_element_order(ordering_question(text))
+            self.assertEqual(result['answer'], [displayed.index(step) + 1 for step in steps])
+
+        for changed_prompt, changed_steps in (
+            (prompt, steps[:-1]),
+            (prompt, (*steps[:-1], steps[0])),
+            (prompt.replace('NGE', 'previous greater element'), steps),
+            (prompt, (steps[0], steps[1].replace('end', 'beginning'), *steps[2:])),
+            (prompt, (steps[0], steps[1], steps[2].replace('less than or equal to', 'greater than'), *steps[3:])),
+        ):
+            with self.subTest(prompt=changed_prompt, steps=changed_steps):
+                self.assertIsNone(solve_next_greater_element_order((changed_prompt, changed_steps)))
+
     async def test_ordering_retries_disagreement_and_requires_every_displayed_step(self):
         text = 'Arrange the tasks.\nReorder ALL items. Return a permutation.\n1. Build\n2. Design\n3. Check'
         primary = json.dumps([{'type': 'mcq', 'answer': [1, 2, 3]}])
@@ -332,6 +359,41 @@ class MatrixVerificationTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(answers=answers), self.assertRaises(VisionUnconfirmedError):
                 await cross_check_text_answers([], primary, AsyncMock(side_effect=list(map(self.response, answers))),
                                                question_text=text)
+
+    async def test_generic_ordering_matches_step_text_for_different_topics_and_sizes(self):
+        cases = [
+            ['Read the instruction', 'Perform the instructed action'],
+            ['Design', 'Build', 'Check'],
+            ['Load the input data', 'Remove invalid records', 'Compute summaries', 'Save the summaries'],
+            [f'Complete stage {number}' for number in range(1, 11)],
+        ]
+        for steps in cases:
+            with self.subTest(steps=steps):
+                displayed = steps[1:] + steps[:1]
+                expected = [displayed.index(step) + 1 for step in steps]
+                text = 'Arrange the required tasks.\nReorder ALL items.\n' + '\n'.join(
+                    f'{index}. {step}' for index, step in enumerate(displayed, 1))
+                primary = json.dumps([{'type': 'mcq', 'answer': list(range(1, len(steps) + 1))}])
+                correct = json.dumps({'readable': True, 'answers': [{'id': 1, 'ordered_steps': steps}]})
+                checker = AsyncMock(side_effect=[correct, correct])
+                result = await cross_check_text_answers([], primary, checker, question_text=text)
+                self.assertEqual(json.loads(result)[0]['answer'], expected)
+                self.assertEqual(checker.await_count, 2)
+                self.assertIn('ordered_steps', checker.await_args.args[0][0]['content'])
+                self.assertIn('NEW numbers', checker.await_args.args[0][0]['content'])
+
+    async def test_generic_ordering_rejects_unknown_duplicate_or_conflicting_steps(self):
+        text = 'Arrange the tasks.\nReorder ALL items.\n1. Design\n2. Build\n3. Check'
+        primary = json.dumps([{'type': 'mcq', 'answer': [1, 2, 3]}])
+        for verdict in (
+            {'ordered_steps': ['Design', 'Build']},
+            {'ordered_steps': ['Design', 'Build', 'Publish']},
+            {'ordered_steps': ['Design', 'Design', 'Check']},
+            {'ordered_steps': ['Design', 'Build', 'Check'], 'answer': [1, 2, 3]},
+        ):
+            response = json.dumps({'readable': True, 'answers': [{'id': 1, **verdict}]})
+            with self.subTest(verdict=verdict), self.assertRaises(VisionUnconfirmedError):
+                await cross_check_text_answers([], primary, AsyncMock(return_value=response), question_text=text)
 
     async def test_solve_route_requires_agreement_for_one_word_blanks(self):
         question = 'Leo comes (1) ____ Canada.\n\nWhich word best fits blank (1)?\nQuestion format: one word.'

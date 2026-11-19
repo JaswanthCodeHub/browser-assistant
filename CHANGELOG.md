@@ -1,3 +1,8 @@
+# 2.9.32
+
+- Improve verification for ordering questions across topics and row counts by matching every step's exact text and requiring a complete agreed order.
+- Verify the right-to-left next-greater-element stack sequence locally before dragging.
+
 # 2.9.31
 
 - Preserve coding descriptions, constraints, and sample formatting when reading the portal and during provider fallback.

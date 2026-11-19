@@ -1,4 +1,10 @@
-# Browser Assistant 2.9.31
+# Browser Assistant 2.9.32
+
+- The common ordering verifier accepts a complete independently ordered list of the displayed step texts and maps it back to the current row numbers.
+- Clear JSON instructions and checks for missing, duplicate, conflicting, or unfamiliar steps improve verification across different ordering questions.
+- The supplied next-greater-element example is also checked locally before the assistant moves the rows and submits.
+
+## Browser Assistant 2.9.31
 
 - Coding requests retain the complete description, examples, and starter interface. Local fallback reports when it cannot fit the full request.
 - Coding review compares the reviewer's predicted outputs for clearly labeled examples with the displayed outputs and sends mismatches back for correction.

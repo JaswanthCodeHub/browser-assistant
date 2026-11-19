@@ -278,6 +278,37 @@ def solve_stack_pop_order(ordering):
     )
 
 
+def solve_next_greater_element_order(ordering):
+    """Verify the specified right-to-left monotonic-stack dependency chain."""
+    if not ordering:
+        return None
+    prompt, options = ordering
+    if not re.fullmatch(
+        r'arrange the steps of the optimal stack[- ]based approach to find the '
+        r'(?:NGE|next greater element) in the correct order[.:?]?',
+        ' '.join(prompt.replace('\x60', '').split()), re.I,
+    ):
+        return None
+    steps = (
+        'initialize a result array with -1 values',
+        'loop through each element from the end of the array to the beginning',
+        'use a while loop to remove elements from the stack that are less than or equal to the current element',
+        'if the stack is not empty, set the top of the stack as the next greater element',
+        'push the current element onto the stack',
+        'return the result array ans',
+    )
+    normalized = [' '.join(option.replace('\x60', '').replace('−', '-').split()).lower().rstrip(' .;')
+                  for option in options]
+    if len(normalized) != len(steps) or set(normalized) != set(steps):
+        return None
+    return {
+        'type': 'mcq', 'question': prompt, 'answer': [normalized.index(step) + 1 for step in steps],
+        'reasoning': 'Initialize answers to -1, then traverse right to left. Remove stack values that are not '
+                     'greater than the current value, read the remaining top if any, then push the current value. '
+                     'Return the answers after traversal.',
+    }
+
+
 def ordering_key(value, size):
     if isinstance(value, str):
         try:
@@ -285,6 +316,36 @@ def ordering_key(value, size):
         except ValueError:
             return None
     return tuple(value) if answer_permutation(value) and len(value) == size else None
+
+
+def checked_step_order(raw, options):
+    """Bind an independent ordering response to the exact supplied steps."""
+    normalized = [' '.join(option.split()) for option in options]
+    if len(set(normalized)) != len(normalized):
+        return None
+    payload = _verification_payload(raw)
+    if payload.get('readable') is False:
+        raise VisionUnconfirmedError('The independent solve could not read every step.')
+    entries = payload.get('answers')
+    if payload.get('readable') is not True or not isinstance(entries, list) or len(entries) != 1:
+        return None
+    entry = entries[0]
+    if not isinstance(entry, dict) or type(entry.get('id')) is not int or entry['id'] != 1:
+        return None
+    numeric = ordering_key(entry.get('answer'), len(options))
+    if 'ordered_steps' not in entry:
+        return numeric
+    ordered_steps = entry['ordered_steps']
+    if not isinstance(ordered_steps, list) or len(ordered_steps) != len(options):
+        return None
+    positions = {text: index for index, text in enumerate(normalized, 1)}
+    by_text = tuple(positions.get(' '.join(step.split())) if isinstance(step, str) else None
+                    for step in ordered_steps)
+    if None in by_text or len(set(by_text)) != len(options):
+        return None
+    if 'answer' in entry and numeric != by_text:
+        return None
+    return by_text
 
 
 MATRIX_SYNTAX = re.compile(r'\\begin\{(?:[bpBvV]?matrix|smallmatrix)\}')
@@ -756,8 +817,18 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
     if step_count:
         check_messages[0]['content'] = (
             'Independently order the displayed steps. Use every displayed item number once, check all prerequisite '
-            f'relationships, and return only JSON with readable=true and one answers entry with id=1. '
-            f'The answer value must be a JSON array of all {step_count} numbers from the list in this message.'
+            'relationships, including initialization, loop direction, comparisons, updates and return. '
+            'Use the NEW numbers in the numbered list supplied with this verification request. '
+            'The previous displayed numbering is unavailable and must not be inferred. '
+            'Return ONLY this JSON object schema: '
+            '{"readable":true,"answers":[{"id":1,"answer":[2,1,3]}]}. '
+            f'The example illustrates the schema only. For this question the answer array must contain all '
+            f'{step_count} integers from 1 through {step_count}, each exactly once, in dependency order. '
+            'Use JSON integers, with no option labels, step prose or Markdown in the answer field. '
+            'Alternatively, return {"readable":true,"answers":[{"id":1,"ordered_steps":'
+            '["exact text of first step","exact text of second step"]}]}, copying ALL displayed step texts '
+            'exactly once in dependency order. This alternative needs no numeric answer. '
+            'If any step is missing or the ordering cannot be determined, return {"readable":false,"answers":[]}.'
         )
     elif constraints:
         _, _, keyword = constraints
@@ -798,10 +869,14 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
             check_messages = [check_messages[0], {'role': 'user', 'content': f'{prompt}\n\nNumbered steps:\n{rows}'}]
         raw = await complete(check_messages)
         try:
-            verified = parse_answer_check(raw, len(items))
-            current = answer_key(verified)
-            if step_count and current is not None:
-                current = tuple(numbers[index - 1] for index in current)
+            if step_count:
+                shuffled = [options[number - 1] for number in numbers]
+                current = checked_step_order(raw, shuffled)
+                if current is not None:
+                    current = tuple(numbers[index - 1] for index in current)
+            else:
+                verified = parse_answer_check(raw, len(items))
+                current = answer_key(verified)
         except ValueError:
             current = None
         if current is not None and (current == first or current == previous):
