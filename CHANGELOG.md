@@ -1,3 +1,8 @@
+# 2.9.33
+
+- Add shared implementation-based stack checks to generation and independent text/vision verification.
+- Explain when two complete checkbox checks find no option supported by the supplied question and code.
+
 # 2.9.32
 
 - Improve verification for ordering questions across topics and row counts by matching every step's exact text and requiring a complete agreed order.

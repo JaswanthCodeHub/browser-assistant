@@ -93,6 +93,34 @@ class CheckboxVerificationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result['selection_set_verified'])
         self.assertEqual(provider.await_count, 2)
 
+    async def test_stack_code_context_reaches_both_solves_before_option_selection(self):
+        snippet = ('What is the purpose of the first while loop in push?\nComplete code snippets:\n'
+                   'push(x) {\nwhile (!stk1.empty()) {\nstk2.push(stk1.top());\nstk1.pop();\n}\n'
+                   'stk1.push(x);\nwhile (!stk2.empty()) {\nstk1.push(stk2.top());\nstk2.pop();\n}\n}')
+        options = ('Transfer all elements from stk1 to stk2', 'Push x directly into stk1',
+                   'Remove every element permanently', 'Restore stk2 into stk1')
+        primary = json.dumps([{'type': 'mcq', 'answer': 'Option A: ' + options[0]}])
+        provider = AsyncMock(side_effect=[primary, complete_verdict('A')])
+        with patch.object(main, 'try_groq', provider), patch.object(main, 'TEXT_MODELS', ['primary', 'checker']), \
+                patch.object(main, '_groq_disabled_until', 0):
+            result = await self.solve(checkbox_request(snippet, options))
+        self.assertTrue(result['selection_set_verified'])
+        self.assertEqual(json.loads(result['results'])[0]['answer'], 'Option A: ' + options[0])
+        for call in provider.await_args_list:
+            messages = call.args[0]
+            self.assertIn('STACK QUESTION CHECKS', messages[0]['content'])
+            self.assertIn('continuation condition', messages[0]['content'])
+            self.assertIn(snippet, messages[1]['content'])
+
+    async def test_two_complete_checks_with_no_supported_option_explain_the_mismatch(self):
+        primary = json.dumps([{'type': 'mcq', 'answer': 'Option A: Apple'}])
+        provider = AsyncMock(side_effect=[primary, complete_verdict(''), complete_verdict('')])
+        with patch.object(main, 'try_ollama', provider), patch.object(main, 'TEXT_MODELS', []), \
+                self.assertRaises(HTTPException) as error:
+            await self.solve(checkbox_request('Which option describes popping a stack?', FRUITS))
+        self.assertEqual(error.exception.status_code, 422)
+        self.assertIn('None of the displayed options matches', error.exception.detail['message'])
+
     async def test_incomplete_and_disagreeing_verdicts_do_not_verify_partial_primary(self):
         primary = json.dumps([{'type': 'mcq', 'answer': 'Option A: Apple'}])
         incomplete = json.dumps({'readable': True, 'options': [{'letter': 'A', 'correct': True}]})

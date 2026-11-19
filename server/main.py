@@ -30,7 +30,7 @@ from vision_images import (compress_image_base64, unique_image_blocks, collect_i
                            solve_relu_parallel_choice,
                            ordering_question, solve_sorted_list_merge_order, solve_stack_empty_order, solve_pseudocode_choice,
                            solve_stack_push_order, solve_stack_pop_order, solve_next_greater_element_order,
-                           multiple_choice_question, solve_linked_stack_choices, cross_check_multiple_choice,
+                           multiple_choice_question, solve_linked_stack_choices, cross_check_multiple_choice, stack_reasoning_guidance,
                            reading_response_constraints,
                            VisionRateLimitError, VisionUnconfirmedError)
 
@@ -195,7 +195,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.9.32", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.9.33", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)
@@ -1389,6 +1389,8 @@ async def solve_questions(content: PageContent):
         system_prompt += '\n\n' + CODE_DESCRIPTION_PRIORITY
         if content.repair_attempt > 0:
             system_prompt += '\n\n' + CODE_REPAIR_INSTRUCTIONS
+    else:
+        system_prompt += stack_reasoning_guidance(trimmed_text)
     prompt_language = language if content.practice_type != 'mcq' or content.language else None
     user_prompt = build_user_prompt(trimmed_text, content.url, prompt_language)
     user_prompt += starter_interface_instructions(content.starter_code, language)
@@ -1730,6 +1732,8 @@ async def _solve_vision(content: VisionContent):
                 language = resolve_language(extracted_text)
             logger.info(f"Locked requested code language to {language}")
             system_prompt = build_vision_system_prompt(language, allow_overview=allow_overview)
+            if not is_code_scan:
+                system_prompt += stack_reasoning_guidance(content.text)
             if is_code_scan and language == 'web':
                 system_prompt = build_system_prompt('code', 'web') + (
                     '\nUse the attached screenshots and supplied context as the original problem. '

@@ -1,4 +1,10 @@
-# Browser Assistant 2.9.32
+# Browser Assistant 2.9.33
+
+- Stack question reviews trace the supplied implementation, including loop bodies and conditions, two-stack transfers, capacity and underflow, monotonic comparisons, and complexity.
+- When two complete checks agree that none of the displayed options fits the question, QA Control gives that specific reason for review.
+- Includes the general drag-and-drop ordering improvements from v2.9.32.
+
+## Browser Assistant 2.9.32
 
 - The common ordering verifier accepts a complete independently ordered list of the displayed step texts and maps it back to the current row numbers.
 - Clear JSON instructions and checks for missing, duplicate, conflicting, or unfamiliar steps improve verification across different ordering questions.
