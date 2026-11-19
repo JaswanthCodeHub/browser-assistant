@@ -28,7 +28,7 @@ from vision_images import (compress_image_base64, unique_image_blocks, collect_i
                            cross_check_visual_answers, relative_percentage_question, RELATIVE_PERCENTAGE_INSTRUCTION,
                            answer_permutation, cross_check_text_answers, solve_matrix_choice, solve_row_parallel_choice,
                            solve_relu_parallel_choice,
-                           ordering_question, solve_sorted_list_merge_order, solve_stack_empty_order, solve_pseudocode_choice,
+                           ordering_question, solve_sorted_list_merge_order, solve_stack_empty_order,
                            solve_stack_push_order, solve_stack_pop_order, solve_next_greater_element_order,
                            multiple_choice_question, solve_linked_stack_choices, cross_check_multiple_choice, stack_reasoning_guidance,
                            reading_response_constraints, free_response_question,
@@ -195,7 +195,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.9.34", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.9.35", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)
@@ -1327,9 +1327,6 @@ def local_choice_result(text, language):
     if item is None:
         item = solve_relu_parallel_choice(text)
         provider = "local ReLU shard check"
-    if item is None:
-        item = solve_pseudocode_choice(text)
-        provider = "local pseudocode check"
     if item is not None:
         return {"results": json.dumps([item], ensure_ascii=False), "provider": f"{provider} [verified]",
                 "language": language, "answer_verified": True, "code_reviewed": False}

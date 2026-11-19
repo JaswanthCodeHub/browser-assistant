@@ -1,3 +1,8 @@
+# 2.9.35
+
+- Hold text answers for review when independent verification is malformed or agrees with only part of a batch.
+- Verify pseudocode questions using the complete code instead of marking pattern matches as verified answers.
+
 # 2.9.34
 
 - Give typed answers their own exact-value prompt and verification, preserving signs and literal pointer values.

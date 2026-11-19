@@ -153,13 +153,19 @@ class MatrixVerificationTests(unittest.IsolatedAsyncioTestCase):
                 self.messages, self.results, 'test',
                 AsyncMock(return_value=self.response('B. [[3,-5],[-1,2]]')), require_agreement=True)
 
-    async def test_text_falls_back_when_both_checks_are_incomplete(self):
+    async def test_text_withholds_primary_when_both_checks_are_incomplete(self):
         complete = AsyncMock(return_value='{}')
-        # When both independent verifications return unparseable JSON, the
-        # primary answer is delivered instead of blocking with a 422 error.
-        result = await cross_check_text_answers(self.messages, self.results, complete)
-        self.assertEqual(result, self.results)
+        with self.assertRaises(VisionUnconfirmedError):
+            await cross_check_text_answers(self.messages, self.results, complete)
         self.assertEqual(complete.await_count, 2)
+
+    async def test_partial_agreement_cannot_confirm_a_batch_of_answers(self):
+        results = json.dumps([{'type': 'mcq', 'answer': answer} for answer in ('first', 'second', 'third')])
+        check = json.dumps({'readable': True, 'answers': [
+            {'id': index, 'answer': answer} for index, answer in enumerate(('first', 'second', 'different'), 1)
+        ]})
+        with self.assertRaises(VisionUnconfirmedError):
+            await cross_check_text_answers([], results, AsyncMock(return_value=check))
 
     async def test_linked_blank_requires_agreement_on_one_displayed_choice(self):
         text = ('The phone began to (1) ____.\n\nWhich word best fits blank (1)?\n'
@@ -240,14 +246,19 @@ class MatrixVerificationTests(unittest.IsolatedAsyncioTestCase):
              'C. temp1 is linked to the merged list and temp1 is moved to the next node\nD. temp2 is added',
              'Option C: temp1 is linked to the merged list and temp1 is moved to the next node'),
         ]
-        with patch.object(main, 'try_groq', new_callable=AsyncMock) as groq:
+        with patch.object(main, 'try_groq', new_callable=AsyncMock) as groq, \
+             patch.object(main, 'TEXT_MODELS', ['solver', 'checker']), patch.object(main, '_groq_disabled_until', 0):
             for text, expected in cases:
                 with self.subTest(expected=expected):
+                    groq.reset_mock()
+                    groq.side_effect = [json.dumps([{'type': 'mcq', 'answer': expected}]),
+                                        json.dumps({'readable': True, 'answers': [{'id': 1, 'answer': expected}]})]
                     result = await main.solve_questions(main.PageContent(
                         text=text, url='https://example.test', practice_type='mcq', verify_answer=True))
                     self.assertEqual(json.loads(result['results'])[0]['answer'], expected)
                     self.assertTrue(result['answer_verified'])
-            groq.assert_not_awaited()
+                    self.assertEqual([call.kwargs['model'] for call in groq.await_args_list], ['solver', 'checker'])
+                    self.assertIn(text, groq.await_args_list[1].args[0][1]['content'])
 
     async def test_stack_empty_solves_every_display_order_without_a_provider(self):
         steps = ('Check if the top pointer is equal to -1',

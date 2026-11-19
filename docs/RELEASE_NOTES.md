@@ -1,4 +1,9 @@
-# Browser Assistant 2.9.34
+# Browser Assistant 2.9.35
+
+- Text answer verification requires agreement across the complete answer set. Unusable independent checks and partial agreement return a review result before selection or submission.
+- Pseudocode answers go through independent verification using the complete supplied code. A matching code pattern alone no longer marks the answer verified.
+
+## Browser Assistant 2.9.34
 
 - Short-answer questions use an exact-value contract, including numeric and pointer literals. Verification retains case, signs, and required formatting.
 - A deferred question gets one fresh solve when it returns during the same run. A second unsuccessful verification leaves it for review.

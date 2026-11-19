@@ -645,52 +645,6 @@ def solve_linked_stack_choices(question):
     return {'type': 'mcq', 'question': prompt, 'answer': _format_choice_set(choices, selected), 'reasoning': reasoning}
 
 
-def solve_pseudocode_choice(text):
-    choices = displayed_single_choices(text)
-    if not choices:
-        return None
-    prompt = re.split(r'\n(?:Question format: )?Select one answer\.', text.strip(), maxsplit=1, flags=re.I)[0]
-    initial = re.search(r'\binitial value of the\s+\x60?([a-zA-Z_]\w*)\x60?\s+node\s*\?', prompt, re.I)
-    if initial:
-        variable = re.escape(initial[1])
-        constructors = re.findall(rf'^\s*{variable}\s*=\s*new\s+Node\s*\(\s*(-?\d+)\s*\)\s*;?\s*$',
-                                  prompt, re.M)
-        if len(constructors) != 1:
-            return None
-        expected = constructors[0]
-        reason = f'The pseudocode initializes {initial[1]} with new Node({expected}).'
-        matches = [(letter, option) for letter, option in choices.items()
-                   if option.strip().strip('\x60').replace('−', '-') == expected]
-    elif re.search(r'time complexity of the below pseudo\s*code where size of linked list', prompt, re.I):
-        loop = re.search(r'while\s*\(\s*(\w+)\s*!=\s*null\s*\|\|\s*(\w+)\s*!=\s*null\s*\)', prompt)
-        if not loop or len(re.findall(r'\b(?:while|for)\s*\(', prompt)) != 1:
-            return None
-        first, second = loop.groups()
-        if first == second or not all(re.search(rf'if\s*\(\s*{re.escape(pointer)}\s*!=\s*null\s*\)' r'[^}]*?'
-                                                rf'\b{re.escape(pointer)}\s*=\s*{re.escape(pointer)}\s*->\s*next\b',
-                                                prompt[loop.end():]) for pointer in (first, second)):
-            return None
-        matches = [(letter, option) for letter, option in choices.items()
-                   if re.sub(r'\s+', '', option.strip('\x60')) == 'O(max(m,n))']
-        reason = 'Both available pointers advance in each iteration, so the loop runs until the longer list is exhausted.'
-    elif 'mergeTwoLists' in prompt and re.search(r'\bwhat happens if\s+temp1\s*(?:->|→)\s*data\s+is less than or equal to\s+'
-                                               r'temp2\s*(?:->|→)\s*data', prompt.replace('\x60', ''), re.I):
-        branch = re.search(r'if\s*\(\s*temp1\s*->\s*data\s*<=\s*temp2\s*->\s*data\s*\)\s*\{([^}]+)\}', prompt)
-        if not branch or not re.search(r'\bcur\s*->\s*next\s*=\s*temp1?\b', branch[1]) \
-                or not re.search(r'\btemp1\s*=\s*temp1\s*->\s*next\b', branch[1]):
-            return None
-        matches = [(letter, option) for letter, option in choices.items() if re.fullmatch(
-            r'temp1 is linked to the merged list and temp1 is moved to the next node\.?',
-            ' '.join(option.replace('\x60', '').split()), re.I)]
-        reason = 'The <= branch links the first-list node and advances temp1 to temp1->next.'
-    else:
-        return None
-    if len(matches) != 1:
-        return None
-    letter, option = matches[0]
-    return {'type': 'mcq', 'question': prompt, 'answer': f'Option {letter}: {option}', 'reasoning': reason}
-
-
 def solve_row_parallel_choice(text):
     """Check the shared multiplication dimension in a row-parallel linear layer."""
     choices = displayed_single_choices(text)
@@ -969,20 +923,6 @@ async def cross_check_text_answers(messages, results, complete, *, question_text
                     'role': 'user',
                     'content': 'Solve again using the original question and its context. Return the full verification JSON with the required ids.',
                 }]
-    # When both independent verifications failed to parse, prefer delivering the
-    # primary answer over blocking the automation entirely. The primary solve was
-    # validated and the verification provider returned unusable JSON — a parsing
-    # failure, not a disagreement — so a hard 422 is disproportionate.
-    if not require_agreement and not step_count and not free_response and current is None and previous is None:
-        return results
-    # For multi-answer questions (fill-in-the-blank), accept the primary answers
-    # when the majority of individual answers agree with any independent solve.
-    if not require_agreement and not choices and not step_count and not free_response and first is not None and len(first) > 1:
-        best = current or previous
-        if best is not None:
-            agreed = sum(a == b for a, b in zip(first, best))
-            if agreed > len(first) // 2:
-                return results
     if step_count:
         raise VisionUnconfirmedError('The independent checks could not confirm a complete order for the displayed steps.')
     if free_response:

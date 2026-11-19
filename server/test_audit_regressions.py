@@ -7,6 +7,42 @@ import main
 
 
 class CodingPayloadTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pseudocode_loop_pattern_cannot_skip_verifying_additional_work(self):
+        text = ('What is the time complexity of the below pseudo code where size of linked list a and b are m and n respectively?\n'
+                'Complete code snippets:\nf(Node a, Node b)\n'
+                'temp1=a\ntemp2=b\nwhile(temp1!=null || temp2!=null)\n'
+                '  scanAllNodes(a,b) // visits all m+n nodes each time\n'
+                '  if(temp1!=null)\n    temp1=temp1->next\n'
+                '  if(temp2!=null)\n    temp2=temp2->next\n'
+                'Question format: select one answer.\n'
+                'A. O(max(m,n))\nB. O(max(m,n)^2)\nC. O(1)\nD. O(log(m+n))')
+        check = json.dumps({'readable': True, 'answers': [{'id': 1, 'answer': 'B. O(max(m,n)^2)'}]})
+        provider = AsyncMock(side_effect=[json.dumps([{'type': 'mcq', 'answer': 'Option A: O(max(m,n))'}]),
+                                         check, check])
+        with patch.object(main, 'try_groq', provider), patch.object(main, 'TEXT_MODELS', ['solver', 'checker']), \
+                patch.object(main, '_groq_disabled_until', 0):
+            result = await main.solve_questions(main.PageContent(
+                text=text, url='https://example.test', practice_type='mcq', verify_answer=True))
+        self.assertTrue(result['answer_verified'])
+        self.assertEqual(json.loads(result['results'])[0]['answer'], 'Option B: O(max(m,n)^2)')
+        self.assertEqual(provider.await_count, 3)
+        self.assertIn(text, provider.await_args_list[1].args[0][1]['content'])
+
+    async def test_requested_verification_cannot_confirm_an_unparseable_independent_check(self):
+        primary = json.dumps([{'type': 'mcq', 'answer': 'Option B: 12%'}])
+        provider = AsyncMock(side_effect=[primary, '{}', '{}'])
+        with patch.object(main, 'try_groq', provider), patch.object(main, 'TEXT_MODELS', ['solver', 'checker']), \
+                patch.object(main, '_groq_disabled_until', 0), patch.object(main, 'try_ollama', AsyncMock()) as local:
+            with self.assertRaises(HTTPException) as error:
+                await main.solve_questions(main.PageContent(
+                    text='What is 6 as a percentage of 50?\nA. 10%\nB. 12%',
+                    url='https://example.test', practice_type='mcq', verify_answer=True))
+        self.assertEqual(error.exception.status_code, 422)
+        self.assertEqual(error.exception.detail['code'], 'answer_unconfirmed')
+        self.assertNotIn('results', error.exception.detail)
+        self.assertEqual(provider.await_count, 3)
+        local.assert_not_awaited()
+
     async def test_text_verification_uses_original_evidence_and_a_different_model(self):
         first = json.dumps([{'type': 'mcq', 'answer': 'Option B: 12%', 'reasoning': 'FIRST_SOLVE_PRIVATE'}])
         second = json.dumps({'readable': True, 'answers': [{'id': 1, 'answer': 'B. 12 %'}]})
