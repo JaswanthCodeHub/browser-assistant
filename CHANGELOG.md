@@ -1,3 +1,7 @@
+# 2.9.37
+
+- Use Alt+J for Reflective Journal.
+
 # 2.9.36
 
 - Try a backup cloud model when journal generation fails and request structured JSON with a bounded reasoning budget on GPT-OSS.

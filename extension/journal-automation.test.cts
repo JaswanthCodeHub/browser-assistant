@@ -321,7 +321,7 @@ async function runJournal(changePage=false, shortcut=false, integrated=false, st
     if (shortcut) {
         for (let i=0;i<2;i++) {
             const event = new window.Event('keydown',{bubbles:true,cancelable:true});
-            Object.assign(event,{altKey:true,shiftKey:true,code:'KeyJ',key:'J',repeat:false});
+            Object.assign(event,{altKey:true,code:'KeyJ',key:'j',repeat:false});
             document.querySelector('section textarea').dispatchEvent(event);
         }
     } else if (integrated) globals.BrowserAssistantJournal.start();
@@ -391,7 +391,7 @@ test('assessment-list shortcut opens the ongoing pencil once and ignores missed/
     vm.runInNewContext(fs.readFileSync(`${__dirname}/journal-automation.js`,'utf8'),globals);
     for(let i=0;i<2;i++) {
         const event=new window.Event('keydown',{bubbles:true,cancelable:true});
-        Object.assign(event,{altKey:true,shiftKey:true,code:'KeyJ',key:'J'});
+        Object.assign(event,{altKey:true,code:'KeyJ',key:'j'});
         document.dispatchEvent(event);
     }
     assert.deepEqual(clicks,['/modules/reflective-journal/journal1']);

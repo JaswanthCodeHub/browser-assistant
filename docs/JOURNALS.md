@@ -27,7 +27,7 @@ for context; a portal output adapter returns only the selected module as five JS
 fields. Both backend and extension require exactly 80 words per section, 400 total.
 
 Optionally enter your actual class experience and feelings. Click **Fill & Submit
-Journal** in standalone mode, **Start journal automation** in QA Control, or press **Alt + Shift + J** while the journal page is focused, to prepare
+Journal** in standalone mode, **Start journal automation** in QA Control, or press **Alt + J** while the journal page is focused, to prepare
 the five sections. The shortcut also works while a journal text field is focused;
 holding the keys does not start duplicate runs. On the assessment list, the same
 shortcut opens the one ongoing journal's pencil link. Once content is prepared,

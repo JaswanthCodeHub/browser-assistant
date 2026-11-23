@@ -10,7 +10,7 @@ A Chrome Manifest V3 extension with a local Python backend for exploring multipl
 - Displays results in an in-page panel, offers code copying, and saves successful scans in local SQLite history.
 - Includes a local practice page and automation for selecting answers, filling editors, and submitting supported forms after starting a run.
 - Resumes CCBP practice from an already submitted answer through its submitted-question Next control, without generating or submitting that answer again. Delayed Submit controls are awaited for up to 15 seconds while the question and selected answer remain unchanged.
-- Press **⌥A** (Alt + A) on the webpage to start automation, then press it again to pause or resume. The previous **⌥⇧A** (Alt + Shift + A) shortcut also works, including with the code editor focused, and opens QA Control. Journal automation uses the same toggle; its **⌥⇧J** shortcut remains available. Panel chords are **⌃⇧O** (open), **⌃⇧X** (close), **⌃⇧S** (vision scan) and **⌃⇧M** (minimal mode).
+- Press **⌥A** (Alt + A) on the webpage to start automation, then press it again to pause or resume. The previous **⌥⇧A** (Alt + Shift + A) shortcut also works, including with the code editor focused, and opens QA Control. Journal automation uses the same toggle; its dedicated shortcut is **⌥J** (Alt + J). Panel chords are **⌃⇧O** (open), **⌃⇧X** (close), **⌃⇧S** (vision scan) and **⌃⇧M** (minimal mode).
 
 AI answers can be wrong. Automation can change or submit page content: use it only where authorized, review results, and avoid restricted assessments. Site detection is heuristic; custom controls, frames, editors, and navigation can fail. The policy includes a general HTTP/HTTPS fallback, so it is not a strict site allowlist.
 

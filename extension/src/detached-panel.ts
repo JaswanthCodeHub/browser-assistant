@@ -130,7 +130,7 @@
         const key = event.key.toLowerCase();
         if (event.altKey) {
             if (key === 'a' || event.code === 'KeyA') {event.preventDefault(); void send('automation');}
-            else if (event.shiftKey && (key === 'j' || event.code === 'KeyJ')) {event.preventDefault(); void send('journal');}
+            else if (!event.shiftKey && (key === 'j' || event.code === 'KeyJ')) {event.preventDefault(); void send('journal');}
             return;
         }
         const focused = event.target as Element;

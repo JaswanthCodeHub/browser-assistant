@@ -198,13 +198,13 @@ function browserAssistantJournal(global) {
             if (publishedDeadline === pendingDeadline) publishedDeadline = undefined;
         }
     }
-    button.title = 'Fill & Submit Journal (Alt + Shift + J)';
-    button.setAttribute('aria-keyshortcuts', 'Alt+Shift+J');
+    button.title = 'Fill & Submit Journal (Alt + J)';
+    button.setAttribute('aria-keyshortcuts', 'Alt+J');
     const shortcutHint = document.createElement('p');
-    shortcutHint.textContent = 'Shortcut: Alt + Shift + J';
+    shortcutHint.textContent = 'Shortcut: Alt + J';
     panel.insertBefore(shortcutHint, status);
     const shortcutListener = event => {
-        if (!event.altKey || !event.shiftKey || event.ctrlKey || event.metaKey || event.repeat || event.isComposing) return;
+        if (!event.altKey || event.shiftKey || event.ctrlKey || event.metaKey || event.repeat || event.isComposing) return;
         if (event.code !== 'KeyJ' && String(event.key).toLowerCase() !== 'j') return;
         if (!document.contains(panel) || storageKey !== `assistantJournal:${location.pathname}`) return;
         event.preventDefault();
@@ -480,7 +480,7 @@ if (typeof window !== 'undefined' && isSidusJournalOrigin(location.origin)) {
     if (!window.BrowserAssistantJournalListShortcut) {
         window.BrowserAssistantJournalListShortcut = true;
         document.addEventListener('keydown', event => {
-            if (!/^\/modules\/assessments\/assessments\/?$/.test(location.pathname) || !event.altKey || !event.shiftKey || event.ctrlKey || event.metaKey || event.repeat || event.isComposing) return;
+            if (!/^\/modules\/assessments\/assessments\/?$/.test(location.pathname) || !event.altKey || event.shiftKey || event.ctrlKey || event.metaKey || event.repeat || event.isComposing) return;
             if (event.code !== 'KeyJ' && String(event.key).toLowerCase() !== 'j') return;
             event.preventDefault();
             window.BrowserAssistantJournal.start();

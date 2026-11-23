@@ -1,4 +1,8 @@
-# Browser Assistant 2.9.36
+# Browser Assistant 2.9.37
+
+- Press Alt+J to start Reflective Journal from the journal page, the assessments list, or the separate panel.
+
+## Browser Assistant 2.9.36
 
 - Reflective Journal tries the backup Groq model before local Ollama. GPT-OSS requests use structured JSON and low reasoning effort to leave room for all five sections. The 80-word check still runs for every section.
 
