@@ -1,3 +1,7 @@
+# 2.9.36
+
+- Try a backup cloud model when journal generation fails and request structured JSON with a bounded reasoning budget on GPT-OSS.
+
 # 2.9.35
 
 - Hold text answers for review when independent verification is malformed or agrees with only part of a batch.

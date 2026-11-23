@@ -195,7 +195,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.9.35", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.9.36", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)
@@ -429,7 +429,7 @@ def save_automation_history(entry: AutomationHistoryEntry):
 
 # ── AI providers ──────────────────────────────────────────────────────────────
 
-async def try_groq(messages: list, model: str = None, temperature: float = 0.0, _token_limit: int = GROQ_COMPLETION_TOKEN_LIMIT, _review: bool = False) -> str:
+async def try_groq(messages: list, model: str = None, temperature: float = 0.0, _token_limit: int = GROQ_COMPLETION_TOKEN_LIMIT, _review: bool = False, *, structured: bool = False) -> str:
     """Call Groq with automatic API key rotation on rate limit (429)."""
     global _groq_disabled_until, _groq_key_index
     if time.monotonic() < _groq_disabled_until:
@@ -441,9 +441,8 @@ async def try_groq(messages: list, model: str = None, temperature: float = 0.0, 
     use_model = model or GROQ_TEXT_MODEL
     loop = asyncio.get_running_loop()
     review_options = {}
-    if _review:
-        # Review returns a verdict, not another full program. Keep reasoning
-        # bounded so GPT-OSS leaves room for its final JSON verdict.
+    if _review or structured:
+        # Keep reasoning bounded so GPT-OSS leaves room for the final JSON.
         review_options['response_format'] = {'type': 'json_object'}
         if use_model in {'openai/gpt-oss-20b', 'openai/gpt-oss-120b'}:
             review_options['reasoning_effort'] = 'low'
@@ -475,7 +474,7 @@ async def try_groq(messages: list, model: str = None, temperature: float = 0.0, 
             if getattr(choice, "finish_reason", None) == "length":
                 if _token_limit < GROQ_RETRY_TOKEN_LIMIT:
                     logger.warning(f"{use_model} reached {_token_limit} tokens; retrying once with {GROQ_RETRY_TOKEN_LIMIT}")
-                    return await try_groq(messages, model=use_model, temperature=temperature, _token_limit=GROQ_RETRY_TOKEN_LIMIT, _review=_review)
+                    return await try_groq(messages, model=use_model, temperature=temperature, _token_limit=GROQ_RETRY_TOKEN_LIMIT, _review=_review, structured=structured)
                 raise RuntimeError(f"{use_model} stopped at the output token limit")
             content = choice.message.content or ""
             if not content.strip():
@@ -549,6 +548,17 @@ TEXT_MODELS = list(dict.fromkeys([
     GROQ_TEXT_MODEL,
     "openai/gpt-oss-20b",
 ]))
+
+
+async def try_journal_cloud(messages: list, temperature: float = 0.2) -> str:
+    for model in TEXT_MODELS:
+        if not _groq_clients or time.monotonic() < _groq_disabled_until:
+            break
+        try:
+            return await try_groq(messages, model=model, temperature=temperature, structured=True)
+        except Exception as exc:
+            logger.warning("Journal model %s failed (%s); trying the next provider.", model, type(exc).__name__)
+    raise RuntimeError("No Groq journal model responded.")
 
 # Vision model fallback chain
 VISION_MODELS = list(dict.fromkeys([
@@ -2069,7 +2079,7 @@ def normalize_vision_results(raw: str) -> str:
 
 
 from journal import register_journal, load_syllabus
-register_journal(app, try_groq, try_ollama)
+register_journal(app, try_journal_cloud, try_ollama)
 
 if __name__ == "__main__":
     # The extension talks to this API through its background worker. Binding to

@@ -99,7 +99,10 @@ def register_journal(app, cloud, local):
                 except Exception:
                     raw = await local(messages, temperature=0.2)
             except Exception as exc:
-                raise HTTPException(503, 'Journal generation unavailable. Check AI provider settings.') from exc
+                raise HTTPException(
+                    503, 'Journal generation could not get a response from Groq or local Ollama. '
+                         'Try again shortly. If it keeps failing, check your Groq quota or start Ollama.'
+                ) from exc
             try:
                 raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw.strip())
                 sections, count = validate_sections(json.loads(raw))

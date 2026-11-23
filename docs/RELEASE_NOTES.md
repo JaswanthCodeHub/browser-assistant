@@ -1,4 +1,8 @@
-# Browser Assistant 2.9.35
+# Browser Assistant 2.9.36
+
+- Reflective Journal tries the backup Groq model before local Ollama. GPT-OSS requests use structured JSON and low reasoning effort to leave room for all five sections. The 80-word check still runs for every section.
+
+## Browser Assistant 2.9.35
 
 - Text answer verification requires agreement across the complete answer set. Unusable independent checks and partial agreement return a review result before selection or submission.
 - Pseudocode answers go through independent verification using the complete supplied code. A matching code pattern alone no longer marks the answer verified.

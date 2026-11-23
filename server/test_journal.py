@@ -3,7 +3,7 @@ import json
 import unittest
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 import journal as journal_module
 from fastapi import FastAPI, HTTPException
 from journal import SECTIONS, JournalRequest, load_syllabus, register_journal, subject_key, validate_sections
@@ -14,6 +14,22 @@ def sample(n=80):
 
 
 class JournalTests(unittest.TestCase):
+    def test_module_five_uses_backup_cloud_model_before_ollama(self):
+        import main
+
+        primary = AsyncMock(side_effect=[TimeoutError(), json.dumps(sample())])
+        local = AsyncMock()
+        app = FastAPI()
+        register_journal(app, main.try_journal_cloud, local)
+        endpoint = next(route.endpoint for route in app.routes if route.path == '/journal')
+        with patch.object(main, 'try_groq', primary), patch.object(main, 'TEXT_MODELS', ['primary', 'backup']), \
+                patch.object(main, '_groq_clients', [object()]), patch.object(main, '_groq_disabled_until', 0):
+            result = asyncio.run(endpoint(JournalRequest(subject='Backend Development Fundamentals (CS210)', number=5)))
+        self.assertEqual(result['section_word_counts'], dict.fromkeys(SECTIONS, 80))
+        self.assertEqual([call.kwargs['model'] for call in primary.await_args_list], ['primary', 'backup'])
+        self.assertTrue(primary.await_args_list[1].kwargs['structured'])
+        local.assert_not_awaited()
+
     def test_syllabus_and_mapping(self):
         self.assertEqual(subject_key('Computer organization and Architecture (CS203)'), 'coa')
         self.assertEqual(subject_key('Advanced Data Structures'), 'ads')
