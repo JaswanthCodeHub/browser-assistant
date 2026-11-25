@@ -195,7 +195,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.9.38", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.9.39", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)
@@ -914,6 +914,7 @@ FOR CODING PROBLEMS:
 8. Write complete, clean, copy-pasteable {language_name} code compatible with the requested version and platform. Do not include TODOs, ellipses, placeholders, pseudo-code, or omitted logic.
 9. Respect the stated constraints and use appropriate time and space complexity; do not assume O(N) is possible when it is not.
 10. Trace every supplied sample input against its expected output; also check applicable boundary/edge cases. Correct discrepancies before returning. Never claim a test was executed unless it actually was.
+    For printed patterns, derive row counts, leading spaces, interior gaps and separators from the statement and all samples. Preserve significant spaces and blank lines; do not infer a familiar pattern from its title alone.
 11. If the statement conflicts with examples or leaves material behavior uncertain, follow explicit interface requirements and the strongest evidence in the examples; do not silently fabricate requirements.
 12. {language_instruction}
 
@@ -1224,6 +1225,10 @@ Return at most five short actionable issues. For a pass, issues must be [].
 Set verdict to pass only when the algorithm and code satisfy all requirements that can be checked from the question."""
 
 
+class CodeReviewUnconfirmed(ValueError):
+    """A generated program could not satisfy the independent checks."""
+
+
 async def review_and_correct_code(
     generator,
     original_messages: list,
@@ -1234,9 +1239,9 @@ async def review_and_correct_code(
     review_images: list | None = None,
     samples=(),
 ) -> str:
-    """Require an independent review and one correction cycle before returning code."""
+    """Require independent review, with at most two validated correction cycles."""
     review_provider = reviewer or generator
-    for review_attempt in range(2):
+    for review_attempt in range(3):
         question_parts = []
         for message in original_messages[1:]:
             content = message.get("content", "")
@@ -1288,13 +1293,20 @@ async def review_and_correct_code(
             issues = [f'Sample {index} with input {value!r} predicts {predicted!r}, expected {expected!r}.'
                       for index, ((value, expected), entry) in enumerate(zip(samples, outputs), 1)
                       if (predicted := entry['output'].replace('\r\n', '\n').removesuffix('\n')) != expected]
+            if issues:
+                for index, ((_, expected), entry) in enumerate(zip(samples, outputs), 1):
+                    predicted = entry['output'].replace('\r\n', '\n').removesuffix('\n')
+                    if predicted != expected:
+                        issues.append(f'Sample {index} line widths (spaces count): expected '
+                                      f'{list(map(len, expected.split(chr(10))))}, '
+                                      f'predicted {list(map(len, predicted.split(chr(10))))}.')
         if not issues:
             for item in json.loads(results_json):
                 if language != 'web' and isinstance(item, dict) and item.get('type') == 'code':
                     validate_starter_interface(item['code'], starter_code, language)
             return results_json
-        if review_attempt:
-            raise ValueError(f"Code still failed independent review: {issues}")
+        if review_attempt == 2:
+            raise CodeReviewUnconfirmed(f"Code still failed independent review: {issues}")
 
         repair_messages = [
             *original_messages,
@@ -1309,20 +1321,21 @@ async def review_and_correct_code(
                     "when the portal supplies the driver. Return the complete solution in the required JSON-array format only."
                     + (build_system_prompt('code', 'web') if language == 'web' else '')
                     + starter_interface_instructions(starter_code, language)
+                    + '\nReturn a solution, not another review verdict. '
+                    + build_system_prompt('code', language).split('OUTPUT FORMAT:')[-1]
+                    + ('\nExact sample contract (preserve every space and newline): '
+                       + json.dumps([{'input': value, 'output': expected,
+                                      'output_lines': [{'text': line, 'width': len(line)} for line in expected.split('\n')]}
+                                     for value, expected in samples], ensure_ascii=False) if samples else '')
                 ),
             },
         ]
-        repaired_raw = await generator(repair_messages)
-        repaired_json = clean_json(repaired_raw)
-        if repaired_json == "[]":
-            raise ValueError("Automatic correction returned no usable solution")
-        try:
-            results_json = validate_code_results(repaired_json, language, require_code=True, starter_code=starter_code)
-            for item in json.loads(results_json):
-                if isinstance(item, dict) and item.get('type') == 'code':
-                    validate_starter_interface(item['code'], starter_code, language)
-        except (ValueError, json.JSONDecodeError) as exc:
-            raise ValueError(f"Automatically corrected code failed validation: {exc}") from exc
+        # A correction can accidentally use the reviewer's verdict schema.
+        # Regenerate unusable code once, then independently review it again.
+        results_json = await generate_validated_result(
+            generator, repair_messages, language, require_code=True,
+            review_code=False, starter_code=starter_code,
+        )
     raise ValueError("Automatic code review did not converge")
 
 
@@ -1417,6 +1430,7 @@ async def solve_questions(content: PageContent):
     ]
 
     errors = []
+    code_review_failed = False
     strict_code_review = require_code and (content.review_before_submit or not FAST_CODE_MODE or STRICT_REPAIR_REVIEW)
     samples = coding_samples(trimmed_text) if strict_code_review and language != 'web' else ()
     checkbox = multiple_choice is not None and not require_code
@@ -1522,6 +1536,7 @@ async def solve_questions(content: PageContent):
             raise
         except Exception as e:
             errors.append(f"{model_id}: {str(e)}")
+            code_review_failed |= isinstance(e, CodeReviewUnconfirmed)
             logger.warning(errors[-1])
 
     # Last resort: Try Ollama (Local fallback)
@@ -1564,6 +1579,7 @@ async def solve_questions(content: PageContent):
         raise
     except Exception as e:
         errors.append(f"Ollama failed: {str(e)}")
+        code_review_failed |= isinstance(e, CodeReviewUnconfirmed)
         logger.warning(errors[-1])
 
     # If all models failed because they couldn't find a question (returned empty results),
@@ -1578,6 +1594,13 @@ async def solve_questions(content: PageContent):
                 "language": language,
             }
         )
+
+    if code_review_failed:
+        raise HTTPException(422, detail={
+            'code': 'code_review_unconfirmed',
+            'message': 'The generated code still failed independent checks after two corrections. '
+                       'No solution was returned. Check the complete problem description and sample formatting, then retry.',
+        })
 
     raise HTTPException(
         status_code=502,

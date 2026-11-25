@@ -1,4 +1,10 @@
-# Browser Assistant 2.9.38
+# Browser Assistant 2.9.39
+
+- Coding review allows two correction cycles. Repair prompts include the required code schema and exact sample output lines and widths, preserving meaningful spaces and newlines.
+- A malformed correction or a review verdict returned in place of code gets one regeneration. Corrected code must pass language, syntax, completeness, starter-interface and independent checks before it is returned.
+- If all candidates still fail independent checks, the response identifies code verification rather than presenting the problem as an API/provider outage.
+
+## Browser Assistant 2.9.38
 
 - Coding batches select the question's navigation arrow instead of clicking a row or bookmark control. Unlabelled portal SVG arrows work with handlers on the icon or its wrapper.
 - Chromium coverage checks automatic opening through links and both SVG handler layouts with the assistant panel closed.

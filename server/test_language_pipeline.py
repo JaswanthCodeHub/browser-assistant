@@ -304,6 +304,7 @@ class ProviderPipelineTests(unittest.IsolatedAsyncioTestCase):
         reviewer = AsyncMock(side_effect=[
             '{"verdict":"fail","issues":["Does not compute factorial."],"corrected_code":""}',
             '{"verdict":"fail","issues":["Still incorrect."],"corrected_code":""}',
+            '{"verdict":"fail","issues":["Still incorrect after two corrections."],"corrected_code":""}',
         ])
         messages = [
             {"role": "system", "content": main.build_system_prompt("code", "python")},

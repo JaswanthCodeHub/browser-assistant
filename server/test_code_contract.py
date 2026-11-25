@@ -221,9 +221,55 @@ class PreSubmitQualityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reviewer.await_count,1)
 
     async def test_a_review_pass_cannot_override_a_changed_interface_during_repair(self):
-        generator=AsyncMock(side_effect=[result(CORRECT),result(CORRECT.replace('solution','Solution'))])
+        generator=AsyncMock(side_effect=[result(CORRECT),result(CORRECT.replace('solution','Solution')),
+                                        result(CORRECT.replace('solution','Solution'))])
         reviewer=AsyncMock(side_effect=['{"verdict":"fail","issues":["Fix algorithm"]}',
                                        '{"verdict":"pass","issues":[]}'])
         with self.assertRaisesRegex(ValueError,'class name changed'):
             await main.generate_validated_result(generator, [], 'cpp', require_code=True,
                                                  reviewer=reviewer, starter_code=STARTER)
+
+    async def test_pattern_spacing_gets_two_corrections_and_exact_sample_contract(self):
+        expected = '*\n* *\n*   *\n* * * *'
+        wrong = 'print("*")'
+        correct = ('n = int(input())\nfor row in range(1, n + 1):\n'
+                   '    if row == 1:\n        print("*")\n'
+                   '    elif row == n:\n        print(" ".join(["*"] * n))\n'
+                   '    else:\n        print("*" + " " * (2 * row - 3) + "*")')
+        generator = AsyncMock(side_effect=[result(wrong, 'python'), result(wrong, 'python'), result(correct, 'python')])
+        def review(output):
+            return json.dumps({'verdict': 'pass', 'issues': [], 'sample_outputs': [{'id': 1, 'output': output}]})
+        reviewer = AsyncMock(side_effect=[review('*'), review('*\n* *\n* *\n* * * *'), review(expected + '\n')])
+        checked = await main.generate_validated_result(generator, [], 'python', require_code=True,
+                                                       reviewer=reviewer, samples=[('4', expected)])
+        self.assertEqual(json.loads(checked)[0]['code'], correct)
+        self.assertEqual(reviewer.await_count, 3)
+        repair = generator.await_args_list[2].args[0][-1]['content']
+        self.assertIn('line widths (spaces count)', repair)
+        self.assertIn('"text": "*   *", "width": 5', repair)
+        self.assertIn('"type": "code"', repair)
+
+    async def test_correction_verdict_is_regenerated_as_code_before_independent_review(self):
+        generator = AsyncMock(side_effect=[result('print(0)', 'python'),
+            '{"verdict":"pass","issues":[]}', result('print(4)', 'python')])
+        reviewer = AsyncMock(side_effect=['{"verdict":"fail","issues":["Expected 4, not 0"]}',
+                                         '{"verdict":"pass","issues":[]}'])
+        checked = await main.generate_validated_result(generator, [], 'python', require_code=True, reviewer=reviewer)
+        self.assertEqual(json.loads(checked)[0]['code'], 'print(4)')
+        self.assertEqual(generator.await_count, 3)
+        self.assertEqual(reviewer.await_count, 2)
+        self.assertIn('Do not return MCQ answers or a review verdict', generator.await_args.args[0][-1]['content'])
+
+    async def test_unverified_code_is_not_reported_as_an_api_key_failure(self):
+        generator = AsyncMock(return_value=result('print(0)', 'python'))
+        reviewer = AsyncMock(return_value='{"verdict":"fail","issues":["Incorrect sample output"]}')
+        with patch.object(main, 'TEXT_MODELS', ['primary']), patch.object(main, 'try_groq', generator), \
+             patch.object(main, 'try_independent_code_review', reviewer), \
+             patch.object(main, 'try_ollama', AsyncMock(side_effect=RuntimeError('not running'))):
+            with self.assertRaises(main.HTTPException) as error:
+                await main.solve_questions(main.PageContent(text='Write a Python program to print 4.',
+                    url='https://example.test', practice_type='code', language='python', review_before_submit=True))
+        self.assertEqual(error.exception.status_code, 422)
+        self.assertEqual(error.exception.detail['code'], 'code_review_unconfirmed')
+        self.assertIn('two corrections', error.exception.detail['message'])
+        self.assertEqual(reviewer.await_count, 3)

@@ -1,3 +1,9 @@
+# 2.9.39
+
+- Give independently rejected code up to two corrections, with exact sample strings and line widths for pattern spacing.
+- Regenerate malformed correction responses once, preserving code syntax and starter-interface checks before another independent review.
+- Report exhausted code verification separately from provider outages.
+
 # 2.9.38
 
 - Open coding questions through the row's navigation arrow, including SVG handlers, without selecting the bookmark button.
