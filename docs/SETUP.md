@@ -15,9 +15,10 @@ The backend explicitly loads `server/.env`; process environment variables take p
 | VISION_MAX_TOKENS | 1200; positive integer |
 | SERVER_HOST | 127.0.0.1; container overrides to 0.0.0.0 internally |
 | SERVER_ALLOWED_HOSTS | Optional additional hostnames; loopback names are allowed by default |
+| SERVER_API_TOKEN | Empty for loopback use. Required for a hosted API; requests must send it as `Authorization: Bearer <value>` |
 | HISTORY_DB_PATH | Empty preserves `server/scan_history.db`; an optional existing writable path supports explicit deployment storage |
 
-The extension always uses port 8000. `/health` reports configuration, not successful provider authentication or Ollama reachability.
+The extension uses `http://127.0.0.1:8000` by default. To use a hosted API, open the extension icon, enter its HTTPS URL and the same `SERVER_API_TOKEN` in **Backend connection**, then save. `/health` reports configuration, not successful provider authentication or Ollama reachability.
 
 The five-image feature is preserved. The current Qwen vision API accepts three
 images per request: four/five unique images are read in ordered batches, then all

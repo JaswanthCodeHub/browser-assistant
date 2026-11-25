@@ -1,3 +1,8 @@
+# Browser Assistant 2.9.41
+
+- The popup can save a hosted HTTPS backend URL and its API password, while leaving existing local `127.0.0.1:8000` use unchanged.
+- A public Render backend requires `SERVER_API_TOKEN`; requests without the matching Bearer password are rejected before any model call.
+
 # Browser Assistant 2.9.40
 
 - Coding description extraction removes hidden content and Ace measurement/input/gutter text. Read-only Ace examples are converted to separate source lines instead of concatenating editor internals into the prompt.

@@ -21,6 +21,38 @@ new Promise<{ groq_configured?: boolean }>((resolve, reject) => {
         el.className = 'offline';
     });
 
+const backendUrl = document.querySelector<HTMLInputElement>('#backend-url');
+const backendToken = document.querySelector<HTMLInputElement>('#backend-token');
+const saveBackend = document.querySelector<HTMLButtonElement>('#save-backend');
+const backendSettingsStatus = document.getElementById('backend-settings-status');
+const POPUP_LOCAL_BACKEND_URL = 'http://127.0.0.1:8000';
+
+void chrome.storage.local.get(['assistantBackendUrl', 'assistantBackendToken']).then(saved => {
+    if (backendUrl) backendUrl.value = typeof saved.assistantBackendUrl === 'string' ? saved.assistantBackendUrl : '';
+    if (backendToken) backendToken.value = typeof saved.assistantBackendToken === 'string' ? saved.assistantBackendToken : '';
+});
+
+saveBackend?.addEventListener('click', async () => {
+    const rawUrl = backendUrl?.value.trim() || '';
+    const token = backendToken?.value.trim() || '';
+    try {
+        if (rawUrl) {
+            const parsed = new URL(rawUrl);
+            const local = ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname);
+            if (parsed.username || parsed.password || !['http:', 'https:'].includes(parsed.protocol)
+                || (!local && parsed.protocol !== 'https:') || parsed.pathname !== '/') {
+                throw Error('Use a plain HTTPS server URL, for example https://browser-assistant.onrender.com');
+            }
+        }
+        await chrome.storage.local.set({assistantBackendUrl: rawUrl, assistantBackendToken: token});
+        backendSettingsStatus!.textContent = rawUrl ? `Saved: ${rawUrl}` : `Saved: ${POPUP_LOCAL_BACKEND_URL}`;
+        backendSettingsStatus!.hidden = false;
+    } catch (error) {
+        backendSettingsStatus!.textContent = error.message;
+        backendSettingsStatus!.hidden = false;
+    }
+});
+
 const journalCountdown = document.getElementById('journal-countdown');
 let journalTimers: AssistantJournalTimer[] = [];
 function showJournalCountdown() {

@@ -1,3 +1,8 @@
+# 2.9.41
+
+- Add an optional HTTPS hosted-backend connection in the extension popup while preserving the local default.
+- Require a configured API password for every hosted Render request and test rejected, invalid, and valid password cases.
+
 # 2.9.40
 
 - Exclude hidden description text and Ace input/measurement/gutter elements from coding prompts.

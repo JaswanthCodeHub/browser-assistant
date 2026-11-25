@@ -1,6 +1,6 @@
 # API reference
 
-Default base: `http://127.0.0.1:8000`. Interactive schemas: `/docs`; machine-readable schema: `/openapi.json`. No authentication or CORS middleware is configured; the extension proxies requests through its background worker. Do not expose the API publicly.
+Default base: `http://127.0.0.1:8000`. Interactive schemas: `/docs`; machine-readable schema: `/openapi.json`. For a hosted API, set `SERVER_API_TOKEN`; every request must then include `Authorization: Bearer <value>`. The extension proxies allowlisted requests through its background worker and stores its chosen backend connection in Chrome local storage. Do not expose a hosted server without the token.
 
 | Method | Route | Behavior |
 | --- | --- | --- |

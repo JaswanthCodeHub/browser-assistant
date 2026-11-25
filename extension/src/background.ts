@@ -4,6 +4,22 @@ importScripts('editor-bridge.js', 'detached-panel-background.js');
 // Read the files from Chrome's own extension folder, independently of FastAPI.
 let updateCheckRunning = false;
 let lastWorkspaceCheck = -Infinity;
+const LOCAL_BACKEND_URL = 'http://127.0.0.1:8000';
+
+async function backendConnection() {
+    if (!chrome.storage?.local) return {url: LOCAL_BACKEND_URL, token: ''};
+    const saved = await chrome.storage.local.get(['assistantBackendUrl', 'assistantBackendToken']);
+    const rawUrl = typeof saved.assistantBackendUrl === 'string' ? saved.assistantBackendUrl.trim() : '';
+    const token = typeof saved.assistantBackendToken === 'string' ? saved.assistantBackendToken.trim() : '';
+    if (!rawUrl) return {url: LOCAL_BACKEND_URL, token: ''};
+    let parsed: URL;
+    try { parsed = new URL(rawUrl); }
+    catch { return {url: LOCAL_BACKEND_URL, token: ''}; }
+    const local = ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname);
+    if (parsed.username || parsed.password || !['http:', 'https:'].includes(parsed.protocol)
+        || (!local && parsed.protocol !== 'https:')) return {url: LOCAL_BACKEND_URL, token: ''};
+    return {url: parsed.origin, token};
+}
 async function workspaceVersionFile(file: string) {
     const response = await fetch(`${chrome.runtime.getURL(file)}?workspace=${Date.now()}`, {
         cache: 'no-store', signal: AbortSignal.timeout(4000),
@@ -297,12 +313,16 @@ chrome.runtime.onMessage.addListener((request: AssistantMessage, sender, sendRes
         const longRequest = ['/solve','/solve-vision','/journal'].includes(request.path);
         const keepAlive = longRequest && typeof chrome.runtime.getPlatformInfo === 'function'
             ? setInterval(()=>chrome.runtime.getPlatformInfo(()=>{ void chrome.runtime.lastError; }),25000) : null;
-        fetch(`http://127.0.0.1:8000${request.path}`, {
+        const sendToBackend = ({url, token}: {url: string; token: string}) => fetch(`${url}${request.path}`, {
             signal: AbortSignal.timeout(['/solve', '/solve-vision', '/journal'].includes(request.path) ? 360000 : 8000),
             method,
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...(token ? {Authorization: `Bearer ${token}`} : {}) },
             body,
-        })
+        });
+        const backendRequest = chrome.storage?.local
+            ? backendConnection().then(sendToBackend)
+            : sendToBackend({url: LOCAL_BACKEND_URL, token: ''});
+        backendRequest
             .then(async (response) => {
                 const text = await response.text();
                 let data;
@@ -310,7 +330,7 @@ chrome.runtime.onMessage.addListener((request: AssistantMessage, sender, sendRes
                 catch { data = { detail: text || "Unexpected server response" }; }
                 sendResponse({ ok: response.ok, status: response.status, data });
             })
-            .catch(error => sendResponse({ error: error.name === 'TimeoutError' ? 'Local server request timed out.' : 'Local server is offline. Start it with the project virtual environment.' }))
+            .catch(error => sendResponse({ error: error.name === 'TimeoutError' ? 'Backend request timed out.' : 'Backend is offline. Check the configured server.' }))
             .finally(()=>{if(keepAlive !== null)clearInterval(keepAlive);});
         return true;
     }

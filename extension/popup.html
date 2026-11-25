@@ -18,6 +18,17 @@
              <button type="button" id="open-separate-panel">Open separate panel for this tab</button>
              <p id="separate-panel-status" role="status" hidden></p>
         </section>
+        <section class="popup-card" aria-labelledby="backend-settings-title">
+            <h2 id="backend-settings-title">Backend connection</h2>
+            <label class="popup-field">Server URL
+                <input id="backend-url" type="url" placeholder="http://127.0.0.1:8000" autocomplete="off">
+            </label>
+            <label class="popup-field">API password
+                <input id="backend-token" type="password" placeholder="Required for a hosted server" autocomplete="new-password">
+            </label>
+            <button type="button" id="save-backend">Save backend</button>
+            <p id="backend-settings-status" role="status" hidden></p>
+        </section>
         <section class="popup-card" aria-labelledby="popup-shortcuts">
             <h2 id="popup-shortcuts">Keyboard shortcuts</h2>
             <div class="shortcut-row"><span>Open panel</span> <span><kbd>`</kbd> <kbd>⌃⇧O</kbd></span></div>

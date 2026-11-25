@@ -10,11 +10,12 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from fastapi import HTTPException
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from PIL import Image
 
 import main
-from local_security import redact
+from local_security import redact, install_local_guards
 from vision_images import compress_image_base64
 
 
@@ -222,6 +223,23 @@ class LocalApiTests(unittest.TestCase):
         self.assertEqual(self.client.get('/history',headers={'Origin':'https://evil.example'}).status_code,403)
         self.assertEqual(self.client.get('/history',headers={'Host':'evil.example'}).status_code,400)
         self.assertEqual(self.client.get('/history',headers={'Origin':'null'}).status_code,403)
+
+    def test_hosted_api_requires_the_configured_bearer_token(self):
+        with patch.dict('os.environ', {'SERVER_API_TOKEN': 'test-hosted-token'}, clear=False):
+            hosted = FastAPI()
+            install_local_guards(hosted)
+
+            @hosted.get('/health')
+            def hosted_health():
+                return {'status': 'ok'}
+
+            with TestClient(hosted, base_url='https://browser-assistant.onrender.com') as client:
+                self.assertEqual(client.get('/health').status_code, 401)
+                self.assertEqual(client.get('/health', headers={'Authorization': 'Bearer wrong'}).status_code, 401)
+                self.assertEqual(client.get('/health', headers={'Authorization': 'Bearer test-hosted-token'}).status_code, 200)
+                self.assertEqual(client.get('/health', headers={
+                    'Origin': 'https://evil.example', 'Authorization': 'Bearer test-hosted-token'
+                }).status_code, 403)
 
     def test_unreadable_journal_syllabus_does_not_disable_other_routes(self):
         missing = self.path.with_name('missing-syllabus.json')
