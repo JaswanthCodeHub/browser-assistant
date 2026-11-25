@@ -680,8 +680,11 @@ function mountJournalCountdown(signal: AbortSignal) {
         if (diagnostic) diagnostic.hidden = false;
         const context = getAutomationContext();
         const authorized = context.mode === 'FULL';
-        const currentQuestion = automation.batch?.title || (automation.running && automation.codingQuestionText)
-            || (authorized ? getAuthorizedQuestion(context)?.text : '');
+        let currentQuestion = automation.batch?.title || (automation.running && automation.codingQuestionText);
+        if (!currentQuestion && authorized) {
+            const detected = getAuthorizedQuestion(context);
+            currentQuestion = detected?.title || detected?.text;
+        }
         const pageName = authorized ? context.target.id : window.location.hostname;
         const deferred = automation.deferredQuestions?.size ?? 0;
         if (status) {
@@ -932,7 +935,7 @@ function mountJournalCountdown(signal: AbortSignal) {
     }
 
     async function runCodingAutomation(question, runId, repairAttempt = 0, feedback = '', starterCode = null) {
-        automation.codingQuestionText = question.text;
+        automation.codingQuestionText = question.title || 'Coding question';
         const active = () => automation.running && automation.runId === runId;
         const webProject = question.language === 'web';
         const read = () => safeSendMessage({ action: 'codingEditor', operation: webProject ? 'readProject' : 'read', selector: question.editorSelector });

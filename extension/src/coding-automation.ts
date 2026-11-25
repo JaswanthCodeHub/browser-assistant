@@ -52,6 +52,25 @@
     }
 
     function descriptionText(description) {
+        // Read-only Ace examples contain hidden input/measurement text and
+        // line-number gutters. Only their rendered source lines are examples.
+        for (const editor of description.querySelectorAll('.ace_editor')) {
+            const lines = [...editor.querySelectorAll('.ace_text-layer .ace_line,.ace_line')];
+            if (lines.length) {
+                const pre = description.ownerDocument.createElement('pre');
+                pre.textContent = lines.map(line => line.textContent || '').join('\n');
+                editor.replaceWith(pre);
+            }
+        }
+        for (const node of description.querySelectorAll('.ace_text-input,.ace_gutter,.ace_gutter-layer,.ace_scrollbar,.ace_tooltip,[hidden]')) node.remove();
+        const removeLayoutIndent = node => {
+            for (const child of [...node.childNodes]) {
+                if (child.nodeType === 3 && /^[\t \r\n]*[\r\n][\t \r\n]*$/.test(child.textContent || '')
+                    && !child.parentElement?.closest('pre,code')) child.remove();
+                else if (child.nodeType === 1) removeLayoutIndent(child);
+            }
+        };
+        removeLayoutIndent(description);
         // A detached clone loses innerText's layout line breaks. Keep the line
         // structure of examples and the distinction between headings and prose.
         description.querySelectorAll('br').forEach(node => node.replaceWith('\n'));
@@ -61,7 +80,9 @@
             node.before('\n');
             node.after('\n');
         }
-        return (description.textContent || '').trim();
+        // Do not trim spaces from the last sample: some pattern tasks
+        // explicitly require a space after every star, including the last one.
+        return (description.textContent || '').replace(/^\n+|\n+$/g, '');
     }
     const aliases = { python: 'python', python3: 'python', javascript: 'javascript', 'node.js': 'javascript', java: 'java', 'c++': 'cpp', cpp: 'cpp', c: 'c', 'c#': 'csharp', go: 'go', rust: 'rust', kotlin: 'kotlin', php: 'php', sql: 'sql' };
     function parseLanguage(label) {
@@ -109,6 +130,12 @@
         // Require an explicit language; do not overwrite an editor using a guessed default.
         if (!language) return unavailable('CODE-LANGUAGE: Editor and description found, but the selected language is missing or ambiguous.');
         const description = region.cloneNode(true);
+        const originals = [...region.querySelectorAll('*')];
+        const copies = [...description.querySelectorAll('*')];
+        originals.forEach((node, index) => {
+            const style = doc.defaultView?.getComputedStyle?.(node);
+            if (node.hasAttribute('hidden') || style?.display === 'none' || style?.visibility === 'hidden') copies[index].remove();
+        });
         for (const node of description.querySelectorAll('button,[role="tab"],script,style')) node.remove();
         for (const node of [...description.querySelectorAll('*')].reverse()) {
             if (/^(solved|in progress|not attempted)$/i.test(text(node))) node.remove();

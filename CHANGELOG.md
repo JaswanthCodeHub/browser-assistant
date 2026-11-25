@@ -1,3 +1,8 @@
+# 2.9.40
+
+- Exclude hidden description text and Ace input/measurement/gutter elements from coding prompts.
+- Preserve sample-editor row breaks and significant spaces, including a trailing space after the final star.
+
 # 2.9.39
 
 - Give independently rejected code up to two corrections, with exact sample strings and line widths for pattern spacing.

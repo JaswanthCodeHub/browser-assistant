@@ -1,4 +1,10 @@
-# Browser Assistant 2.9.39
+# Browser Assistant 2.9.40
+
+- Coding description extraction removes hidden content and Ace measurement/input/gutter text. Read-only Ace examples are converted to separate source lines instead of concatenating editor internals into the prompt.
+- Sample spaces and line breaks are preserved, including trailing spaces required by star-pattern tasks.
+- QA Control shows the coding problem title rather than the entire extracted description in its current-question box.
+
+## Browser Assistant 2.9.39
 
 - Coding review allows two correction cycles. Repair prompts include the required code schema and exact sample output lines and widths, preserving meaningful spaces and newlines.
 - A malformed correction or a review verdict returned in place of code gets one regeneration. Corrected code must pass language, syntax, completeness, starter-interface and independent checks before it is returned.

@@ -19,6 +19,28 @@ function fixture(language = 'Python 3.10') {
     return { document, detect: () => context.window.BrowserAssistantCoding.getQuestion(document), diagnostic: () => context.window.BrowserAssistantCoding.getDetectionError(), result: () => context.window.BrowserAssistantCoding.getResult(document) };
 }
 
+test('pattern examples exclude hidden Ace measurement text and keep significant spaces', () => {
+    const { document, detect } = fixture();
+    document.defaultView.getComputedStyle = node => ({ display: node.style.display, visibility: node.style.visibility });
+    document.body.firstElementChild.id = 'codingQuestionInfoContainer';
+    document.body.firstElementChild.innerHTML = `<h2>Hollow Right Angled Triangle - 5</h2>
+        <p>Given a number N, write a program to print a hollow triangle.</p>
+        <p>There is a space after every star.</p>
+        <div style="display:none">${'X'.repeat(2000)}</div>
+        <h3>Sample Input 1</h3><div class="ace_editor ace_read-only"><textarea class="ace_text-input">${'X'.repeat(1000)}</textarea>
+        <div class="ace_gutter">1</div><div class="ace_text-layer"><div class="ace_line">4</div></div></div>
+        <h3>Sample Output 1</h3><div class="ace_editor ace_read-only"><div class="ace_gutter">1234</div>
+        <div class="ace_text-input">${'X'.repeat(1000)}</div><div class="ace_text-layer">
+        <div class="ace_line">      * </div><div class="ace_line">    * * </div><div class="ace_line">  *   * </div><div class="ace_line">* * * * </div></div></div>
+        `;
+    const question = detect();
+    assert.ok(question);
+    assert.doesNotMatch(question.text, /XXXXX|1234/);
+    assert.match(question.text, /Sample Input 1\n+4\n+Sample Output 1\n+      \* \n    \* \* \n  \*   \* \n\* \* \* \* $/);
+    assert.match(question.text, /space after every star/);
+    assert.equal(document.querySelector('.ace_text-input').textContent.length, 1000);
+});
+
 test('external IDE question keeps all Node.js requirements and uses only the portal Open IDE control', () => {
     const {document,window} = parseHTML(`<html><body><div id="codingQuestionInfoContainer"><div id="mark-down">
         <h1>Cricket Team</h1><p>Write app.js using Express and cricketTeam.db.</p>
