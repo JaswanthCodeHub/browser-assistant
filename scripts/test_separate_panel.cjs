@@ -404,7 +404,8 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
             } finally { await page.close(); }
         });
 
-        await t.test('Alt+A starts the filtered CCBP coding batch with the panel closed', async () => {
+        for (const arrowType of ['link', 'svg-wrapper', 'svg']) {
+        await t.test(`Alt+A opens the filtered CCBP coding question with ${arrowType} and the panel closed`, async () => {
             const page = await context.newPage();
             const listUrl = 'https://learning.ccbp.in/problems-set';
             const questionUrl = 'https://learning.ccbp.in/question/shortcut-batch-test';
@@ -413,7 +414,10 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
                 await page.route(listUrl, route => route.fulfill({contentType: 'text/html', body: `<!doctype html>
                     <h1>Coding Problem Set</h1>
                     <div><span>Completed problem</span><span>Solved</span><button>Open</button></div>
-                    <div><span>Next problem</span><span>Not Attempted</span><a href="${questionUrl}">Open</a></div>
+                    <div data-testid="question-list-question"><span title="Next problem">Next problem</span><span>Not Attempted</span>
+                    <button aria-label="Bookmark" onclick="window.bookmarkClicked=true"><svg width="24" height="24"></svg></button>
+                    ${arrowType === 'link' ? `<a href="${questionUrl}">Open</a>` :
+                        `<div ${arrowType === 'svg-wrapper' ? `onclick="location.href='${questionUrl}'"` : ''}><svg width="24" height="24" ${arrowType === 'svg' ? `onclick="location.href='${questionUrl}'"` : ''}></svg></div>`}</div>
                     <label><input type="checkbox" checked>Programming Foundations</label>
                     <label><input type="checkbox">Data Structures &amp; Algorithms</label>
                     <p>1 TO 2 OF 2</p>`}));
@@ -431,6 +435,7 @@ test('floating and separate panels in Chromium', {timeout: 120_000}, async t => 
                 assert.deepEqual(dialogs, []);
             } finally { await page.close(); }
         });
+        }
 
         await t.test('Alt+J opens an ongoing Aurora journal from a closed panel', async () => {
             const page = await context.newPage();

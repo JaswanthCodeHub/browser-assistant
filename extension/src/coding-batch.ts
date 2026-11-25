@@ -3,6 +3,36 @@
     const visible = node => node.getClientRects().length && !node.closest('#assistant-root');
     const text = node => (node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim();
     const statusPattern = /^(not attempted|in progress|solved)$/i;
+    function openControl(row) {
+        const enabled = node => visible(node) && !node.closest('[disabled],[aria-disabled="true"]');
+        const label = node => [node.getAttribute('aria-label'), node.getAttribute('title'),
+            node.getAttribute('data-testid'), text(node)].filter(Boolean).join(' ');
+        const bookmark = node => /bookmark|save|favourite|favorite/i.test(label(node));
+        const links = [...row.querySelectorAll('a[href*="/question/"]')].filter(enabled);
+        if (links.length === 1) return links[0];
+        const controls = [...row.querySelectorAll('a[href],button,[role="button"]')].filter(enabled).filter(node => !bookmark(node));
+        const named = controls.filter(node => /\b(open|view|start|go to)\b|arrow.*right|right.*arrow/i.test(label(node)));
+        if (named.length === 1) return named[0];
+        // CCBP can put the navigation handler on an unlabelled SVG or its
+        // wrapper. Clicking the row itself does not reach that child handler.
+        const icons = [...row.querySelectorAll('svg,img')].filter(enabled).filter(node => {
+            for (let parent = node; parent && parent !== row; parent = parent.parentElement) {
+                if (bookmark(parent)) return false;
+            }
+            return true;
+        });
+        const arrows = icons.filter(node => /arrow.*right|right.*arrow|\b(open|view)\b/i.test(label(node)));
+        if (arrows.length === 1) return arrows[0];
+        if (row.matches('[data-testid="question-list-question"]') && icons.length) return icons[icons.length - 1];
+        if (controls.length === 1) return controls[0];
+        if (icons.length === 1) return icons[0];
+        return row;
+    }
+    function openQuestion(selected) {
+        const action = selected.action;
+        if (typeof action.click === 'function') action.click();
+        else action.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    }
     function courseFilterStep(doc) {
         const courses = /^(programming foundations|data structures\s*(?:&|and)\s*algorithms|build your own static website|build your own responsive website|modern responsive web design|build your own dynamic web application)$/i;
         const choices = [];
@@ -43,7 +73,7 @@
                 const title = portalTitle?.trim() || text(copy);
                 const actions = [...row.querySelectorAll('a[href],button,[role="button"]')].filter(visible);
                 if (title && (actions.length || row.querySelector('svg') || row.matches('[role="row"],tr'))) {
-                    const action = actions.length === 1 ? actions[0] : row;
+                    const action = openControl(row);
                     const link = row.querySelector('a[href*="/question/"]');
                     found.push({ title, action, href: link?.getAttribute('href') || null }); break;
                 }
@@ -148,5 +178,5 @@
         copy.querySelector('#assistant-root')?.remove();
         return text(copy);
     }
-    window.BrowserAssistantCodingBatch = { rows, nextPage, pageKey, pageRange, getBackControl, getSaveBeforeLeaving, matchesQuestion, courseFilterStep };
+    window.BrowserAssistantCodingBatch = { rows, openQuestion, nextPage, pageKey, pageRange, getBackControl, getSaveBeforeLeaving, matchesQuestion, courseFilterStep };
 })();

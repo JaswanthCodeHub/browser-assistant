@@ -38,6 +38,24 @@ test('actual CCBP missing difficulty dash is metadata, never part of selected ti
     assert.equal(batch.rows(document)[0].title, 'Datetime - 2');
 });
 
+for (const wrapper of [true, false]) {
+    test(`portal arrow opens the question without clicking its bookmark (wrapper=${wrapper})`, () => {
+        const { document, batch } = fixture();
+        document.body.innerHTML = '<div data-testid="question-list-question"><span title="HTTP Post Method Practice Page">HTTP Post Method Practice Page</span><span>Not Attempted</span><button aria-label="Bookmark"><svg></svg></button><div id="open"><svg id="arrow"></svg></div></div>';
+        let opened = 0, saved = 0;
+        document.querySelector(wrapper ? '#open' : '#arrow').addEventListener('click', () => opened++);
+        document.querySelector('button').addEventListener('click', () => saved++);
+        const selected = batch.rows(document)[0];
+        assert.equal(selected.title, 'HTTP Post Method Practice Page');
+        assert.equal(selected.action.id, 'arrow');
+        // Exercise the SVG path used in Chromium, where SVG has no .click().
+        selected.action.click = undefined;
+        batch.openQuestion(selected);
+        assert.equal(opened, 1);
+        assert.equal(saved, 0);
+    });
+}
+
 test('confirms only the save-code-before-leaving dialog', () => {
     const { document, batch } = fixture();
     const modal = document.createElement('div');
@@ -94,7 +112,7 @@ function fixture() {
         <footer><span>1 TO 50 OF 1561</span><button>1</button><button>2</button><button disabled aria-label="Next">›</button></footer>
     </body></html>`);
     window.Element.prototype.getClientRects = () => [{}];
-    const context = vm.createContext({ window: {}, document, URL });
+    const context = vm.createContext({ window: {}, document, URL, MouseEvent: window.Event });
     vm.runInContext(source('coding-batch.js'), context);
     return { document, batch: context.window.BrowserAssistantCodingBatch };
 }

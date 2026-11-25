@@ -1168,7 +1168,8 @@ function mountJournalCountdown(signal: AbortSignal) {
                 if (next) {
                     batch.title = next.title; batch.questionUrl = next.href || null; persist('question');
                     automation.state = 'OPENING_QUESTION'; automation.pendingNavigation = true; updateAutomationUI();
-                    next.action.click();
+                    if (window.BrowserAssistantCodingBatch.openQuestion) window.BrowserAssistantCodingBatch.openQuestion(next);
+                    else next.action.click();
                     continue;
                 }
                 const key = window.BrowserAssistantCodingBatch.pageKey(document);

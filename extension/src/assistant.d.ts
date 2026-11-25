@@ -182,6 +182,7 @@ interface Window {
     };
     BrowserAssistantCodingBatch: {
         rows(doc: Document): any[];
+        openQuestion(selected): void;
         nextPage(doc: Document): HTMLElement;
         pageKey(doc: Document): string;
         pageRange(doc: Document): { start: number; end: number; total: number };

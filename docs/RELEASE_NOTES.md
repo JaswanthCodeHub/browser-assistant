@@ -1,4 +1,9 @@
-# Browser Assistant 2.9.37
+# Browser Assistant 2.9.38
+
+- Coding batches select the question's navigation arrow instead of clicking a row or bookmark control. Unlabelled portal SVG arrows work with handlers on the icon or its wrapper.
+- Chromium coverage checks automatic opening through links and both SVG handler layouts with the assistant panel closed.
+
+## Browser Assistant 2.9.37
 
 - Press Alt+J to start Reflective Journal from the journal page, the assessments list, or the separate panel.
 

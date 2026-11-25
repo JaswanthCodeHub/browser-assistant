@@ -1,3 +1,7 @@
+# 2.9.38
+
+- Open coding questions through the row's navigation arrow, including SVG handlers, without selecting the bookmark button.
+
 # 2.9.37
 
 - Use Alt+J for Reflective Journal.
