@@ -1,5 +1,6 @@
 import os
 import json
+import copy
 import asyncio
 import ast
 import math
@@ -200,7 +201,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.9.42", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.9.43", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)
@@ -1653,7 +1654,7 @@ async def _solve_vision(content: VisionContent):
     compressed = []
     for index, image in enumerate(inputs, 1):
         try:
-            compressed.append(await asyncio.to_thread(compress_image_base64, image, max_dim=2400, quality=95))
+            compressed.append(await asyncio.to_thread(compress_image_base64, image, max_dim=1600, quality=95))
         except ValueError as exc:
             raise HTTPException(422, f'Image {index}: {exc}') from exc
     is_code_scan = content.practice_type == "code" or (content.practice_type == "auto" and bool(content.language))
@@ -1690,7 +1691,9 @@ async def _solve_vision(content: VisionContent):
         def reset_at(key):
             return _vision_key_cooldowns.get((vision_model, key), 0.0)
 
-        attempts = len(clients) + 1
+        attempts = len(clients) + 3
+        image_sizes = iter((1280, 1024))
+        messages = copy.deepcopy(messages)
         for attempt in range(attempts):
             now = loop.time()
             key = next((index for index in key_order if reset_at(index) <= now), None)
@@ -1701,7 +1704,7 @@ async def _solve_vision(content: VisionContent):
                 def call_vision_api(c=client, m=vision_model):
                     return c.chat.completions.create(
                         model=m,
-                        messages=messages,
+                        messages=copy.deepcopy(messages),
                         temperature=0.0,
                         max_completion_tokens=max(4096, vision_token_limit) if len(image_blocks) > 3 else vision_token_limit,
                         **options,
@@ -1720,6 +1723,25 @@ async def _solve_vision(content: VisionContent):
             except Exception as exc:
                 error_text = str(exc)
                 provider_status = getattr(exc, 'status_code', None)
+                if provider_status == 413:
+                    size = next(image_sizes, None)
+                    if size is None:
+                        raise HTTPException(413, detail={
+                            'code': 'vision_request_too_large',
+                            'message': 'The complete vision request exceeds the provider input limit even after image resizing. Send a smaller clear image or use text input; repeating this request will not help.',
+                        }) from exc
+                    resized = False
+                    for message in messages:
+                        for block in message.get('content', []) if isinstance(message.get('content'), list) else []:
+                            if block.get('type') == 'image_url':
+                                encoded = await asyncio.to_thread(compress_image_base64, block['image_url']['url'], max_dim=size, quality=95)
+                                block['image_url']['url'] = 'data:image/jpeg;base64,' + encoded
+                                resized = True
+                    if not resized:
+                        raise HTTPException(413, detail={'code': 'vision_request_too_large',
+                            'message': 'The vision text request exceeds the provider input limit. Reduce the supplied context.'}) from exc
+                    logger.info('Vision input too large; retrying with complete images limited to %d pixels.', size)
+                    continue
                 if provider_status == 429 or (provider_status is None and re.search(r'\b429\b|\brate[_ ]limit', error_text, re.I)):
                     delay = vision_retry_after(exc, error_text)
                     _vision_key_cooldowns[(vision_model, key)] = max(reset_at(key), loop.time() + delay)
@@ -1880,6 +1902,8 @@ async def _solve_vision(content: VisionContent):
             unconfirmed = True
             errors.append(f"{vision_model}: {exc}")
             logger.warning(errors[-1])
+        except HTTPException:
+            raise
         except Exception as exc:
             errors.append(f"{vision_model}: {exc}")
             logger.warning(errors[-1])

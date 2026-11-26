@@ -102,6 +102,8 @@ async def collect_image_evidence(blocks, positions, question, model, complete, b
             except VisionRateLimitError:
                 raise
             except Exception as exc:
+                if getattr(exc, 'status_code', None) == 413:
+                    raise
                 raise RuntimeError(f'Image batch {ids} could not be processed: {exc}') from exc
         # Network retries belong to the provider wrapper; completed batches stay intact.
     return json.dumps({'logical_image_positions': positions, 'images': evidence}, ensure_ascii=False)

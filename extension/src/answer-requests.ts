@@ -20,6 +20,7 @@
         return error;
     }
     function temporary(error) {
+        if (error.code==='vision_request_too_large') return false;
         // Retry exhausted vision keys only after their explicit cooldown expires.
         if (error.code==='vision_rate_limited') return Number.isFinite(error.retryAfterMs) && error.retryAfterMs>0;
         const text=error?.message || '';

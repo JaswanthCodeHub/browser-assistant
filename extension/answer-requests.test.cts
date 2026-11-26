@@ -68,7 +68,7 @@ test('persistent service failure is bounded and reports the real provider error'
         /HTTP 502: All vision providers failed: Vision provider connection timed out/);
     assert.equal(calls,3);
 });
-for(const status of [400,401,403,404,422])test(`HTTP ${status} is not repeatedly sent`,async()=>{
+for(const status of [400,401,403,404,413,422])test(`HTTP ${status} is not repeatedly sent`,async()=>{
     let calls=0;
     await assert.rejects(setup().run(options(async()=>{calls++;return {ok:false,status,data:{detail:'Request rejected'}};})),new RegExp(`HTTP ${status}`));
     assert.equal(calls,1);

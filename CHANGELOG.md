@@ -1,3 +1,8 @@
+# 2.9.43
+
+- Reduce initial vision image dimensions to 1600 pixels without cropping or removing context.
+- On provider HTTP 413, retry with 1280 then 1024 pixel images; persistent oversized requests return actionable HTTP 413 instead of retryable 502.
+
 # 2.9.42
 
 - Support up to seven distinct Groq API keys, including sparse configurations.

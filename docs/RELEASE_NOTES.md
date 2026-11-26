@@ -1,3 +1,8 @@
+# Browser Assistant 2.9.43
+
+- Vision sends complete images at a maximum dimension of 1600 pixels. If a provider rejects input size, it retries at 1280 then 1024 pixels, preserving every image and the full question/options.
+- An input that still exceeds the provider limit returns HTTP 413 with clear guidance; automation does not replay that same oversized request. Provider quotas still apply, and unreadable evidence remains subject to existing validation.
+
 # Browser Assistant 2.9.42
 
 - Configure `GROQ_API_KEY` and optional `GROQ_API_KEY_2` through `GROQ_API_KEY_7`. Empty, duplicate and placeholder values are skipped. Provider limits still apply.
