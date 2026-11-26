@@ -1,3 +1,8 @@
+# Browser Assistant 2.9.44
+
+- Coding automation no longer mistakes Python placeholder comments for required function signatures.
+- Incomplete C++ class starters are balanced for interface extraction; accidentally appended top-level Python code is excluded from the C++ starter instructions. This repair applies only to starter context, not generated code. Selected-language syntax, class names, access, parameter types and signature validation remain enforced.
+
 # Browser Assistant 2.9.43
 
 - Vision sends complete images at a maximum dimension of 1600 pixels. If a provider rejects input size, it retries at 1280 then 1024 pixels, preserving every image and the full question/options.

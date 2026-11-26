@@ -70,12 +70,51 @@ def function_header(node, data, language):
         for start, stop in sorted(ignored, reverse=True):
             header = header[:start-node.start_byte] + header[stop-node.start_byte:]
         header = header.decode('utf-8')
+    elif language == 'python':
+        # Python comments between ':' and the first statement are not API.
+        spans = []
+        def comments(child):
+            if child.type == 'comment' and child.start_byte < end:
+                spans.append((child.start_byte, min(child.end_byte, end)))
+            for part in child.named_children:
+                comments(part)
+        comments(node)
+        for start, stop in sorted(spans, reverse=True):
+            header = header[:start-node.start_byte] + header[stop-node.start_byte:]
+        header = header.decode('utf-8')
     else:
         header = re.sub(r'/\*.*?\*/|//[^\n]*', '', header.decode('utf-8'), flags=re.DOTALL)
     return re.sub(r'\s+', '', header)
 
 
-def interface(source, language):
+def prepare_starter(source, language):
+    """Recover a C++ portal scaffold without repairing generated output."""
+    if language != 'cpp':
+        return source
+    # An accidentally pasted Python program is not part of a C++ interface.
+    if re.search(r'\b(?:class|struct)\s+\w+\s*\{', source):
+        source = re.split(r'(?m)^def\s+\w+\s*\(', source, maxsplit=1)[0]
+    data = source.encode('utf-8')
+    root = get_parser('cpp').parse(data).root_node
+    balance = 0
+    def braces(node):
+        nonlocal balance
+        if node.type == '{' and not node.is_missing:
+            balance += 1
+        elif node.type == '}' and not node.is_missing:
+            balance -= 1
+        else:
+            for child in node.children:
+                braces(child)
+    braces(root)
+    if 0 < balance <= 8:
+        source += '\n' + '\n'.join('}' for _ in range(balance)) + ';\n'
+    return source
+
+
+def interface(source, language, *, starter=False):
+    if starter:
+        source = prepare_starter(source, language)
     data = source.encode('utf-8')
     root = get_parser(language).parse(data).root_node
     classes, functions = set(), set()
@@ -114,7 +153,7 @@ def interface(source, language):
 def validate_starter_interface(code, starter, language):
     if not starter or language not in SUPPORTED:
         return
-    classes, functions = interface(starter, language)
+    classes, functions = interface(starter, language, starter=True)
     actual_classes, actual_functions = interface(code, language)
     missing_classes = classes - actual_classes
     if missing_classes:
@@ -139,7 +178,7 @@ def normalize_starter_code(code, starter, language):
     """Remove one added C++ driver only when the complete required interface remains."""
     if language != 'cpp' or not starter:
         return code
-    classes, functions = interface(starter, language)
+    classes, functions = interface(starter, language, starter=True)
     if not (classes or functions) or any(not owner and re.search(r'^(?:int|signed(?:int)?|auto)main\(', header)
                                         for owner, header, _access in functions):
         return code

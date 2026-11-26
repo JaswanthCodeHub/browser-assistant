@@ -1,3 +1,8 @@
+# 2.9.44
+
+- Ignore Python placeholder comments when comparing function signatures, preserving literal defaults and parameter checks.
+- Recover missing closing braces in C++ portal starter scaffolds and exclude an appended top-level Python program from the C++ starter interface. Generated solutions still require valid syntax and the original class, access and callable types.
+
 # 2.9.43
 
 - Reduce initial vision image dimensions to 1600 pixels without cropping or removing context.

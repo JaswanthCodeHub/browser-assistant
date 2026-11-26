@@ -20,7 +20,7 @@ import sqlite3
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from code_contract import coding_samples, validate_starter_interface, normalize_starter_code
+from code_contract import coding_samples, validate_starter_interface, normalize_starter_code, prepare_starter
 from fastapi import Query, status
 from fastapi.responses import FileResponse
 from fastapi.exception_handlers import http_exception_handler
@@ -201,7 +201,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.9.43", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.9.44", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)
@@ -998,7 +998,7 @@ def build_ollama_code_messages(text: str, url: str, language: str, *,
                                starter_code: str | None = None, repair_attempt: int = 0) -> list:
     """Keep all coding evidence intact within the local fallback's input budget."""
     if starter_code:
-        text += '\n\nOriginal portal starter interface:\n' + starter_code
+        text += '\n\nOriginal portal starter interface:\n' + prepare_starter(starter_code, language)
     if len(text) > 18_000:
         raise ValueError(
             'Local Ollama fallback needs the full problem, code and feedback within 18000 characters. '
@@ -1105,7 +1105,7 @@ def starter_interface_instructions(starter_code: str | None, language: str) -> s
         return ''
     instructions = ('\nORIGINAL PORTAL STARTER CODE (immutable interface; preserve exact class and function '
                     'names, case, return types, parameter types, reference qualifiers, parameter order and access):\n'
-                    + starter_code)
+                    + prepare_starter(starter_code, language))
     if language == 'cpp':
         instructions += ('\nFor C++: complete the supplied function body inside its original class. '
                          'Copy the original function declaration and access exactly. '

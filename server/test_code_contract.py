@@ -14,6 +14,26 @@ def result(code, language='cpp'):
 
 
 class InterfaceTests(unittest.TestCase):
+    def test_python_placeholder_comments_are_not_signature_but_defaults_are(self):
+        starter = 'class solution:\n    def postfixToInfix(self, s):\n        # Write your code here...\n        pass\n'
+        valid = 'class solution:\n    def postfixToInfix(self, s):\n        return s\n'
+        validate_starter_interface(valid, starter, 'python')
+        with self.assertRaises(ValueError):
+            validate_starter_interface(valid.replace('(self, s)', '(self, other)'), starter, 'python')
+        with self.assertRaises(ValueError):
+            validate_starter_interface(valid.replace('(self, s)', '(self, s="#b")'),
+                valid.replace('(self, s)', '(self, s="#a")'), 'python')
+
+    def test_incomplete_cpp_class_with_pasted_python_preserves_real_owner_and_access(self):
+        starter = '#include<bits/stdc++.h>\nusing namespace std;\nclass solution {\npublic:\n string postfixToInfix(string s) {\n // Write your code here...\n }\ndef postfix_to_infix(s):\n return s\n'
+        valid = 'class solution {public: string postfixToInfix(string s) { return s; }};'
+        validate_starter_interface(valid, starter, 'cpp')
+        self.assertNotIn('def postfix', main.starter_interface_instructions(starter, 'cpp'))
+        for invalid in [valid.replace('public:', 'private:'), valid.replace('solution', 'Solution'),
+                        valid.replace('string s', 'int s'), valid.replace('postfixToInfix', 'wrong')]:
+            with self.subTest(code=invalid), self.assertRaises(ValueError):
+                validate_starter_interface(invalid, starter, 'cpp')
+
     def test_cpp_parameter_names_are_not_part_of_the_callable_signature(self):
         starter = 'class solution { public: int countSubarrays(vector<int>& arr, int k) {} };'
         code = 'class solution { public: int countSubarrays(vector<int>& nums, int target) { return nums.size() + target; } };'
