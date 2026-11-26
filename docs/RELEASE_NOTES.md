@@ -1,3 +1,8 @@
+# Browser Assistant 2.9.42
+
+- Configure `GROQ_API_KEY` and optional `GROQ_API_KEY_2` through `GROQ_API_KEY_7`. Empty, duplicate and placeholder values are skipped. Provider limits still apply.
+- Automation waits for a vision provider's explicit cooldown (up to five minutes per wait) and retries answer generation up to three total attempts. Stop cancels waiting; changed questions cannot receive stale answers.
+
 # Browser Assistant 2.9.41
 
 - The popup can save a hosted HTTPS backend URL and its API password, while leaving existing local `127.0.0.1:8000` use unchanged.

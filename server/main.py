@@ -41,11 +41,16 @@ logger = logging.getLogger("browser-assistant")
 load_dotenv(Path(__file__).with_name('.env'))
 
 # Setup Groq — multiple API keys for rate-limit rotation
-_groq_keys = []
-for env_var in ["GROQ_API_KEY", "GROQ_API_KEY_2", "GROQ_API_KEY_3"]:
-    key = os.getenv(env_var)
-    if key and key != "your_groq_api_key_here" and key not in _groq_keys:
-        _groq_keys.append(key)
+def load_groq_keys():
+    """Load up to seven distinct configured credentials in stable order."""
+    keys = []
+    for env_var in ["GROQ_API_KEY", *[f"GROQ_API_KEY_{i}" for i in range(2, 8)]]:
+        key = os.getenv(env_var, "").strip()
+        if key and key != "your_groq_api_key_here" and key not in keys:
+            keys.append(key)
+    return keys
+
+_groq_keys = load_groq_keys()
 
 # Retry rotation is handled below. Disable the SDK's long exponential retry so
 # a rate-limited key cannot hold up every next question before we try another.
@@ -195,7 +200,7 @@ async def lifespan(_app: FastAPI):
             client.close()
 
 
-app = FastAPI(title="Browser Assistant API", version="2.9.41", lifespan=lifespan)
+app = FastAPI(title="Browser Assistant API", version="2.9.42", lifespan=lifespan)
 install_local_guards(app)
 
 @app.exception_handler(HTTPException)

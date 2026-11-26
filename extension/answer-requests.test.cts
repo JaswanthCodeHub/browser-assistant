@@ -40,18 +40,26 @@ test('a long rate limit reports the wait without restarting the request',async()
     let calls=0;
     await assert.rejects(setup().run(options(async()=>{
         calls++;
-        return {ok:false,status:429,data:{detail:{message:'Try again in 120 seconds.',retry_after_seconds:120}}};
-    })),/Try again in 120 seconds/);
+        return {ok:false,status:429,data:{detail:{message:'Try again in 301 seconds.',retry_after_seconds:301}}};
+    })),/Try again in 301 seconds/);
     assert.equal(calls,1);
 });
-test('a final vision cooldown is reported without replaying the chart request',async()=>{
-    let calls=0;
-    await assert.rejects(setup().run(options(async()=>{
+test('exhausted vision keys recover after their explicit cooldown',async()=>{
+    let calls=0,waited=0;
+    assert.equal(await setup().run(options(async()=>{
         calls++;
+        if(calls===2) { assert.equal(waited,23000); return success; }
         return {ok:false,status:429,data:{detail:{
             code:'vision_rate_limited',message:'Try again in 23 seconds.',retry_after_seconds:23,
         }}};
-    },{sleep:async()=>assert.fail('The server already checked the available keys.')})),/Try again in 23 seconds/);
+    },{sleep:async ms=>{waited+=ms;}})),success);
+    assert.equal(calls,2);
+});
+test('vision cooldown without an explicit delay does not replay requests',async()=>{
+    let calls=0;
+    await assert.rejects(setup().run(options(async()=>{
+        calls++; return {ok:false,status:429,data:{detail:{code:'vision_rate_limited',message:'Wait'}}};
+    })),/Wait/);
     assert.equal(calls,1);
 });
 test('persistent service failure is bounded and reports the real provider error',async()=>{

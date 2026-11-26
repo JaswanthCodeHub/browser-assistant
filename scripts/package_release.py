@@ -65,7 +65,7 @@ def validate_inputs(groups):
             text = path.read_text(encoding='utf-8-sig')
             assert not re.search(r'gsk_[a-zA-Z0-9]{24,}|\bsk-[a-zA-Z0-9]{24,}',text), f'Credential-like value in release input: {name}'
     for line in (ROOT/'server/.env.example').read_text().splitlines():
-        if re.match(r'GROQ_API_KEY(?:_[23])?=',line):
+        if re.match(r'GROQ_API_KEY(?:_[2-7])?=',line):
             assert not line.split('=',1)[1].strip(), 'Example keys must be empty'
     assert f'version="{manifest["version"]}"' in (ROOT/'server/main.py').read_text(encoding='utf-8')
     runtime = {manifest['background']['service_worker'],manifest['action']['default_popup']}

@@ -4,7 +4,7 @@ The backend explicitly loads `server/.env`; process environment variables take p
 
 | Variable | Default / behavior |
 | --- | --- |
-| GROQ_API_KEY, GROQ_API_KEY_2, GROQ_API_KEY_3 | Empty means no Groq; additional keys are tried on rate limits, not periodically rotated for security |
+| GROQ_API_KEY, GROQ_API_KEY_2 through GROQ_API_KEY_7 | Empty means no Groq; up to seven distinct keys are tried on rate limits. Provider quotas still apply; keys are not periodically rotated for security |
 | GROQ_TEXT_MODEL | openai/gpt-oss-120b; fallback openai/gpt-oss-20b, then Ollama |
 | GROQ_VISION_MODEL | qwen/qwen3.8-27b; must support images and be available on your account |
 | GROQ_VISION_FALLBACK_MODELS | Optional comma-separated vision model IDs available on your account; no speculative default |

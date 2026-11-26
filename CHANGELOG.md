@@ -1,3 +1,8 @@
+# 2.9.42
+
+- Support up to seven distinct Groq API keys, including sparse configurations.
+- Automatically wait for explicit vision rate-limit cooldowns up to five minutes before retrying, with Stop/Pause and stale-question safeguards retained.
+
 # 2.9.41
 
 - Add an optional HTTPS hosted-backend connection in the extension popup while preserving the local default.

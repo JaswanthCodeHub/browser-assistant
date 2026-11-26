@@ -20,8 +20,8 @@
         return error;
     }
     function temporary(error) {
-        // The backend already tried the available vision keys.
-        if (error.code==='vision_rate_limited') return false;
+        // Retry exhausted vision keys only after their explicit cooldown expires.
+        if (error.code==='vision_rate_limited') return Number.isFinite(error.retryAfterMs) && error.retryAfterMs>0;
         const text=error?.message || '';
         if (/access denied|forbidden|unauthorized|invalid.api.key|not configured|validation|not.support|model.*(?:not found|not exist)|illustration changed|question changed|context invalidated|extension was reloaded|no readable|unparseable/i.test(text)) return false;
         if (error.status) return [408,425,429,500,502,503,504].includes(error.status);
@@ -40,13 +40,14 @@
                 return response;
             } catch (error) {
                 if (!active()) return null;
-                if (attempt===attempts || !temporary(error) || error.retryAfterMs>60_000) throw error;
+                if (attempt===attempts || !temporary(error) || error.retryAfterMs>300_000) throw error;
                 onRetry({attempt:attempt+1,attempts,message:error.message});
                 // Short waits keep Stop/Pause responsive. Revalidate before the
                 // next request so an old answer cannot target a new question.
                 const delay=error.retryAfterMs ?? (attempt===1 ? 1000 : 2500);
                 for(let elapsed=0;elapsed<delay;elapsed+=100) {
                     if (!active()) return null;
+                    if (!current()) throw new Error('Question changed while requesting an answer. No answer was selected.');
                     await sleep(Math.min(100,delay-elapsed));
                 }
             }
